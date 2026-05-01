@@ -1,6 +1,6 @@
 # chopnow-api
 
-ChopNow backend — NestJS + Prisma + PostgreSQL/PostGIS + Redis.
+ChopNow backend — NestJS 10 + Prisma 5 + PostgreSQL/PostGIS 16 + Redis 7.
 
 ## Scope
 
@@ -18,30 +18,61 @@ ChopNow backend — NestJS + Prisma + PostgreSQL/PostGIS + Redis.
 
 Sprint 1 starts **2026-05-04**. See [project board](https://github.com/orgs/ChopNow-app/projects/3) for delivery tracking.
 
-## Repo layout (planned)
+## Quick start
+
+```bash
+nvm use                  # Node 22
+cp .env.example .env     # placeholders work for local dev
+npm install
+npm run db:up            # postgres-postgis:16 + redis:7 via Docker
+npm run prisma:migrate   # applies the Sprint 1 schema (User, OtpLog, PushSubscription)
+npm run start:dev        # http://localhost:3001
+```
+
+Health checks:
+
+```bash
+curl http://localhost:3001/health
+curl http://localhost:3001/ready
+```
+
+OTP smoke test (Sprint 1 Story 1.1 — delivery wired in story):
+
+```bash
+curl -X POST http://localhost:3001/api/auth/request-otp \
+  -H 'Content-Type: application/json' \
+  -d '{"phone":"670000000"}'
+```
+
+## Repo layout
 
 ```
 chopnow-api/
 ├── src/
-│   ├── auth/         # OTP, JWT, sessions
-│   ├── catalogue/    # vendors, items, availability
-│   ├── orders/       # cart, payment, lifecycle
-│   ├── dispatch/     # livreur assignment, GPS
-│   ├── finance/      # escrow, cashout, KYC
-│   └── admin/        # ops, KYC review, dashboards
+│   ├── main.ts              # Helmet, CORS, validation pipes
+│   ├── app.module.ts        # ConfigModule + ThrottlerModule + Pino + modules
+│   ├── auth/                # OTP, JWT (Stories 1.1, 1.2, 1.6, 1.7)
+│   ├── users/               # /users/me + role lookups
+│   ├── prisma/              # Global PrismaService
+│   ├── health/              # /health + /ready
+│   ├── common/              # guards, filters, decorators
+│   └── config/              # Joi env validation
 ├── prisma/
-│   └── schema.prisma
-└── test/
+│   └── schema.prisma        # 3 tables for Sprint 1; grows per epic
+├── docker-compose.yml       # postgres-postgis:16 + redis:7
+├── Dockerfile               # multi-stage, non-root, Node 22 alpine
+└── .github/workflows/ci.yml # disabled until Sprint 1
 ```
 
-## Development
+## Stack
 
-```bash
-npm install
-docker compose up -d   # postgres + redis
-npx prisma migrate dev
-npm run start:dev
-```
+- **NestJS 10**, **Prisma 5**, **TypeScript 5.7**, **Node 22 LTS**
+- **Helmet** — HTTP security headers (XSS, clickjacking, HSTS)
+- **Throttler** — rate limiting (default 100 req/min per IP)
+- **Argon2** — OTP and password hashing
+- **Joi** — env validation, fail-fast on missing secrets
+- **Pino** — structured JSON logs (pretty in dev)
+- **PostGIS** — geo queries for dispatch (Epic 4)
 
 ## Epics
 

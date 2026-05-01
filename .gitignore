@@ -8,4 +8,5 @@ dist/
 .vscode/
 .idea/
 coverage/
-prisma/migrations/dev/
+.eslintcache
+*.tsbuildinfo

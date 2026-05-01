@@ -1,0 +1,93 @@
+// ChopNow API — Prisma schema (Sprint 1 starter)
+// Full data model grows per epic. See _bmad-output/planning-artifacts/architecture.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [postgis]
+}
+
+enum UserRole {
+  CONSUMER
+  VENDOR
+  RIDER
+  ADMIN
+  SUPER_ADMIN
+  OPERATOR
+  VIEWER
+}
+
+enum OtpChannel {
+  WHATSAPP
+  SMS
+}
+
+enum OtpStatus {
+  PENDING
+  DELIVERED
+  VERIFIED
+  EXPIRED
+  FAILED
+}
+
+// --- Story 1.1, 1.2, 1.4: User identity ---
+model User {
+  id          String    @id @default(uuid())
+  phone       String?   @unique
+  email       String?   @unique
+  displayName String?
+  role        UserRole  @default(CONSUMER)
+  isActive    Boolean   @default(true)
+  isDeleted   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  otpLogs           OtpLog[]
+  pushSubscriptions PushSubscription[]
+
+  @@index([phone])
+  @@index([role])
+  @@map("users")
+}
+
+// --- Story 1.1: OTP delivery audit log ---
+model OtpLog {
+  id           String     @id @default(uuid())
+  userId       String?
+  user         User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  phone        String
+  channel      OtpChannel
+  status       OtpStatus  @default(PENDING)
+  codeHash     String
+  attempts     Int        @default(0)
+  expiresAt    DateTime
+  deliveredAt  DateTime?
+  verifiedAt   DateTime?
+  failedReason String?
+  createdAt    DateTime   @default(now())
+
+  @@index([phone, createdAt])
+  @@index([userId])
+  @@map("otp_logs")
+}
+
+// --- Story 1.11: Web Push subscriptions (VAPID) ---
+model PushSubscription {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceFingerprint String
+  endpoint          String
+  p256dh            String
+  auth              String
+  createdAt         DateTime @default(now())
+  lastUsedAt        DateTime @default(now())
+
+  @@unique([userId, deviceFingerprint])
+  @@index([userId])
+  @@map("push_subscriptions")
+}

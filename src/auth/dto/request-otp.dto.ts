@@ -1,0 +1,9 @@
+import { IsString, Matches } from 'class-validator';
+
+export class RequestOtpDto {
+  @IsString()
+  @Matches(/^6[5-9]\d{7}$/, {
+    message: 'Phone must be a 9-digit Cameroon number starting with 65–69 (e.g. 670000000)',
+  })
+  phone!: string;
+}
