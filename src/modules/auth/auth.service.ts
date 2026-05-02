@@ -78,19 +78,21 @@ export class AuthService {
   }
 
   private async signTokens(userId: string, role: UserRole) {
+    const accessTtl = (this.config.get<string>('JWT_ACCESS_TTL') ?? '24h') as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    const refreshTtl = (this.config.get<string>('JWT_REFRESH_TTL') ?? '30d') as `${number}${'s' | 'm' | 'h' | 'd'}`;
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(
         { sub: userId, role },
         {
           secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-          expiresIn: this.config.get<string>('JWT_ACCESS_TTL') ?? '24h',
+          expiresIn: accessTtl,
         },
       ),
       this.jwt.signAsync(
         { sub: userId, role },
         {
           secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-          expiresIn: this.config.get<string>('JWT_REFRESH_TTL') ?? '30d',
+          expiresIn: refreshTtl,
         },
       ),
     ]);

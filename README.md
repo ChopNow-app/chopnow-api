@@ -1,6 +1,6 @@
 # chopnow-api
 
-ChopNow backend — NestJS 10 + Prisma 5 + PostgreSQL/PostGIS 16 + Redis 7.
+ChopNow backend — NestJS 11 + Prisma 6 + PostgreSQL/PostGIS 16 + Redis 7.
 
 ## Scope
 
@@ -85,7 +85,7 @@ chopnow-api/
 
 ## Stack
 
-- **NestJS 10**, **Prisma 5**, **TypeScript 5.7**, **Node 22 LTS**
+- **NestJS 11**, **Prisma 6**, **TypeScript 5.7**, **Node 22 LTS**
 - **Helmet** — HTTP security headers (XSS, clickjacking, HSTS)
 - **Throttler** — rate limiting (100 req/min default · 5 OTP req / 15 min on `/auth/request-otp`)
 - **Argon2** — OTP and password hashing
