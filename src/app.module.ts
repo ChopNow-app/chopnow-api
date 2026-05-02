@@ -10,7 +10,10 @@ import { PrismaModule } from './infra/prisma/prisma.module';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
+import { OrdersModule } from './modules/orders/orders.module';
 import { HealthModule } from './health/health.module';
+
+import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
 
 @Module({
   imports: [
@@ -44,11 +47,17 @@ import { HealthModule } from './health/health.module';
     // --- Domain modules ---
     AuthModule,
     UsersModule,
-    // CatalogueModule, OrdersModule, PaymentsModule, DispatchModule,
+    OrdersModule,
+    // CatalogueModule, PaymentsModule, DispatchModule,
     // NotificationsModule, FinanceModule, AdminModule — wired in per-epic
     // --- Cross-cutting ---
     HealthModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    // Global rate limiter
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Global auth — every route is JWT-protected by default; mark public ones with @Public()
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+  ],
 })
 export class AppModule {}

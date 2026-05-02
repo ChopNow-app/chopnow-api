@@ -1,10 +1,10 @@
-import { Controller, Get, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Req } from '@nestjs/common';
 import { Request } from 'express';
-import { JwtAuthGuard } from '../../shared/guards/jwt-auth.guard';
 import { UsersService } from './users.service';
 
+// JWT auth applies globally (see APP_GUARD in app.module.ts).
+// Add @Public() to opt out on a specific route.
 @Controller('users')
-@UseGuards(JwtAuthGuard)
 export class UsersController {
   constructor(private readonly users: UsersService) {}
 

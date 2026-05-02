@@ -21,13 +21,15 @@ Sprint 1 starts **2026-05-04**. See [project board](https://github.com/orgs/Chop
 ## Quick start
 
 ```bash
-nvm use                  # Node 22
-cp .env.example .env     # placeholders work for local dev
+nvm use                            # Node 22
+./scripts/generate-secrets.sh      # writes random JWT secrets into .env (gitignored)
 npm install
-npm run db:up            # postgres-postgis:16 + redis:7 via Docker
-npm run prisma:migrate   # applies the Sprint 1 schema (User, OtpLog, PushSubscription)
-npm run start:dev        # http://localhost:3001
+npm run db:up                      # postgres-postgis:16 + redis:7 via Docker
+npm run prisma:migrate             # applies the Sprint 1 schema (User, OtpLog, PushSubscription)
+npm run start:dev                  # http://localhost:3001
 ```
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full dev workflow.
 
 Health checks:
 
