@@ -1,4 +1,4 @@
-# CI pipeline — disabled until Sprint 1 starts (2026-05-04).
+# CI pipeline — disabled until Sprint 1 starts.
 # To enable: uncomment the push/pull_request triggers below.
 
 name: CI
@@ -24,5 +24,6 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: npm run lint
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build

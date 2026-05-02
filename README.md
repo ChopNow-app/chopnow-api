@@ -86,6 +86,7 @@ chopnow-api/
 ## Stack
 
 - **NestJS 11**, **Prisma 6**, **TypeScript 5.7**, **Node 22 LTS**
+- **SWC** — `builder: swc` in `nest-cli.json` (5-10× faster than tsc); type-check runs separately via `npm run typecheck`
 - **Helmet** — HTTP security headers (XSS, clickjacking, HSTS)
 - **Throttler** — rate limiting (100 req/min default · 5 OTP req / 15 min on `/auth/request-otp`)
 - **Argon2** — OTP and password hashing
