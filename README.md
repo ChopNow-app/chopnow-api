@@ -44,24 +44,40 @@ curl -X POST http://localhost:3001/api/auth/request-otp \
   -d '{"phone":"670000000"}'
 ```
 
-## Repo layout
+## Architecture
+
+**Modular monolith with domain-event fan-out.** See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full layered diagram, the 3 module-boundary rules, and when to extract a module to a service.
 
 ```
 chopnow-api/
 ├── src/
-│   ├── main.ts              # Helmet, CORS, validation pipes
-│   ├── app.module.ts        # ConfigModule + ThrottlerModule + Pino + modules
-│   ├── auth/                # OTP, JWT (Stories 1.1, 1.2, 1.6, 1.7)
-│   ├── users/               # /users/me + role lookups
-│   ├── prisma/              # Global PrismaService
-│   ├── health/              # /health + /ready
-│   ├── common/              # guards, filters, decorators
-│   └── config/              # Joi env validation
+│   ├── main.ts                   # Helmet, CORS, validation pipes
+│   ├── app.module.ts             # wires ConfigModule + EventEmitter + Pino + modules
+│   ├── modules/                  # domain bounded contexts (one per Epic)
+│   │   ├── auth/                 # Epic 1 — OTP, JWT, RBAC, blacklist
+│   │   ├── users/                # all roles (consumer/vendor/rider/admin)
+│   │   ├── catalogue/            # Epic 2
+│   │   ├── orders/               # Epic 3
+│   │   ├── payments/             # Epic 3 + 7 — Campay
+│   │   ├── dispatch/             # Epic 4 — PostGIS geo-queries
+│   │   ├── notifications/        # Push + WhatsApp + SMS fan-out
+│   │   ├── finance/              # Epic 7 — payouts, KYC
+│   │   └── admin/                # Epic 6 — ops, audit
+│   ├── infra/                    # infrastructure adapters
+│   │   ├── prisma/
+│   │   └── config/               # Joi env validation
+│   ├── shared/                   # reusable, no infra deps
+│   │   ├── decorators/           # @Public, @Roles
+│   │   ├── guards/               # JwtAuthGuard
+│   │   ├── filters/
+│   │   └── events/               # domain event names (single source of truth)
+│   └── health/                   # /health + /ready
 ├── prisma/
-│   └── schema.prisma        # 3 tables for Sprint 1; grows per epic
-├── docker-compose.yml       # postgres-postgis:16 + redis:7
-├── Dockerfile               # multi-stage, non-root, Node 22 alpine
-└── .github/workflows/ci.yml # disabled until Sprint 1
+│   └── schema.prisma             # 3 tables for Sprint 1; grows per epic
+├── docker-compose.yml            # postgres-postgis:16 + redis:7
+├── Dockerfile                    # multi-stage, non-root, Node 22 alpine
+├── ARCHITECTURE.md               # the 3 rules
+└── .github/workflows/ci.yml      # disabled until Sprint 1
 ```
 
 ## Stack

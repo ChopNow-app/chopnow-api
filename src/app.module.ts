@@ -1,12 +1,15 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
-import { envSchema } from './config/env.validation';
-import { PrismaModule } from './prisma/prisma.module';
-import { AuthModule } from './auth/auth.module';
-import { UsersModule } from './users/users.module';
+
+import { envSchema } from './infra/config/env.validation';
+import { PrismaModule } from './infra/prisma/prisma.module';
+
+import { AuthModule } from './modules/auth/auth.module';
+import { UsersModule } from './modules/users/users.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -25,15 +28,25 @@ import { HealthModule } from './health/health.module';
         redact: ['req.headers.authorization', 'req.headers.cookie'],
       },
     }),
+    EventEmitterModule.forRoot({
+      wildcard: true,
+      delimiter: '.',
+      maxListeners: 50,
+    }),
     ThrottlerModule.forRoot([
       {
         ttl: parseInt(process.env.THROTTLE_TTL_SECONDS ?? '60', 10) * 1000,
         limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),
       },
     ]),
+    // --- Infrastructure (global) ---
     PrismaModule,
+    // --- Domain modules ---
     AuthModule,
     UsersModule,
+    // CatalogueModule, OrdersModule, PaymentsModule, DispatchModule,
+    // NotificationsModule, FinanceModule, AdminModule — wired in per-epic
+    // --- Cross-cutting ---
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
