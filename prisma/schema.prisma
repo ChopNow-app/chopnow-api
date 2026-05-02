@@ -2,7 +2,8 @@
 // Full data model grows per epic. See _bmad-output/planning-artifacts/architecture.md.
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
