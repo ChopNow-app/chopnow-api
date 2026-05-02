@@ -70,7 +70,10 @@ chopnow-api/
 │   │   ├── decorators/           # @Public, @Roles
 │   │   ├── guards/               # JwtAuthGuard
 │   │   ├── filters/
-│   │   └── events/               # domain event names (single source of truth)
+│   │   ├── events/               # domain event names (single source of truth)
+│   │   ├── crypto/               # verifyWebhookSignature (HMAC, timing-safe)
+│   │   ├── http/                 # safeFetch — SSRF-blocked outbound calls
+│   │   └── sanitize/             # stripHtml / sanitizeBasicHtml (DOMPurify)
 │   └── health/                   # /health + /ready
 ├── prisma/
 │   └── schema.prisma             # 3 tables for Sprint 1; grows per epic
@@ -84,11 +87,28 @@ chopnow-api/
 
 - **NestJS 10**, **Prisma 5**, **TypeScript 5.7**, **Node 22 LTS**
 - **Helmet** — HTTP security headers (XSS, clickjacking, HSTS)
-- **Throttler** — rate limiting (default 100 req/min per IP)
+- **Throttler** — rate limiting (100 req/min default · 5 OTP req / 15 min on `/auth/request-otp`)
 - **Argon2** — OTP and password hashing
 - **Joi** — env validation, fail-fast on missing secrets
 - **Pino** — structured JSON logs (pretty in dev)
 - **PostGIS** — geo queries for dispatch (Epic 4)
+
+## Security defaults
+
+| Concern | Mechanism |
+|---|---|
+| HTTP headers | `helmet` (HSTS, X-Frame-Options, etc.) |
+| CORS | Allow-list from `CORS_ORIGINS`, `credentials: true` |
+| Rate limiting | Global 100 req/min · 5/15min on OTP request · 10/15min on OTP verify |
+| Input validation | `class-validator` global pipe, `whitelist + forbidNonWhitelisted` |
+| Body size | 1 MB JSON / urlencoded — large media uploads go to R2 directly |
+| Password / OTP | `argon2` |
+| JWT | Access (24h) + Refresh (30d), separate secrets, ≥32 chars enforced by Joi |
+| Webhook signatures | `shared/crypto/verifyWebhookSignature` — HMAC + timing-safe compare |
+| SSRF on outbound fetches | `shared/http/safeFetch` — blocks 127.0.0.1, private ranges, cloud metadata IPs |
+| HTML injection | `shared/sanitize/stripHtml` — DOMPurify, used on all user-rendered text |
+| Container | Non-root `nestjs:nodejs` user, multi-stage Alpine image |
+| Log redaction | `Authorization` and `Cookie` headers redacted by Pino |
 
 ## Epics
 
