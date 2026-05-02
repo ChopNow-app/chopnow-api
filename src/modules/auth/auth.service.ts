@@ -1,8 +1,8 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { OtpStatus, UserRole } from '@prisma/client';
+import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
 const OTP_TTL_MINUTES = 5;
@@ -13,7 +13,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
-    private readonly config: ConfigService,
+    private readonly env: EnvService,
   ) {}
 
   /**
@@ -42,7 +42,10 @@ export class AuthService {
     return { ok: true, expiresInSeconds: OTP_TTL_MINUTES * 60 };
   }
 
-  async verifyOtp(phone: string, code: string): Promise<{ accessToken: string; refreshToken: string }> {
+  async verifyOtp(
+    phone: string,
+    code: string,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
     const log = await this.prisma.otpLog.findFirst({
       where: { phone, status: { in: ['PENDING', 'DELIVERED'] }, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: 'desc' },
@@ -78,29 +81,23 @@ export class AuthService {
   }
 
   private async signTokens(userId: string, role: UserRole) {
-    const accessTtl = (this.config.get<string>('JWT_ACCESS_TTL') ?? '24h') as `${number}${'s' | 'm' | 'h' | 'd'}`;
-    const refreshTtl = (this.config.get<string>('JWT_REFRESH_TTL') ?? '30d') as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    const accessTtl = this.env.jwtAccessTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    const refreshTtl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(
         { sub: userId, role },
-        {
-          secret: this.config.getOrThrow<string>('JWT_ACCESS_SECRET'),
-          expiresIn: accessTtl,
-        },
+        { secret: this.env.jwtAccessSecret, expiresIn: accessTtl },
       ),
       this.jwt.signAsync(
         { sub: userId, role },
-        {
-          secret: this.config.getOrThrow<string>('JWT_REFRESH_SECRET'),
-          expiresIn: refreshTtl,
-        },
+        { secret: this.env.jwtRefreshSecret, expiresIn: refreshTtl },
       ),
     ]);
     return { accessToken, refreshToken };
   }
 
   private generateCode(): string {
-    if (this.config.get<string>('NODE_ENV') === 'test') return '000000';
+    if (this.env.nodeEnv === 'test') return '000000';
     const n = Math.floor(Math.random() * 1_000_000);
     return n.toString().padStart(6, '0');
   }

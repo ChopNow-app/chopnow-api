@@ -4,15 +4,15 @@ ChopNow backend — NestJS 11 + Prisma 6 + PostgreSQL/PostGIS 16 + Redis 7.
 
 ## Scope
 
-| Domain | Stack |
-|---|---|
-| Auth & OTP | Twilio WhatsApp (primary) + Twilio SMS (fallback) |
-| Payments | Campay SDK — MTN MoMo + Orange Money |
-| Voice proxy | Twilio Voice (TwiML Dial bridge) — livreur ↔ client masked calls |
-| Dispatch | PostGIS geo-queries, Redis pub/sub for livreur GPS heartbeats (15s) |
-| Push | Web Push API + VAPID (no Firebase) |
-| Media | Cloudflare R2 + Sharp |
-| Hosting | Hetzner VPS |
+| Domain      | Stack                                                               |
+| ----------- | ------------------------------------------------------------------- |
+| Auth & OTP  | Twilio WhatsApp (primary) + Twilio SMS (fallback)                   |
+| Payments    | Campay SDK — MTN MoMo + Orange Money                                |
+| Voice proxy | Twilio Voice (TwiML Dial bridge) — livreur ↔ client masked calls    |
+| Dispatch    | PostGIS geo-queries, Redis pub/sub for livreur GPS heartbeats (15s) |
+| Push        | Web Push API + VAPID (no Firebase)                                  |
+| Media       | Cloudflare R2 + Sharp                                               |
+| Hosting     | Hetzner VPS                                                         |
 
 ## Status
 
@@ -45,6 +45,14 @@ curl -X POST http://localhost:3001/api/auth/request-otp \
   -H 'Content-Type: application/json' \
   -d '{"phone":"670000000"}'
 ```
+
+## API contract
+
+OpenAPI 3 spec is auto-generated from controllers + DTOs.
+
+- **Live**: http://localhost:3001/api/docs (Swagger UI)
+- **JSON**: http://localhost:3001/api/docs-json
+- **Export to file**: `npm run openapi:export` → writes `openapi.json` (use this to feed the frontend's typed client generator)
 
 ## Architecture
 
@@ -98,20 +106,20 @@ chopnow-api/
 
 ## Security defaults
 
-| Concern | Mechanism |
-|---|---|
-| HTTP headers | `helmet` (HSTS, X-Frame-Options, etc.) |
-| CORS | Allow-list from `CORS_ORIGINS`, `credentials: true` |
-| Rate limiting | Global 100 req/min · 5/15min on OTP request · 10/15min on OTP verify |
-| Input validation | `class-validator` global pipe, `whitelist + forbidNonWhitelisted` |
-| Body size | 1 MB JSON / urlencoded — large media uploads go to R2 directly |
-| Password / OTP | `argon2` |
-| JWT | Access (24h) + Refresh (30d), separate secrets, ≥32 chars enforced by Joi |
-| Webhook signatures | `shared/crypto/verifyWebhookSignature` — HMAC + timing-safe compare |
+| Concern                  | Mechanism                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| HTTP headers             | `helmet` (HSTS, X-Frame-Options, etc.)                                         |
+| CORS                     | Allow-list from `CORS_ORIGINS`, `credentials: true`                            |
+| Rate limiting            | Global 100 req/min · 5/15min on OTP request · 10/15min on OTP verify           |
+| Input validation         | `class-validator` global pipe, `whitelist + forbidNonWhitelisted`              |
+| Body size                | 1 MB JSON / urlencoded — large media uploads go to R2 directly                 |
+| Password / OTP           | `argon2`                                                                       |
+| JWT                      | Access (24h) + Refresh (30d), separate secrets, ≥32 chars enforced by Joi      |
+| Webhook signatures       | `shared/crypto/verifyWebhookSignature` — HMAC + timing-safe compare            |
 | SSRF on outbound fetches | `shared/http/safeFetch` — blocks 127.0.0.1, private ranges, cloud metadata IPs |
-| HTML injection | `shared/sanitize/stripHtml` — DOMPurify, used on all user-rendered text |
-| Container | Non-root `nestjs:nodejs` user, multi-stage Alpine image |
-| Log redaction | `Authorization` and `Cookie` headers redacted by Pino |
+| HTML injection           | `shared/sanitize/stripHtml` — DOMPurify, used on all user-rendered text        |
+| Container                | Non-root `nestjs:nodejs` user, multi-stage Alpine image                        |
+| Log redaction            | `Authorization` and `Cookie` headers redacted by Pino                          |
 
 ## Epics
 

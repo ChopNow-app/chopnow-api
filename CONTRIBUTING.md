@@ -60,6 +60,35 @@ npm run build      # produces dist/
 
 CI runs the same four commands — be the first one to find your own bug.
 
+Husky also runs:
+
+- **`pre-commit`** — `lint-staged` formats + lints just your staged files (fast)
+- **`pre-push`** — full `typecheck` and `test` before allowing the push
+
+To bypass in an emergency: `git commit --no-verify` / `git push --no-verify`. Use sparingly.
+
+## Reading config / env vars
+
+Inject `EnvService` (auto-imported globally), don't read `process.env` directly:
+
+```ts
+import { EnvService } from 'src/infra/config/env.service';
+
+@Injectable()
+export class FooService {
+  constructor(private readonly env: EnvService) {}
+
+  bar() {
+    if (this.env.isProduction) {
+      /* ... */
+    }
+    const { sid, authToken } = this.env.requireTwilio(); // throws if missing
+  }
+}
+```
+
+For new env vars: add to `.env.example` + `env.validation.ts` (Joi) + `env.service.ts` (typed accessor). All three.
+
 ## Adding a new domain event
 
 When your story needs cross-module fan-out:
@@ -74,6 +103,7 @@ See `src/modules/orders/orders.service.ts` for the canonical example.
 ## Adding a new external integration (Twilio, Campay, R2, …)
 
 Pattern:
+
 1. Create `src/infra/<provider>/<provider>.service.ts` — wraps the SDK
 2. Create `src/infra/<provider>/<provider>.module.ts` — exports the service
 3. Add provider env vars to `.env.example` AND `src/infra/config/env.validation.ts` (Joi)

@@ -1,7 +1,7 @@
 import { Test } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
+import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
 describe('AuthService', () => {
@@ -20,10 +20,13 @@ describe('AuthService', () => {
         },
         { provide: JwtService, useValue: { signAsync: jest.fn().mockResolvedValue('token') } },
         {
-          provide: ConfigService,
+          provide: EnvService,
           useValue: {
-            get: jest.fn((k: string) => (k === 'NODE_ENV' ? 'test' : undefined)),
-            getOrThrow: jest.fn(() => 'a'.repeat(64)),
+            nodeEnv: 'test',
+            jwtAccessSecret: 'a'.repeat(64),
+            jwtRefreshSecret: 'b'.repeat(64),
+            jwtAccessTtl: '24h',
+            jwtRefreshTtl: '30d',
           },
         },
       ],

@@ -1,10 +1,12 @@
 import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../shared/decorators/public.decorator';
 import { AuthService } from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 
+@ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
@@ -14,6 +16,10 @@ export class AuthController {
   @Throttle({ otp: { limit: 5, ttl: 15 * 60 * 1000 } })
   @Post('request-otp')
   @HttpCode(200)
+  @ApiOperation({
+    summary: 'Request OTP',
+    description: 'Sends a 6-digit OTP via WhatsApp (primary) with SMS fallback. Story 1.1.',
+  })
   requestOtp(@Body() dto: RequestOtpDto) {
     return this.auth.requestOtp(dto.phone);
   }
@@ -23,6 +29,10 @@ export class AuthController {
   @Throttle({ otp: { limit: 10, ttl: 15 * 60 * 1000 } })
   @Post('verify-otp')
   @HttpCode(200)
+  @ApiOperation({
+    summary: 'Verify OTP',
+    description: 'Returns access + refresh JWT on success. Creates the user on first verify.',
+  })
   verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.auth.verifyOtp(dto.phone, dto.code);
   }

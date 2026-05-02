@@ -1,0 +1,4 @@
+#!/usr/bin/env sh
+# Heavier checks before pushing — typecheck + tests.
+# If anything fails, fix locally rather than pushing red.
+npm run typecheck && npm test

@@ -6,6 +6,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 
 import { envSchema } from './infra/config/env.validation';
+import { AppConfigModule } from './infra/config/config.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -26,7 +27,10 @@ import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
       pinoHttp: {
         transport:
           process.env.NODE_ENV !== 'production'
-            ? { target: 'pino-pretty', options: { singleLine: true, translateTime: 'SYS:HH:MM:ss' } }
+            ? {
+                target: 'pino-pretty',
+                options: { singleLine: true, translateTime: 'SYS:HH:MM:ss' },
+              }
             : undefined,
         redact: ['req.headers.authorization', 'req.headers.cookie'],
       },
@@ -43,6 +47,7 @@ import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
       },
     ]),
     // --- Infrastructure (global) ---
+    AppConfigModule,
     PrismaModule,
     // --- Domain modules ---
     AuthModule,
