@@ -5,7 +5,9 @@ export const envSchema = Joi.object({
   PORT: Joi.number().default(3001),
   APP_URL: Joi.string().uri().required(),
 
-  DATABASE_URL: Joi.string().uri({ scheme: ['postgresql', 'postgres'] }).required(),
+  DATABASE_URL: Joi.string()
+    .uri({ scheme: ['postgresql', 'postgres'] })
+    .required(),
 
   REDIS_HOST: Joi.string().default('localhost'),
   REDIS_PORT: Joi.number().default(6379),
@@ -39,4 +41,7 @@ export const envSchema = Joi.object({
   THROTTLE_LIMIT: Joi.number().default(100),
 
   CORS_ORIGINS: Joi.string().default('http://localhost:3000'),
+
+  // Internal flag toggled by `npm run openapi:export`. Not for users.
+  OPENAPI_EXPORT: Joi.string().valid('true', 'false').default('false'),
 });

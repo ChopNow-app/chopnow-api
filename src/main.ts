@@ -7,6 +7,7 @@ import * as express from 'express';
 import { writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { AppModule } from './app.module';
+import { APP_VERSION } from './app.version';
 import { EnvService } from './infra/config/env.service';
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 
@@ -50,7 +51,7 @@ async function bootstrap() {
   const openApiConfig = new DocumentBuilder()
     .setTitle('ChopNow API')
     .setDescription('Backend HTTP contract for chopnow-app (consumer / livreur / vendeur / admin).')
-    .setVersion(process.env.npm_package_version ?? '0.1.0')
+    .setVersion(APP_VERSION)
     .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
     .addTag('auth', 'OTP, JWT, sessions')
     .addTag('users', 'Profile, role lookups')
@@ -68,7 +69,7 @@ async function bootstrap() {
   });
 
   // Optional: dump openapi.json for `npm run openapi:export`
-  if (process.env.OPENAPI_EXPORT === 'true') {
+  if (env.openApiExport) {
     const out = resolve(process.cwd(), 'openapi.json');
     writeFileSync(out, JSON.stringify(document, null, 2));
     console.log(`OpenAPI spec written to ${out}`);

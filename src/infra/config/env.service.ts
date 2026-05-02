@@ -134,6 +134,11 @@ export class EnvService {
     };
   }
 
+  // --- Internal ---
+  get openApiExport(): boolean {
+    return this.raw.get<string>('OPENAPI_EXPORT') === 'true';
+  }
+
   // --- Throttler ---
   get throttle(): { ttlSeconds: number; limit: number } {
     return {
