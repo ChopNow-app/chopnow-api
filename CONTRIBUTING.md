@@ -132,6 +132,17 @@ test(auth): cover blacklist hit + expiry purge
 
 PR body fills the template — links story 1.7, ticks each acceptance criterion, includes a `curl` test plan.
 
+## Testing expectations per story
+
+Tests land **with the story**, not before. The infrastructure is ready (Jest + ts-jest + testcontainers); devs fill in the tests for code they write. The bar:
+
+- **Unit test for the happy path** of any new logic — mock external deps (`PrismaService`, `EnvService`, third-party SDKs). See `src/modules/auth/auth.service.spec.ts` for the pattern.
+- **Edge cases** for every error branch the story spec calls out — "after 3 attempts, blocks 15 min", "expired OTP returns 401", etc. One test per branch.
+- **Integration test** (in `test/*.integration.spec.ts`) when logic depends on real Postgres semantics — PostGIS queries, transactions, unique constraints, triggers. Use the `startTestPostgres()` helper.
+- **No tests for**: trivial DTOs, controllers that are 1-line delegates, raw SDK wrappers (`TwilioService`, `R2Service`).
+
+Coverage % isn't enforced; reviewers will push back on a PR that ships with zero tests for non-trivial logic.
+
 ## Local checks before pushing
 
 ```bash
