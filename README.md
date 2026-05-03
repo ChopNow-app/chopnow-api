@@ -109,10 +109,23 @@ Services check at request time and throw `Twilio is not configured — set TWILI
 ## What to do next
 
 1. **Read [`ARCHITECTURE.md`](./ARCHITECTURE.md)** (5 min) — the 3 module-boundary rules. Every PR is reviewed against them.
-2. **Read [`CONTRIBUTING.md`](./CONTRIBUTING.md)** (5 min) — branching, commits, story workflow, patterns for adding events/integrations.
+2. **Read [`CONTRIBUTING.md`](./CONTRIBUTING.md)** (5 min) — gitflow, commits, story workflow, patterns for adding events/integrations.
 3. **Pick a card** from the [project board](https://github.com/orgs/ChopNow-app/projects/3): drag from `Backlog` → `In Progress`. Sprint 1 cards (milestone `Sprint 1`) are tagged P0 critical.
 4. **Find the story file** — every GitHub issue body links to its source-of-truth `.md` in `_bmad-output/planning-artifacts/epics/` (private planning repo).
 5. **Branch, code, PR.** The PR template auto-loads with the acceptance-criteria checklist.
+
+### Gitflow at a glance
+
+```
+   feature/<story-id>-<slug> ──► develop  (integration, run locally via docker compose)
+                                    │
+                                    ▼
+                                  main    (production, tagged releases)
+```
+
+- Always branch from `develop`, PR back to `develop`
+- `develop` → `main` happens via a separate PR after local validation
+- Both `develop` and `main` require **1 review** before merge — see [`CONTRIBUTING.md`](./CONTRIBUTING.md#gitflow)
 
 ### Recommended first stories (low risk, good for ramp-up)
 

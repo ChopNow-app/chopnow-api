@@ -1,14 +1,14 @@
-# CI pipeline — disabled until Sprint 1 starts.
-# To enable: uncomment the push/pull_request triggers below.
+# CI — runs on every PR and on push to develop / main.
+# Required check for merging into develop or main (configure in repo UI rulesets).
 
 name: CI
 
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
 
 jobs:
   lint-test-build:
