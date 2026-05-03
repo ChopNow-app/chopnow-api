@@ -70,6 +70,25 @@ git push origin v0.X.0
 
 Always rebase your feature branch on the latest `develop` before requesting review — keeps history linear.
 
+### CI gates
+
+Two promotion stages, each with different goals:
+
+| Gate                             | Triggered on                            | Required checks (block merge)                             | Warning-only                                                                               |
+| -------------------------------- | --------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| **Gate 1** — `feature → develop` | every PR targeting `develop`            | lint · typecheck · unit tests · build · `prisma generate` | `npm audit --audit-level=high` · migration sanity (only when `prisma/migrations/` changed) |
+| **Gate 2** — `develop → main`    | every PR targeting `main` (release PRs) | same as Gate 1 (Sprint 1)                                 | same as Gate 1                                                                             |
+
+**Sprint 1 keeps it simple** — same `lint-test-build` job runs at both gates. From Sprint 2 onward we'll add at Gate 2:
+
+- testcontainers integration tests (real Postgres + PostGIS)
+- migration dry-run against an ephemeral DB
+- a smoke deploy to staging
+
+**Why one workflow file (`ci.yml`) for now:** integration tests don't exist yet, so splitting into `release.yml` + `nightly.yml` would just add maintenance overhead. We'll split when there's something heavier to gate on.
+
+**Why CI runs only on PRs (not on push to develop/main):** every commit that lands on `develop` already passed CI as a PR. Re-running on the merge commit is wasted minutes.
+
 ### Required protection (set up once in the GitHub UI)
 
 GitHub Free + private repo can't apply branch protection via API, so set this up
