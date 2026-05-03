@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+.next
+*.min.js
+*.lock
+package-lock.json
+prisma/migrations/**/migration.sql
+openapi.json
+.husky/_
