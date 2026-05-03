@@ -1,43 +1,56 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { OtpStatus, UserRole } from '@prisma/client';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
 
 const OTP_TTL_MINUTES = 5;
 const OTP_MAX_ATTEMPTS = 3;
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly env: EnvService,
+    private readonly otpDelivery: OtpDeliveryService,
   ) {}
 
   /**
-   * Request OTP for the given phone.
-   * Generates a 6-digit code, stores its argon2 hash, and (in MVP)
-   * delegates delivery to OtpDeliveryService (Twilio WhatsApp → SMS fallback).
-   * For Sprint 1 bootstrap this just stores the OTP — delivery is wired in Story 1.1.
+   * Story 1.1 — request an OTP.
+   * 1) generate 6-digit code, hash with argon2id, persist OtpLog row with channel=WHATSAPP/PENDING
+   * 2) attempt delivery (WhatsApp → SMS fallback)
+   * 3) update the row with the channel actually used + DELIVERED status
    */
   async requestOtp(phone: string): Promise<{ ok: true; expiresInSeconds: number }> {
     const code = this.generateCode();
     const codeHash = await argon2.hash(code);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
 
-    await this.prisma.otpLog.create({
-      data: {
-        phone,
-        channel: 'WHATSAPP',
-        status: 'PENDING',
-        codeHash,
-        expiresAt,
-      },
+    const log = await this.prisma.otpLog.create({
+      data: { phone, channel: 'WHATSAPP', status: 'PENDING', codeHash, expiresAt },
     });
 
-    // TODO Story 1.1: send via OtpDeliveryService (WhatsApp → SMS fallback)
+    try {
+      const { channel } = await this.otpDelivery.sendOtp(phone, code);
+      await this.prisma.otpLog.update({
+        where: { id: log.id },
+        data: { channel, status: OtpStatus.DELIVERED, deliveredAt: new Date() },
+      });
+    } catch (err) {
+      const reason = (err as Error).message;
+      this.logger.error(`OTP delivery failed for ${phone}: ${reason}`);
+      await this.prisma.otpLog.update({
+        where: { id: log.id },
+        data: { status: OtpStatus.FAILED, failedReason: reason },
+      });
+      // Surface a generic error — don't leak provider internals to the client.
+      throw new UnauthorizedException('otp_delivery_failed');
+    }
 
     return { ok: true, expiresInSeconds: OTP_TTL_MINUTES * 60 };
   }

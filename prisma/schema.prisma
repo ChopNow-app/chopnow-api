@@ -1,4 +1,5 @@
-// ChopNow API — Prisma schema (Sprint 1 starter)
+// ChopNow API — Prisma schema
+// Sprint 0 baseline: identity, vendor, catalogue, addresses, landmarks, refresh tokens, KYC.
 // Full data model grows per epic. See _bmad-output/planning-artifacts/architecture.md.
 
 generator client {
@@ -11,6 +12,10 @@ datasource db {
   url        = env("DATABASE_URL")
   extensions = [postgis]
 }
+
+// =====================================================================
+// Enums
+// =====================================================================
 
 enum UserRole {
   CONSUMER
@@ -35,27 +40,65 @@ enum OtpStatus {
   FAILED
 }
 
-// --- Story 1.1, 1.2, 1.4: User identity ---
+enum VendorType {
+  INFORMAL
+  SEMI_FORMAL
+  RESTAURANT
+}
+
+enum VendorStatus {
+  PENDING_REVIEW
+  CORRECTION_REQUESTED
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+enum RiderVehicleType {
+  MOTO
+  BICYCLE
+  CAR
+  ON_FOOT
+}
+
+enum RiderStatus {
+  PENDING_REVIEW
+  CORRECTION_REQUESTED
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
+// =====================================================================
+// Identity (Stories 1.1, 1.2, 1.4, 1.6, 1.7, 1.8)
+// =====================================================================
+
 model User {
-  id          String    @id @default(uuid())
-  phone       String?   @unique
-  email       String?   @unique
-  displayName String?
-  role        UserRole  @default(CONSUMER)
-  isActive    Boolean   @default(true)
-  isDeleted   Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           String   @id @default(uuid())
+  phone        String?  @unique
+  email        String?  @unique
+  passwordHash String? // admin only — phone-OTP users have no password
+  displayName  String?
+  role         UserRole @default(CONSUMER)
+  isActive     Boolean  @default(true)
+  isDeleted    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   otpLogs           OtpLog[]
   pushSubscriptions PushSubscription[]
+  refreshTokens     RefreshToken[]
+  addresses         Address[]
+  vendor            Vendor?
+  rider             Rider?
+  passwordResets    AdminPasswordReset[]
 
   @@index([phone])
   @@index([role])
   @@map("users")
 }
 
-// --- Story 1.1: OTP delivery audit log ---
+// Story 1.1: OTP delivery audit log
 model OtpLog {
   id           String     @id @default(uuid())
   userId       String?
@@ -76,7 +119,37 @@ model OtpLog {
   @@map("otp_logs")
 }
 
-// --- Story 1.11: Web Push subscriptions (VAPID) ---
+// Story 1.2: Refresh token rotation + Story 1.7 revocation cascade
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@map("refresh_tokens")
+}
+
+// Story 1.12: Admin password reset (one-time tokens)
+model AdminPasswordReset {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("admin_password_resets")
+}
+
+// Story 1.11: Web Push subscriptions (VAPID)
 model PushSubscription {
   id                String   @id @default(uuid())
   userId            String
@@ -91,4 +164,168 @@ model PushSubscription {
   @@unique([userId, deviceFingerprint])
   @@index([userId])
   @@map("push_subscriptions")
+}
+
+// =====================================================================
+// Geography (Story 2.15: Landmarks · Story 3.2: Addresses)
+// =====================================================================
+
+// Story 2.15: Landmark = quartier + named point of reference (Carrefour, Mosquée, etc.).
+// Drives the address picker and dispatcher rough-zone matching.
+model Landmark {
+  id           String   @id @default(uuid())
+  quartier     String
+  name         String
+  // PostGIS POINT — managed via raw SQL in migrations; Prisma sees it as Unsupported.
+  // For type-safe access, services use $queryRaw with ST_AsGeoJSON.
+  location     Unsupported("geography(Point, 4326)")
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  addresses Address[]
+
+  @@unique([quartier, name])
+  @@index([quartier])
+  @@map("landmarks")
+}
+
+// Story 3.2: Consumer / vendor / rider addresses.
+// landmarkId is optional — a saved address can be a free-form description + GPS point.
+model Address {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label        String? // e.g. "Maison", "Bureau"
+  description  String? // free-form, e.g. "Maison rouge à côté de la pharmacie"
+  quartier     String?
+  landmarkId   String?
+  landmark     Landmark? @relation(fields: [landmarkId], references: [id])
+  location     Unsupported("geography(Point, 4326)")
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@index([landmarkId])
+  @@map("addresses")
+}
+
+// =====================================================================
+// Catalogue (Epic 2)
+// =====================================================================
+
+model Vendor {
+  id              String        @id @default(uuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  type            VendorType
+  status          VendorStatus  @default(PENDING_REVIEW)
+  quartier        String
+  pointOfReference String?
+  // Optional landmark for fast geo joins; free-form quartier kept for legacy informal vendors.
+  landmarkId      String?
+  // PostGIS POINT — vendor pickup location.
+  location        Unsupported("geography(Point, 4326)")
+  whatsappPhone   String
+  momoPhone       String
+  // Display badge: "Cuisine locale 🍲" / "Maquis 🍽️" / "Restaurant 🍽️"
+  badge           String?
+  // Daily order capacity declared at onboarding ( <10 / 10-30 / >30 → 8 / 30 / 50 )
+  declaredCapacity Int?
+  // Commission rate as a fraction — overridable per vendor by admin
+  commissionRate  Decimal       @default(0.10) @db.Decimal(5, 4)
+  // Profile photo + cover photo URLs (Cloudflare R2)
+  profilePhotoUrl String?
+  coverPhotoUrl   String?
+  // Validation lifecycle
+  submittedAt     DateTime      @default(now())
+  validatedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  categories MenuCategory[]
+  items      Item[]
+
+  @@index([status])
+  @@index([type])
+  @@index([quartier])
+  @@map("vendors")
+}
+
+model MenuCategory {
+  id       String  @id @default(uuid())
+  vendorId String
+  vendor   Vendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  name     String
+  sortOrder Int    @default(0)
+  isActive Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items Item[]
+
+  @@unique([vendorId, name])
+  @@index([vendorId])
+  @@map("menu_categories")
+}
+
+model Item {
+  id           String        @id @default(uuid())
+  vendorId     String
+  vendor       Vendor        @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  categoryId   String?
+  category     MenuCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name         String
+  description  String?
+  // Price in XAF (FCFA) — integer, no decimals (smallest unit on Cameroon market is 5 FCFA)
+  priceXAF     Int
+  photoUrl     String?
+  isAvailable  Boolean       @default(true)
+  // Story 2.10: rupture stock toggle — when false, item shown as "Épuisé"
+  isInStock    Boolean       @default(true)
+  preparationMinutes Int?    // average prep time, used by dispatch ETA
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([vendorId])
+  @@index([categoryId])
+  @@map("items")
+}
+
+// =====================================================================
+// Riders / KYC (Story 1.4)
+// =====================================================================
+
+model Rider {
+  id              String           @id @default(uuid())
+  userId          String           @unique
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleType     RiderVehicleType
+  preferredZone   String?
+  status          RiderStatus      @default(PENDING_REVIEW)
+  // KYC photo URLs (Cloudflare R2 private bucket)
+  idCardPhotoUrl  String?
+  selfiePhotoUrl  String?
+  vehiclePhotoUrl String?
+  licensePlate    String?          @unique
+  momoPhone       String
+  // Reliability score, 0..100. Bumped/decreased by Story 4.6 logic.
+  reliabilityScore Int             @default(80)
+  // Validation lifecycle
+  submittedAt     DateTime         @default(now())
+  validatedAt     DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([status])
+  @@index([vehicleType])
+  @@map("riders")
 }

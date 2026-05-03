@@ -37,6 +37,9 @@ export const envSchema = Joi.object({
   R2_SECRET_ACCESS_KEY: Joi.string().allow('').optional(),
   R2_BUCKET: Joi.string().optional(),
 
+  RESEND_API_KEY: Joi.string().allow('').optional(),
+  MAIL_FROM: Joi.string().default('ChopNow <noreply@chopnow.app>'),
+
   THROTTLE_TTL_SECONDS: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
 

@@ -1,7 +1,9 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../shared/decorators/public.decorator';
+import { PhoneRateLimit } from '../../shared/decorators/phone-rate-limit.decorator';
+import { PhoneRateLimitGuard } from '../../shared/guards/phone-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
@@ -12,8 +14,11 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
-  // Story 1.1 spec: 5 OTP requests per 15 min per IP
+  // Story 1.1 spec: 5 OTP requests per 15 min per IP …
   @Throttle({ otp: { limit: 5, ttl: 15 * 60 * 1000 } })
+  // … and 5 per 15 min per phone (prevents enumeration of a single number)
+  @PhoneRateLimit({ limit: 5, ttlSeconds: 15 * 60 })
+  @UseGuards(PhoneRateLimitGuard)
   @Post('request-otp')
   @HttpCode(200)
   @ApiOperation({
@@ -27,6 +32,8 @@ export class AuthController {
   @Public()
   // Verification is cheaper but still bounded — 10 attempts per 15 min per IP
   @Throttle({ otp: { limit: 10, ttl: 15 * 60 * 1000 } })
+  @PhoneRateLimit({ limit: 10, ttlSeconds: 15 * 60 })
+  @UseGuards(PhoneRateLimitGuard)
   @Post('verify-otp')
   @HttpCode(200)
   @ApiOperation({

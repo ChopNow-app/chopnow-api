@@ -125,11 +125,20 @@ Services check at request time and throw `Twilio is not configured — set TWILI
 ## Stack
 
 - **NestJS 11** · **Prisma 6** · **TypeScript 5.7** · **Node 22 LTS** · **PostgreSQL 16 + PostGIS** · **Redis 7**
-- **SWC** for transpile (~50× faster than tsc) · **Jest** for tests · **ESLint 9** flat config · **Husky** pre-commit
-- **Helmet** + **CORS allow-list** + **Throttler** (global + per-route) + **ValidationPipe** + 1MB body limit
-- **Argon2id** for OTP/password hashing · **JWT** (access 24h + refresh 30d, separate secrets, ≥32 chars)
-- **SSRF-safe outbound fetch** (`shared/http/safeFetch`) · **HMAC webhook verify** (`shared/crypto/`) · **DOMPurify** HTML sanitize
+- **SWC** for transpile (~50× faster than tsc) · **Jest** for tests · **testcontainers** for integration · **ESLint 9** flat config · **Husky** pre-commit
+- **Helmet** + **CORS allow-list** + **Throttler** (global + per-route) + **PhoneRateLimit guard** + **ValidationPipe** + 1MB body limit
+- **Argon2id** for OTP/password hashing · **JWT** (access 24h + refresh 30d, separate secrets, ≥32 chars) · **Global JwtAuthGuard + RolesGuard**
+- **SSRF-safe outbound fetch** (`shared/http/safeFetch`) · **HMAC webhook verify** (`shared/crypto/`) · **DOMPurify** HTML sanitize · **Idempotency interceptor**
 - **OpenAPI** auto-generated from controllers · **Pino** structured logs
+
+### Infrastructure adapters (`src/infra/`)
+
+- **prisma** — `PrismaService` (global)
+- **redis** — `RedisService` (ioredis); used for JWT blacklist, idempotency, phone rate limit
+- **twilio** — `TwilioService` + `OtpDeliveryService` (WhatsApp → SMS fallback)
+- **r2** — `R2Service` (Cloudflare R2 + Sharp image pipeline + signed URLs)
+- **mail** — `MailService` (Resend) for transactional emails
+- **config** — `EnvService` typed wrapper + Joi validation
 
 ## Repo layout
 

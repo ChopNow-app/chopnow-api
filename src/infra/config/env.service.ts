@@ -134,6 +134,19 @@ export class EnvService {
     };
   }
 
+  // --- Mail (Resend) ---
+  get mail(): { resendApiKey?: string; from: string } {
+    return {
+      resendApiKey: this.raw.get<string>('RESEND_API_KEY'),
+      from: this.raw.getOrThrow<string>('MAIL_FROM'),
+    };
+  }
+  requireMail(): { resendApiKey: string; from: string } {
+    const m = this.mail;
+    if (!m.resendApiKey) throw new Error('RESEND_API_KEY is not set');
+    return { resendApiKey: m.resendApiKey, from: m.from };
+  }
+
   // --- Internal ---
   get openApiExport(): boolean {
     return this.raw.get<string>('OPENAPI_EXPORT') === 'true';

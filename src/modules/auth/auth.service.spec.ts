@@ -3,6 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { AuthService } from './auth.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -27,6 +28,12 @@ describe('AuthService', () => {
             jwtRefreshSecret: 'b'.repeat(64),
             jwtAccessTtl: '24h',
             jwtRefreshTtl: '30d',
+          },
+        },
+        {
+          provide: OtpDeliveryService,
+          useValue: {
+            sendOtp: jest.fn().mockResolvedValue({ channel: 'WHATSAPP', providerMessageId: 'sid' }),
           },
         },
       ],

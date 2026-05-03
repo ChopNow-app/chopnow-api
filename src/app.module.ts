@@ -8,6 +8,10 @@ import { LoggerModule } from 'nestjs-pino';
 import { envSchema } from './infra/config/env.validation';
 import { AppConfigModule } from './infra/config/config.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
+import { RedisModule } from './infra/redis/redis.module';
+import { TwilioModule } from './infra/twilio/twilio.module';
+import { R2Module } from './infra/r2/r2.module';
+import { MailModule } from './infra/mail/mail.module';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -15,6 +19,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { HealthModule } from './health/health.module';
 
 import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
+import { RolesGuard } from './shared/guards/roles.guard';
 
 @Module({
   imports: [
@@ -49,6 +54,10 @@ import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
     // --- Infrastructure (global) ---
     AppConfigModule,
     PrismaModule,
+    RedisModule,
+    TwilioModule,
+    R2Module,
+    MailModule,
     // --- Domain modules ---
     AuthModule,
     UsersModule,
@@ -59,10 +68,12 @@ import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
     HealthModule,
   ],
   providers: [
-    // Global rate limiter
+    // Global rate limiter (per-IP)
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     // Global auth — every route is JWT-protected by default; mark public ones with @Public()
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Global RBAC — only triggers when a route has @Roles(...)
+    { provide: APP_GUARD, useClass: RolesGuard },
   ],
 })
 export class AppModule {}
