@@ -1,12 +1,10 @@
-# CI — runs on every PR and on push to develop / main.
-# Required check for merging into develop or main (configure in repo UI rulesets).
+# CI — Gate 1 (feature → develop) and required check for develop → main releases.
+# Runs only on PRs, not on push (saves minutes; same SHA's already validated by the PR).
 
 name: CI
 
 on:
   workflow_dispatch:
-  push:
-    branches: [develop, main]
   pull_request:
     branches: [develop, main]
 
@@ -23,7 +21,27 @@ jobs:
 
       - run: npm ci
       - run: npx prisma generate
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+
+      # --- Required (block merge) ---
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      - name: Build
+        run: npm run build
+
+      # --- Warning only (informational, never blocks merge) ---
+      # `|| true` ensures the step succeeds even when audit finds high-severity issues.
+      # The summary still appears in the GitHub Actions log so reviewers see it.
+      - name: Security audit (warning only)
+        run: |
+          echo "::group::npm audit"
+          npm audit --audit-level=high || true
+          echo "::endgroup::"
+
+      - name: Migration sanity check (warning only)
+        if: contains(github.event.pull_request.changed_files, 'prisma/migrations/')
+        run: |
+          echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
