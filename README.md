@@ -138,7 +138,7 @@ Services check at request time and throw `Twilio is not configured — set TWILI
 ## Stack
 
 - **NestJS 11** · **Prisma 6** · **TypeScript 5.7** · **Node 22 LTS** · **PostgreSQL 16 + PostGIS** · **Redis 7**
-- **SWC** for transpile (~50× faster than tsc) · **Jest** for tests · **testcontainers** for integration · **ESLint 9** flat config · **Husky** pre-commit
+- **SWC** for transpile (~50× faster than tsc) · **Jest** for tests · **testcontainers** for integration · **ESLint 9** flat config · **Prettier** (`.prettierrc`, runs via lint-staged) · **Husky** pre-commit
 - **Helmet** + **CORS allow-list** + **Throttler** (global + per-route) + **PhoneRateLimit guard** + **ValidationPipe** + 1MB body limit
 - **Argon2id** for OTP/password hashing · **JWT** (access 24h + refresh 30d, separate secrets, ≥32 chars) · **Global JwtAuthGuard + RolesGuard**
 - **SSRF-safe outbound fetch** (`shared/http/safeFetch`) · **HMAC webhook verify** (`shared/crypto/`) · **DOMPurify** HTML sanitize · **Idempotency interceptor**
