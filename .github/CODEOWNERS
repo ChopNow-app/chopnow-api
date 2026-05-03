@@ -1,0 +1,14 @@
+# CODEOWNERS — auto-requests review on every PR.
+# Members listed here are added as reviewers automatically when a matching path changes.
+#
+# Format: <pattern>  <owner>...
+# Default rule: @AndreLiar reviews everything until the team grows.
+
+*                       @AndreLiar
+
+# Domain-specific overrides (uncomment + customise as the team grows):
+# /src/modules/auth/      @AndreLiar @backend-lead
+# /src/modules/dispatch/  @AndreLiar @geo-lead
+# /src/infra/             @AndreLiar
+# /prisma/                @AndreLiar
+# /.github/workflows/     @AndreLiar

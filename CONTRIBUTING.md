@@ -2,14 +2,92 @@
 
 > First-time setup is in [`README.md`](./README.md). This file covers what to do **after** you can run the app.
 
-## Branching
+## Gitflow
 
-- `main` is protected — all changes go through PRs, no direct pushes
-- Branch naming: `<story-id>-<short-slug>`
-  - `1.1-otp-request`
-  - `3.6-order-confirmation-screen`
-  - `fix/4.4-rider-heartbeat-flake` (for bug fixes outside a story)
-- Branch from `main`, rebase before merging (no merge commits in feature branches)
+Two long-lived branches + short-lived feature branches.
+
+```
+              ┌──────── feature/1.1-otp-request ────────┐
+              │                                         ▼
+   develop ───┴───────────────────────────────────────► develop  (integration / staging)
+                                                          │
+                                                          ▼ (after manual QA on local docker compose)
+                                                        main     (production)
+```
+
+| Branch                      | Purpose                                                                                | Protected? | Direct push?               |
+| --------------------------- | -------------------------------------------------------------------------------------- | ---------- | -------------------------- |
+| `main`                      | Production. Tags + deploys cut from here.                                              | ✅ yes     | ❌ no — PR + 1 review only |
+| `develop`                   | Integration. All feature work merges here first. Run locally with `docker compose up`. | ✅ yes     | ❌ no — PR + 1 review only |
+| `feature/<story-id>-<slug>` | Short-lived (1–5 days). One per story.                                                 | no         | yes (push your own)        |
+| `fix/<story-id>-<slug>`     | Bug fix outside a story                                                                | no         | yes                        |
+| `chore/<slug>`              | Tooling / docs / dependency bumps                                                      | no         | yes                        |
+
+### Daily workflow
+
+```bash
+# 1. Start from latest develop
+git checkout develop
+git pull --ff-only
+
+# 2. Branch
+git checkout -b feature/1.1-otp-request
+
+# 3. Code, commit, push
+git push -u origin feature/1.1-otp-request
+
+# 4. Open PR → develop (NOT main)
+gh pr create --base develop --fill
+
+# 5. Address review, merge after at least 1 approval + green CI
+# 6. Locally test the integrated develop branch via docker compose up
+# 7. When develop is stable, open a PR develop → main, get review, merge
+```
+
+### Promoting `develop` → `main`
+
+When `develop` has been validated end-to-end on the docker-compose stack:
+
+```bash
+gh pr create --base main --head develop \
+  --title "Release: <date or version>" \
+  --body "Cumulative changes since previous main. See diff."
+```
+
+Get a review approval, merge, then optionally tag the release:
+
+```bash
+git checkout main && git pull --ff-only
+git tag -a v0.X.0 -m "Release v0.X.0"
+git push origin v0.X.0
+```
+
+### Branch naming
+
+- `feature/<story-id>-<slug>` — `feature/1.1-otp-request`, `feature/3.6-order-confirmation`
+- `fix/<story-id>-<slug>` — `fix/4.4-rider-heartbeat-flake`
+- `chore/<slug>` — `chore/upgrade-prisma-7`
+
+Always rebase your feature branch on the latest `develop` before requesting review — keeps history linear.
+
+### Required protection (set up once in the GitHub UI)
+
+GitHub Free + private repo can't apply branch protection via API, so set this up
+in **Settings → Rules → New ruleset** for each repo. Apply identical rules to
+`main` and `develop`:
+
+- ✅ Restrict deletions
+- ✅ Block force pushes
+- ✅ Require a pull request before merging
+  - Required approvals: **1**
+  - Dismiss stale reviews on new commit: ✅
+  - Require approval of the most recent reviewable push: ✅ (main only)
+  - Require conversation resolution before merging: ✅
+- ✅ Require status checks to pass before merging
+  - Add `lint-test-build` (CI workflow job) once it has run at least once
+
+`.github/CODEOWNERS` automatically requests review from listed owners on every
+PR — keep it up to date as the team grows.
 
 ## Commit messages
 
