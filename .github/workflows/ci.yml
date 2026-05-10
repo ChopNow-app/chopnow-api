@@ -286,9 +286,16 @@ jobs:
           docker compose up -d db redis
 
           # Run Prisma migrations in a one-off container.
+          # -T disables pseudo-TTY allocation, which is critical here: without
+          # it, `compose run` attaches stdin to the container — and inside an
+          # ssh heredoc, that stdin is the *rest of the heredoc*. The temp
+          # container then silently consumes the lines that should run after
+          # migrations (compose up -d api, docker compose ps), and the deploy
+          # is half-done with no error. Lost ~45 minutes to that one on the
+          # first live deploy.
           # We call prisma via `node node_modules/prisma/build/index.js` because
           # npm/npx were stripped from the production image — see Dockerfile.
-          docker compose run --rm api \
+          docker compose run --rm -T api \
             node node_modules/prisma/build/index.js migrate deploy
 
           # Now bring up the API. --force-recreate handles two edge cases:
