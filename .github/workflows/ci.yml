@@ -1,6 +1,6 @@
-# Multi-tier CI.
+# Multi-tier CI + deploy.
 #
-# Tier 1 — always (every feature-branch push + every PR): fast feedback for the
+# Tier 1 — every feature-branch push + every PR: fast feedback for the
 #         developer. Lint, typecheck, unit tests, dep audit, secret scan, SAST.
 #         Targets ~1 minute.
 #
@@ -8,30 +8,39 @@
 #         Integration tests against an ephemeral PostGIS via testcontainers,
 #         then a full nest build. Targets ~3 minutes.
 #
-# Tier 3 — only on PRs whose base is `main` (i.e. release promotion from
-#         develop). Currently a placeholder for production-image build +
-#         container scan; will be wired up once a Dockerfile lands.
+# Tier 2.5 — PRs targeting `staging` or `main`: also build the production
+#         Docker image. Catches Dockerfile regressions one tier earlier than
+#         only-on-main.
 #
-# Why one job (and not three): the ruleset on `develop` requires the status
-# check named `lint-test-build`. Splitting into separate jobs would force a
-# ruleset change. We use step-level `if:` instead so the required check name
-# stays stable while the work tiers up by trigger.
+# Tier 3 — PR → main only: Trivy scan of the built image. HIGH/CRITICAL
+#         OS-level vulns block the merge.
+#
+# Deploy:
+# - push to staging → deploy-staging job (DigitalOcean droplet, ~26 juin 2026)
+# - push to main    → deploy-production job (Hetzner CAX11 Falkenstein)
+#
+# Why one CI job (and not three): the rulesets on `develop` / `staging` / `main`
+# require the status check named `lint-test-build`. Splitting the gate jobs
+# would force ruleset edits. We use step-level `if:` instead so the required
+# check name stays stable while the work tiers up by trigger. Deploy jobs
+# are separate (they don't gate merges, they react to merges).
 
 name: CI
 
 on:
   workflow_dispatch:
-  # Run on every push EXCEPT to main/develop (those only ever get PR-merged
-  # commits, which were already validated by the PR's check).
+  # Run on push EXCEPT to develop (only ever PR-merged commits, already
+  # validated by the PR's check). Staging and main DO get push CI because
+  # we want a final post-merge validation gate before deploy fires.
   push:
     branches-ignore:
-      - main
       - develop
   pull_request:
-    branches: [develop, main]
+    branches: [develop, staging, main]
 
-# Cancel in-progress runs when a new commit lands on the same ref. Saves
-# runner minutes during rapid iteration on a feature branch.
+# Cancel in-progress runs on the same ref. Deploy jobs follow the gate; if
+# a newer commit arrives mid-run, the older deploy is cancelled — the newer
+# one runs to completion, leaving the system at the latest state.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -130,23 +139,87 @@ jobs:
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.changed_files, 'prisma/migrations/')
         run: echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
 
-      # ─── Tier 3: PR → main only (release-tier checks) ────────────────
-      # Validates that the production image actually builds and is free of
-      # high/critical OS-level vulns BEFORE we promote develop to main.
-      # Dependabot-style scans (Tier 1) cover npm deps; Trivy here covers the
-      # base image (node:22-alpine) + everything else inside the runtime layer.
-      - name: Build production Docker image
-        if: github.event_name == 'pull_request' && github.base_ref == 'main'
-        run: docker build -t chopnow-api:${{ github.sha }} .
+      # ─── Tier 2.5: PR → staging or main (image build) ────────────────
+      # Catches Dockerfile regressions before they reach a deployable branch.
+      # PR → develop deliberately skips this — fast inner loop matters more
+      # there than catching prod-image issues that early.
+      - name: Build production Docker image (amd64 — staging target)
+        if: github.event_name == 'pull_request' && (github.base_ref == 'staging' || github.base_ref == 'main')
+        # Native amd64 build on the ubuntu-latest runner. Validates that the
+        # Dockerfile + production install graph still works — covers DO staging
+        # which runs Intel/AMD x86_64. Hetzner prod runs arm64 (CAX11 Ampere);
+        # that variant is built + scanned by the Trivy step below on PR → main.
+        # Single-arch keeps this step fast (~20s) so the inner loop on
+        # develop → staging stays tight.
+        run: docker build -t chopnow-api:${{ github.sha }}-amd64 .
 
-      - name: Trivy container scan
+      # ─── Tier 3: PR → main only (arm64 build + Trivy) ────────────────
+      # The amd64 image was already built in Tier 2.5 and validated the
+      # Dockerfile mechanically. Tier 3 additionally builds the arm64 variant
+      # (the actual Hetzner CAX11 prod target, QEMU-emulated under buildx) and
+      # runs Trivy against it. Splitting CI builds per architecture keeps
+      # Tier 2.5 fast for the common develop → staging flow.
+      - name: Set up QEMU (arm64 emulation)
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up buildx
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production image (arm64 — Hetzner target)
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        run: |
+          docker buildx build \
+            --platform linux/arm64 \
+            --load \
+            -t chopnow-api:${{ github.sha }}-arm64 \
+            .
+
+      - name: Trivy container scan (arm64 image)
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: chopnow-api:${{ github.sha }}
+          image-ref: chopnow-api:${{ github.sha }}-arm64
           format: table
           severity: HIGH,CRITICAL
           # Block the merge on any HIGH or CRITICAL finding.
           exit-code: '1'
           # Don't fail solely on Trivy failing to fetch its DB (transient infra issue).
           ignore-unfixed: true
+
+  # ─── Deploy: staging (DigitalOcean) ──────────────────────────────────
+  # Fires on every push to `staging` (i.e. after a PR merge from develop).
+  # Gated on `lint-test-build` succeeding for that same SHA.
+  deploy-staging:
+    needs: lint-test-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Placeholder — wire up SSH deploy once droplet IP is known
+        # Once `STAGING_HOST` and `STAGING_SSH_KEY` are set in the
+        # `staging` GitHub environment, replace this with:
+        #   - actions/setup-buildx-action + login to ghcr.io
+        #   - docker buildx build --platform linux/arm64 --push -t ghcr.io/<owner>/chopnow-api:staging-${{ github.sha }}
+        #   - ssh deploy@<host> "cd /opt/chopnow && docker compose pull && docker compose up -d"
+        run: |
+          echo "::notice::Staging deploy placeholder. Provision DigitalOcean droplet, add STAGING_HOST + STAGING_SSH_KEY secrets to the 'staging' environment, then replace this step."
+
+  # ─── Deploy: production (Hetzner) ────────────────────────────────────
+  # Fires on every push to `main`. Same shape as staging — different secrets
+  # and target host. Gated on `lint-test-build` (which already ran Trivy on
+  # the PR that produced this commit, since main only accepts PR merges).
+  deploy-production:
+    needs: lint-test-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Placeholder — wire up SSH deploy once Hetzner CAX11 IP is known
+        run: |
+          echo "::notice::Production deploy placeholder. Provision Hetzner CAX11 (Falkenstein), add PROD_HOST + PROD_SSH_KEY secrets to the 'production' environment, then replace this step."
