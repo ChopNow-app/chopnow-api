@@ -8,7 +8,8 @@ services:
       POSTGRES_PASSWORD: chopnow
       POSTGRES_DB: chopnow
     ports:
-      - '5432:5432'
+      # Host port 5433 — internal stays 5432. Avoids clash with other local Postgres.
+      - '5433:5432'
     volumes:
       - chopnow_pgdata:/var/lib/postgresql/data
     healthcheck:
