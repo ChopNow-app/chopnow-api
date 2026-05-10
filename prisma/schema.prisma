@@ -10,7 +10,10 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [postgis]
+  // PostGIS pulls in fuzzystrmatch + postgis_tiger_geocoder + postgis_topology
+  // automatically on the postgis/postgis Docker image. Declared here so Prisma
+  // doesn't treat them as drift on `migrate dev`.
+  extensions = [postgis, fuzzystrmatch, postgis_tiger_geocoder, postgis_topology]
 }
 
 // =====================================================================
@@ -34,6 +37,7 @@ enum OtpChannel {
 
 enum OtpStatus {
   PENDING
+  SENT
   DELIVERED
   VERIFIED
   EXPIRED
@@ -100,19 +104,22 @@ model User {
 
 // Story 1.1: OTP delivery audit log
 model OtpLog {
-  id           String     @id @default(uuid())
-  userId       String?
-  user         User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
-  phone        String
-  channel      OtpChannel
-  status       OtpStatus  @default(PENDING)
-  codeHash     String
-  attempts     Int        @default(0)
-  expiresAt    DateTime
-  deliveredAt  DateTime?
-  verifiedAt   DateTime?
-  failedReason String?
-  createdAt    DateTime   @default(now())
+  id                String     @id @default(uuid())
+  userId            String?
+  user              User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  phone             String
+  channel           OtpChannel
+  status            OtpStatus  @default(PENDING)
+  codeHash          String
+  attempts          Int        @default(0)
+  expiresAt         DateTime
+  deliveredAt       DateTime?
+  verifiedAt        DateTime?
+  failedReason      String?
+  // Twilio message SID — populated after messages.create() returns. Used by the
+  // status webhook (POST /api/twilio/status) to reconcile real delivery state.
+  providerMessageId String?    @unique
+  createdAt         DateTime   @default(now())
 
   @@index([phone, createdAt])
   @@index([userId])

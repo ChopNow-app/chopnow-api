@@ -69,12 +69,20 @@ export class EnvService {
   }
 
   // --- Twilio (Story 1.1) ---
-  get twilio(): { sid?: string; authToken?: string; whatsappFrom?: string; smsFrom?: string } {
+  get twilio(): {
+    sid?: string;
+    authToken?: string;
+    whatsappFrom?: string;
+    smsFrom?: string;
+    statusCallbackUrl?: string;
+  } {
+    const cb = this.raw.get<string>('TWILIO_STATUS_CALLBACK_URL');
     return {
       sid: this.raw.get<string>('TWILIO_ACCOUNT_SID'),
       authToken: this.raw.get<string>('TWILIO_AUTH_TOKEN'),
       whatsappFrom: this.raw.get<string>('TWILIO_WHATSAPP_FROM'),
       smsFrom: this.raw.get<string>('TWILIO_SMS_FROM'),
+      statusCallbackUrl: cb && cb.length > 0 ? cb : undefined,
     };
   }
   /** Throws if Twilio isn't configured — call from services that require it. */

@@ -24,23 +24,25 @@ export class TwilioService {
   }
 
   /** Send a WhatsApp message via Twilio. Returns the message SID on success. */
-  async sendWhatsApp(toE164: string, body: string): Promise<string> {
+  async sendWhatsApp(toE164: string, body: string, statusCallback?: string): Promise<string> {
     const { whatsappFrom } = this.env.requireTwilio();
     const msg = await this.client.messages.create({
       from: whatsappFrom.startsWith('whatsapp:') ? whatsappFrom : `whatsapp:${whatsappFrom}`,
       to: `whatsapp:${toE164}`,
       body,
+      ...(statusCallback ? { statusCallback } : {}),
     });
     return msg.sid;
   }
 
   /** Send an SMS via Twilio. Returns the message SID on success. */
-  async sendSms(toE164: string, body: string): Promise<string> {
+  async sendSms(toE164: string, body: string, statusCallback?: string): Promise<string> {
     const { smsFrom } = this.env.requireTwilio();
     const msg = await this.client.messages.create({
       from: smsFrom,
       to: toE164,
       body,
+      ...(statusCallback ? { statusCallback } : {}),
     });
     return msg.sid;
   }
