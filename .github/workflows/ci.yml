@@ -39,6 +39,19 @@ concurrency:
 jobs:
   lint-test-build:
     runs-on: ubuntu-latest
+    # Sidecar services available throughout the job. Redis boots in ~2s and is
+    # required by AppModule (E2E tests import the full module). Postgres for
+    # integration / E2E is provided via testcontainers — no service needed for it.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -104,6 +117,14 @@ jobs:
       - name: Build
         if: github.event_name == 'pull_request'
         run: npm run build
+
+      - name: E2E tests
+        # Boots the full AppModule against an ephemeral PostGIS via testcontainers,
+        # overrides only the OtpDeliveryService to capture the plaintext OTP, then
+        # exercises the real HTTP routes (request-otp → verify-otp → /users/me).
+        # ~12s including container startup.
+        if: github.event_name == 'pull_request'
+        run: npm run test:e2e
 
       - name: Migration sanity check (warning only)
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.changed_files, 'prisma/migrations/')
