@@ -29,6 +29,11 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      - name: Integration tests
+        # ubuntu-latest runners ship with Docker — testcontainers boots a postgis image
+        # and applies Prisma migrations against it. ~30s startup overhead per run; the
+        # safety net of catching real-DB regressions before merge is worth it.
+        run: npm run test:integration
       - name: Build
         run: npm run build
 

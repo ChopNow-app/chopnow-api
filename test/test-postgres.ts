@@ -39,6 +39,8 @@ export async function startTestPostgres(): Promise<TestPostgresContext> {
 
   return {
     url,
-    stop: () => container.stop(),
+    stop: async () => {
+      await container.stop();
+    },
   };
 }
