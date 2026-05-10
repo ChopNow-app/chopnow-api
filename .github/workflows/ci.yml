@@ -286,17 +286,24 @@ jobs:
           docker compose up -d db redis
 
           # Run Prisma migrations in a one-off container.
-          # -T disables pseudo-TTY allocation, which is critical here: without
-          # it, `compose run` attaches stdin to the container — and inside an
-          # ssh heredoc, that stdin is the *rest of the heredoc*. The temp
-          # container then silently consumes the lines that should run after
-          # migrations (compose up -d api, docker compose ps), and the deploy
-          # is half-done with no error. Lost ~45 minutes to that one on the
-          # first live deploy.
+          #
+          # Two stdin-related guards are needed here, both because we're inside
+          # an `ssh host 'bash -s' <<'EOF' ... EOF` heredoc:
+          #   -T              disables TTY allocation
+          #   </dev/null      explicitly closes the container's stdin
+          # Without BOTH, compose forwards the heredoc's remaining bytes into
+          # the container as its stdin. The container silently consumes the
+          # rest of the script and exits clean — the bash on the remote then
+          # has no more commands to run, so `up -d api --force-recreate` and
+          # the trailing `docker compose ps` never execute. Step exits 0,
+          # CI goes green, operator is left wondering. We tried `-T` alone in
+          # PR #115 — it disabled TTY but stdin was still attached, same
+          # symptom. </dev/null is the actual fix.
+          #
           # We call prisma via `node node_modules/prisma/build/index.js` because
           # npm/npx were stripped from the production image — see Dockerfile.
           docker compose run --rm -T api \
-            node node_modules/prisma/build/index.js migrate deploy
+            node node_modules/prisma/build/index.js migrate deploy < /dev/null
 
           # Now bring up the API. --force-recreate handles two edge cases:
           # (1) Previous deploy left the api container in a crashloop (restart:
