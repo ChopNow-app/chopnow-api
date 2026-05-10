@@ -1,18 +1,49 @@
-# CI — Gate 1 (feature → develop) and required check for develop → main releases.
-# Runs only on PRs, not on push (saves minutes; same SHA's already validated by the PR).
+# Multi-tier CI.
+#
+# Tier 1 — always (every feature-branch push + every PR): fast feedback for the
+#         developer. Lint, typecheck, unit tests, dep audit, secret scan, SAST.
+#         Targets ~1 minute.
+#
+# Tier 2 — every PR (skipped on feature pushes to save runner minutes):
+#         Integration tests against an ephemeral PostGIS via testcontainers,
+#         then a full nest build. Targets ~3 minutes.
+#
+# Tier 3 — only on PRs whose base is `main` (i.e. release promotion from
+#         develop). Currently a placeholder for production-image build +
+#         container scan; will be wired up once a Dockerfile lands.
+#
+# Why one job (and not three): the ruleset on `develop` requires the status
+# check named `lint-test-build`. Splitting into separate jobs would force a
+# ruleset change. We use step-level `if:` instead so the required check name
+# stays stable while the work tiers up by trigger.
 
 name: CI
 
 on:
   workflow_dispatch:
+  # Run on every push EXCEPT to main/develop (those only ever get PR-merged
+  # commits, which were already validated by the PR's check).
+  push:
+    branches-ignore:
+      - main
+      - develop
   pull_request:
     branches: [develop, main]
+
+# Cancel in-progress runs when a new commit lands on the same ref. Saves
+# runner minutes during rapid iteration on a feature branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-test-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # gitleaks scans git history — needs the full repo, not a shallow clone.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -22,30 +53,68 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
 
-      # --- Required (block merge) ---
+      # ─── Tier 1: every push + every PR ───────────────────────────────
       - name: Lint
         run: npm run lint
+
       - name: Typecheck
         run: npm run typecheck
+
       - name: Unit tests
         run: npm test
-      - name: Integration tests
-        # ubuntu-latest runners ship with Docker — testcontainers boots a postgis image
-        # and applies Prisma migrations against it. ~30s startup overhead per run; the
-        # safety net of catching real-DB regressions before merge is worth it.
-        run: npm run test:integration
-      - name: Build
-        run: npm run build
 
-      # --- Required: fail on any high-severity vulnerability ---
-      # We're at 0 vulns on develop after PR #102; this step's job is to keep us
-      # there. Dependabot opens auto-fix PRs (see .github/dependabot.yml) which
-      # become the way to clear new alerts — a PR that introduces one without
-      # fixing it can no longer slip through.
-      - name: Security audit
+      - name: Security audit (deps)
+        # Blocks on high+ vulnerabilities. Dependabot opens auto-fix PRs
+        # for routine updates; this gate makes sure no PR introduces a
+        # known CVE without also resolving it.
         run: npm audit --audit-level=high
 
-      - name: Migration sanity check (warning only)
-        if: contains(github.event.pull_request.changed_files, 'prisma/migrations/')
+      - name: Secrets scan (gitleaks)
+        # Catches accidentally committed credentials in the diff or history.
+        # We use the binary directly (not gitleaks-action) because the action
+        # requires a paid license for commercial orgs. Bump GITLEAKS_VERSION
+        # manually on advisory; the binary is reproducible from a tagged release.
         run: |
-          echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
+          GITLEAKS_VERSION=8.21.2
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar xz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --exit-code 1 --no-banner
+
+      - name: SAST scan (Semgrep)
+        # Static analysis for Node/TS security issues (auth bypass, SSRF, XSS,
+        # SQL/NoSQL injection patterns, etc.). 0 findings on develop today;
+        # any new PR that introduces a flagged pattern fails here.
+        run: |
+          python3 -m pip install --quiet semgrep
+          semgrep scan \
+            --config=p/typescript \
+            --config=p/security-audit \
+            --metrics=off \
+            --error \
+            src/
+
+      # ─── Tier 2: PR only (skipped on feature pushes — too slow for inner loop) ─
+      - name: Integration tests
+        if: github.event_name == 'pull_request'
+        # ubuntu-latest has Docker; testcontainers boots a postgis image and
+        # applies Prisma migrations against it. ~30s overhead; catches real-DB
+        # regressions (PostGIS, transactions, unique constraints) before merge.
+        run: npm run test:integration
+
+      - name: Build
+        if: github.event_name == 'pull_request'
+        run: npm run build
+
+      - name: Migration sanity check (warning only)
+        if: github.event_name == 'pull_request' && contains(github.event.pull_request.changed_files, 'prisma/migrations/')
+        run: echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
+
+      # ─── Tier 3: PR → main only (release-tier checks) ────────────────
+      - name: Release-readiness (placeholder)
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        # When a Dockerfile lands, this becomes:
+        #   docker build -t chopnow-api:${{ github.sha }} .
+        #   trivy image --severity HIGH,CRITICAL --exit-code 1 chopnow-api:${{ github.sha }}
+        # Until then, the warning makes the gap visible to anyone promoting to main.
+        run: |
+          echo "::warning::Release-tier checks are a placeholder. Production image build + Trivy/Grype scan will run here once a Dockerfile is committed."
