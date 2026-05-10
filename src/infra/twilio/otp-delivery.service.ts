@@ -24,9 +24,10 @@ export class OtpDeliveryService {
     private readonly env: EnvService,
   ) {}
 
-  async sendOtp(phone9digits: string, code: string): Promise<OtpDeliveryResult> {
-    const e164 = this.toE164(phone9digits);
+  async sendOtp(phone: string, code: string): Promise<OtpDeliveryResult> {
+    const e164 = this.toE164(phone);
     const body = this.formatBody(code);
+    const statusCallback = this.env.twilio.statusCallbackUrl;
 
     // Dev convenience: skip live delivery if Twilio isn't configured.
     if (!this.isTwilioConfigured()) {
@@ -38,7 +39,7 @@ export class OtpDeliveryService {
 
     // Try WhatsApp first
     try {
-      const sid = await this.twilio.sendWhatsApp(e164, body);
+      const sid = await this.twilio.sendWhatsApp(e164, body, statusCallback);
       return { channel: OtpChannel.WHATSAPP, providerMessageId: sid };
     } catch (err) {
       this.logger.warn(
@@ -47,18 +48,26 @@ export class OtpDeliveryService {
     }
 
     // SMS fallback
-    const sid = await this.twilio.sendSms(e164, body);
+    const sid = await this.twilio.sendSms(e164, body, statusCallback);
     return { channel: OtpChannel.SMS, providerMessageId: sid };
   }
 
   private isTwilioConfigured(): boolean {
     const { sid, authToken, whatsappFrom, smsFrom } = this.env.twilio;
-    return !!(sid && authToken && whatsappFrom && smsFrom);
+    if (!sid || !authToken || !whatsappFrom || !smsFrom) return false;
+    // Reject the placeholder values shipped in .env.example so a fresh
+    // clone falls into dev-log mode instead of hitting Twilio with garbage creds.
+    if (!sid.startsWith('AC') || sid.includes('xxxx')) return false;
+    if (authToken.toLowerCase().includes('your_twilio')) return false;
+    return true;
   }
 
-  /** Cameroon 9-digit phone → +237XXXXXXXXX */
-  private toE164(phone9digits: string): string {
-    return `+237${phone9digits}`;
+  /** Cameroon 9-digit phone → +237XXXXXXXXX. Pass-through when already E.164. */
+  private toE164(phone: string): string {
+    if (phone.startsWith('+')) return phone;
+    if (/^6[5-9]\d{7}$/.test(phone)) return `+237${phone}`;
+    // Dev: bare international digits (e.g. "33695412820") → prepend '+'
+    return `+${phone}`;
   }
 
   private formatBody(code: string): string {

@@ -5,6 +5,7 @@ import { OtpStatus, UserRole } from '@prisma/client';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
+import { normalizePhone } from '../../shared/phone/phone.util';
 
 const OTP_TTL_MINUTES = 5;
 const OTP_MAX_ATTEMPTS = 3;
@@ -27,6 +28,7 @@ export class AuthService {
    * 3) update the row with the channel actually used + DELIVERED status
    */
   async requestOtp(phone: string): Promise<{ ok: true; expiresInSeconds: number }> {
+    phone = normalizePhone(phone);
     const code = this.generateCode();
     const codeHash = await argon2.hash(code);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
@@ -36,10 +38,15 @@ export class AuthService {
     });
 
     try {
-      const { channel } = await this.otpDelivery.sendOtp(phone, code);
+      const { channel, providerMessageId } = await this.otpDelivery.sendOtp(phone, code);
+      // SENT (not DELIVERED): Twilio's messages.create() returns a SID before
+      // actual delivery. The /api/twilio/status webhook reconciles this row to
+      // DELIVERED or FAILED when Twilio reports the real outcome. In dev, where
+      // no public callback URL is configured, the row remains SENT — verifyOtp
+      // accepts that as a valid pre-verification state.
       await this.prisma.otpLog.update({
         where: { id: log.id },
-        data: { channel, status: OtpStatus.DELIVERED, deliveredAt: new Date() },
+        data: { channel, status: OtpStatus.SENT, providerMessageId },
       });
     } catch (err) {
       const reason = (err as Error).message;
@@ -59,8 +66,15 @@ export class AuthService {
     phone: string,
     code: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
+    phone = normalizePhone(phone);
     const log = await this.prisma.otpLog.findFirst({
-      where: { phone, status: { in: ['PENDING', 'DELIVERED'] }, expiresAt: { gt: new Date() } },
+      where: {
+        phone,
+        // PENDING covers the brief window before sendOtp resolves; SENT is the normal post-send
+        // state until the Twilio webhook upgrades it to DELIVERED. All three are valid for verify.
+        status: { in: [OtpStatus.PENDING, OtpStatus.SENT, OtpStatus.DELIVERED] },
+        expiresAt: { gt: new Date() },
+      },
       orderBy: { createdAt: 'desc' },
     });
 
