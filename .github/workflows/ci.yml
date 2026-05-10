@@ -105,6 +105,14 @@ jobs:
         if: github.event_name == 'pull_request'
         run: npm run build
 
+      - name: E2E tests
+        # Boots the full AppModule against an ephemeral PostGIS via testcontainers,
+        # overrides only the OtpDeliveryService to capture the plaintext OTP, then
+        # exercises the real HTTP routes (request-otp → verify-otp → /users/me).
+        # ~12s including container startup.
+        if: github.event_name == 'pull_request'
+        run: npm run test:e2e
+
       - name: Migration sanity check (warning only)
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.changed_files, 'prisma/migrations/')
         run: echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
