@@ -20,7 +20,17 @@ ENV NODE_ENV=production
 RUN addgroup -S nodejs && adduser -S nestjs -G nodejs
 
 COPY --chown=nestjs:nodejs package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# --ignore-scripts skips the `prepare` hook (which would try to run husky —
+# a devDependency we don't ship). Cleaner than HUSKY=0 because it also cuts
+# any other transitive postinstall noise from the production layer.
+#
+# After install, strip the bundled npm CLI: at runtime we only run
+# `node dist/main.js`, so the npm package (~50 MB + its own picomatch/etc.
+# transitives that show up in Trivy scans) is dead weight + extra attack
+# surface. Production images are intentionally non-self-modifying.
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 COPY --chown=nestjs:nodejs --from=builder /app/dist ./dist
 COPY --chown=nestjs:nodejs --from=builder /app/prisma ./prisma
