@@ -45,4 +45,8 @@ COPY --chown=nestjs:nodejs --from=builder /app/node_modules/@prisma ./node_modul
 USER nestjs
 EXPOSE 3001
 
-CMD ["node", "dist/main.js"]
+# The Nest SWC builder, with `sourceRoot: "src"` in nest-cli.json, mirrors the
+# source layout under dist. So src/main.ts → dist/src/main.js (not dist/main.js).
+# The first staging deploy hit this because nobody had ever run `start:prod` —
+# `start:dev` uses the in-memory SWC pipeline and doesn't touch dist/.
+CMD ["node", "dist/src/main.js"]
