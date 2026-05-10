@@ -4,16 +4,14 @@ import { startTestPostgres, TestPostgresContext } from './test-postgres';
 /**
  * Reference integration test.
  *
- * Run with: `npm run test:integration`
+ * Run with: `npm run test:integration` (also runs in CI on every PR — see
+ * .github/workflows/ci.yml).
  *
  * This pattern is the canonical example for any Sprint 1+ story whose logic
  * depends on real Postgres semantics (PostGIS, transactions, unique constraints,
  * triggers). For unit tests of pure logic, keep using mocked Prisma.
- *
- * Skipped by default in CI until Docker is available on the runner — flip the
- * `describe.skip` to `describe` once you have a working Docker daemon.
  */
-describe.skip('Users (integration)', () => {
+describe('Users (integration)', () => {
   let ctx: TestPostgresContext;
   let prisma: PrismaClient;
 
