@@ -3,6 +3,9 @@ dist/
 .env
 .env.local
 .env.*.local
+# Deploy-side env files rendered at CI time, never committed.
+deploy/.env
+deploy/.env.staging
 *.log
 .DS_Store
 .vscode/

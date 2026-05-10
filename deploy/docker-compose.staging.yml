@@ -1,0 +1,70 @@
+# Compose stack deployed to /opt/chopnow/staging/docker-compose.yml on the
+# DigitalOcean staging droplet. Driven by the CI deploy job:
+#   1. Builds + pushes ghcr.io/chopnow-app/chopnow-api:staging-<sha>
+#   2. SCPs this file + a generated .env to the droplet
+#   3. SSHes `docker compose pull && up -d --remove-orphans`
+#   4. Runs `prisma migrate deploy` as a one-shot via `docker compose run --rm`
+#
+# Substituted env vars come from the .env file in the same directory at apply
+# time. The .env is regenerated on every deploy from GitHub environment
+# secrets — never committed.
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: chopnow-staging-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: chopnow
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: chopnow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U chopnow']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Not exposed to the host — only reachable from the compose network.
+
+  redis:
+    image: redis:7-alpine
+    container_name: chopnow-staging-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Same: compose-internal only.
+
+  api:
+    # Local image — the CI deploy job builds it on a GitHub runner, saves it
+    # as a tar, scp's it to the droplet, and `docker load`s. No registry
+    # involved, which keeps first-deploy mechanics simple. We'll migrate to
+    # ghcr.io (or another registry) once we have multiple deploy targets.
+    image: chopnow-api:staging-${IMAGE_TAG}
+    container_name: chopnow-staging-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    ports:
+      # Exposed to the world via the DO cloud firewall (port 3001 inbound
+      # is currently not opened — we'll reach the API on this host:port
+      # through SSH tunneling for the first deploy, then open the firewall
+      # rule once nginx + TLS lands. The deploy verifies /health locally
+      # from the droplet, not over the public internet.
+      - '127.0.0.1:3001:3001'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:3001/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+    name: chopnow_staging_pgdata

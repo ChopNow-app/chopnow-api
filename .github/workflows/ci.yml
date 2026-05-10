@@ -193,6 +193,15 @@ jobs:
   # ─── Deploy: staging (DigitalOcean) ──────────────────────────────────
   # Fires on every push to `staging` (i.e. after a PR merge from develop).
   # Gated on `lint-test-build` succeeding for that same SHA.
+  #
+  # Flow:
+  #   1. Build the amd64 production image (DO Basic droplets are x86_64)
+  #   2. Save → gzip → scp the tar to the droplet (no registry yet)
+  #   3. Render .env from `staging` environment secrets
+  #   4. scp .env + compose file to /opt/chopnow/staging/
+  #   5. SSH: docker load → up -d db redis → migrate → up -d api
+  #   6. Health check via SSH tunnel (3001 is bound to 127.0.0.1 only,
+  #      not exposed externally yet)
   deploy-staging:
     needs: lint-test-build
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
@@ -200,14 +209,116 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Placeholder — wire up SSH deploy once droplet IP is known
-        # Once `STAGING_HOST` and `STAGING_SSH_KEY` are set in the
-        # `staging` GitHub environment, replace this with:
-        #   - actions/setup-buildx-action + login to ghcr.io
-        #   - docker buildx build --platform linux/arm64 --push -t ghcr.io/<owner>/chopnow-api:staging-${{ github.sha }}
-        #   - ssh deploy@<host> "cd /opt/chopnow && docker compose pull && docker compose up -d"
+
+      - name: Build amd64 staging image
+        run: docker build -t chopnow-api:staging-${{ github.sha }} .
+
+      - name: Save image as tar.gz
         run: |
-          echo "::notice::Staging deploy placeholder. Provision DigitalOcean droplet, add STAGING_HOST + STAGING_SSH_KEY secrets to the 'staging' environment, then replace this step."
+          docker save chopnow-api:staging-${{ github.sha }} | gzip > /tmp/chopnow-staging.tar.gz
+          ls -lh /tmp/chopnow-staging.tar.gz
+
+      - name: Set up SSH (deploy key)
+        # webfactory/ssh-agent handles the agent lifecycle + cleans up
+        # the private key from memory at job end. Cleaner than writing
+        # the key to ~/.ssh/ ourselves.
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_KEY }}
+
+      - name: Trust droplet host key
+        run: ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Render .env from secrets
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_JWT_ACCESS_SECRET: ${{ secrets.STAGING_JWT_ACCESS_SECRET }}
+          STAGING_JWT_REFRESH_SECRET: ${{ secrets.STAGING_JWT_REFRESH_SECRET }}
+          SHA: ${{ github.sha }}
+        run: |
+          cat > /tmp/.env.staging <<EOF
+          NODE_ENV=production
+          PORT=3001
+          APP_URL=http://${STAGING_HOST}:3001
+          DB_PASSWORD=${STAGING_DB_PASSWORD}
+          DATABASE_URL=postgresql://chopnow:${STAGING_DB_PASSWORD}@db:5432/chopnow?schema=public
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          REDIS_PASSWORD=
+          JWT_ACCESS_SECRET=${STAGING_JWT_ACCESS_SECRET}
+          JWT_REFRESH_SECRET=${STAGING_JWT_REFRESH_SECRET}
+          JWT_ACCESS_TTL=24h
+          JWT_REFRESH_TTL=30d
+          MAIL_FROM=ChopNow Staging <noreply@chopnow.app>
+          THROTTLE_TTL_SECONDS=60
+          THROTTLE_LIMIT=100
+          CORS_ORIGINS=http://localhost:3000,http://${STAGING_HOST}:3001
+          IMAGE_TAG=${SHA}
+          EOF
+
+      - name: Transfer artifacts to droplet
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+        run: |
+          scp /tmp/chopnow-staging.tar.gz "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/image.tar.gz"
+          scp deploy/docker-compose.staging.yml "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/docker-compose.yml"
+          scp /tmp/.env.staging "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/.env"
+          # Local copy of the env file has plaintext secrets — wipe after upload.
+          shred -u /tmp/.env.staging 2>/dev/null || rm -f /tmp/.env.staging
+
+      - name: Deploy on droplet
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+        run: |
+          ssh "${STAGING_USER}@${STAGING_HOST}" 'bash -s' <<'EOF'
+          set -euo pipefail
+          cd /opt/chopnow/staging
+
+          # Load the image into the local docker daemon.
+          gunzip -c image.tar.gz | docker load
+          rm -f image.tar.gz
+
+          # Bring up DB + Redis first; wait for healthy via depends_on at next
+          # `up` call. Doing it in two steps makes the migration phase explicit.
+          docker compose up -d db redis
+
+          # Run Prisma migrations in a one-off container.
+          # We call prisma via `node node_modules/prisma/build/index.js` because
+          # npm/npx were stripped from the production image — see Dockerfile.
+          docker compose run --rm api \
+            node node_modules/prisma/build/index.js migrate deploy
+
+          # Now bring up the API.
+          docker compose up -d api --remove-orphans
+
+          # Show the resulting state for the workflow log.
+          docker compose ps
+          EOF
+
+      - name: Health check
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+        run: |
+          # 3001 is bound to 127.0.0.1 on the droplet (firewall doesn't even
+          # need to forward it from the outside yet — that comes when nginx
+          # + TLS land). So we ssh in and curl localhost.
+          for i in 1 2 3 4 5 6; do
+            if ssh "${STAGING_USER}@${STAGING_HOST}" 'curl -fs http://localhost:3001/health'; then
+              echo
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "attempt $i/6: not ready, retrying in 5s..."
+            sleep 5
+          done
+          echo "Health check failed after 30s. Last 50 lines of api logs:"
+          ssh "${STAGING_USER}@${STAGING_HOST}" \
+            'cd /opt/chopnow/staging && docker compose logs api --tail=50'
+          exit 1
 
   # ─── Deploy: production (Hetzner) ────────────────────────────────────
   # Fires on every push to `main`. Same shape as staging — different secrets
