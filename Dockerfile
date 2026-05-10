@@ -35,6 +35,12 @@ RUN npm ci --omit=dev --ignore-scripts \
 COPY --chown=nestjs:nodejs --from=builder /app/dist ./dist
 COPY --chown=nestjs:nodejs --from=builder /app/prisma ./prisma
 COPY --chown=nestjs:nodejs --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+# Prisma CLI — needed to run `prisma migrate deploy` at deploy time. It's a
+# devDependency (kept out of runtime install via --omit=dev) but the CLI
+# binary + its engine helpers live entirely under node_modules/prisma, so
+# we can bolt it on without dragging the full dev tree. ~15 MB.
+COPY --chown=nestjs:nodejs --from=builder /app/node_modules/prisma ./node_modules/prisma
+COPY --chown=nestjs:nodejs --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 USER nestjs
 EXPOSE 3001
