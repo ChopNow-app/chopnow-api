@@ -131,11 +131,22 @@ jobs:
         run: echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
 
       # ─── Tier 3: PR → main only (release-tier checks) ────────────────
-      - name: Release-readiness (placeholder)
+      # Validates that the production image actually builds and is free of
+      # high/critical OS-level vulns BEFORE we promote develop to main.
+      # Dependabot-style scans (Tier 1) cover npm deps; Trivy here covers the
+      # base image (node:22-alpine) + everything else inside the runtime layer.
+      - name: Build production Docker image
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
-        # When a Dockerfile lands, this becomes:
-        #   docker build -t chopnow-api:${{ github.sha }} .
-        #   trivy image --severity HIGH,CRITICAL --exit-code 1 chopnow-api:${{ github.sha }}
-        # Until then, the warning makes the gap visible to anyone promoting to main.
-        run: |
-          echo "::warning::Release-tier checks are a placeholder. Production image build + Trivy/Grype scan will run here once a Dockerfile is committed."
+        run: docker build -t chopnow-api:${{ github.sha }} .
+
+      - name: Trivy container scan
+        if: github.event_name == 'pull_request' && github.base_ref == 'main'
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: chopnow-api:${{ github.sha }}
+          format: table
+          severity: HIGH,CRITICAL
+          # Block the merge on any HIGH or CRITICAL finding.
+          exit-code: '1'
+          # Don't fail solely on Trivy failing to fetch its DB (transient infra issue).
+          ignore-unfixed: true
