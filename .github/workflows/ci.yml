@@ -37,14 +37,13 @@ jobs:
       - name: Build
         run: npm run build
 
-      # --- Warning only (informational, never blocks merge) ---
-      # `|| true` ensures the step succeeds even when audit finds high-severity issues.
-      # The summary still appears in the GitHub Actions log so reviewers see it.
-      - name: Security audit (warning only)
-        run: |
-          echo "::group::npm audit"
-          npm audit --audit-level=high || true
-          echo "::endgroup::"
+      # --- Required: fail on any high-severity vulnerability ---
+      # We're at 0 vulns on develop after PR #102; this step's job is to keep us
+      # there. Dependabot opens auto-fix PRs (see .github/dependabot.yml) which
+      # become the way to clear new alerts — a PR that introduces one without
+      # fixing it can no longer slip through.
+      - name: Security audit
+        run: npm audit --audit-level=high
 
       - name: Migration sanity check (warning only)
         if: contains(github.event.pull_request.changed_files, 'prisma/migrations/')

@@ -1,0 +1,52 @@
+# Dependabot config — controls how GitHub auto-scans dependencies and opens
+# update PRs. Security updates run daily by default regardless of `schedule`;
+# this file mainly tunes routine *version* updates so we don't drown in PRs.
+#
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  # --- npm (chopnow-api itself) ---
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Africa/Douala
+    target-branch: develop
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore
+      include: scope
+    # Bundle minor/patch bumps into 2 PRs per week (one per group) instead of
+    # 30 separate PRs. Major bumps still get individual PRs so we read the
+    # changelog before merging.
+    groups:
+      production-deps:
+        applies-to: version-updates
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+      dev-deps:
+        applies-to: version-updates
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # --- GitHub Actions (workflow YAML pinned versions) ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    target-branch: develop
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: chore(ci)
