@@ -39,11 +39,12 @@ services:
     # Same: compose-internal only.
 
   api:
-    # Local image — the CI deploy job builds it on a GitHub runner, saves it
-    # as a tar, scp's it to the droplet, and `docker load`s. No registry
-    # involved, which keeps first-deploy mechanics simple. We'll migrate to
-    # ghcr.io (or another registry) once we have multiple deploy targets.
-    image: chopnow-api:staging-${IMAGE_TAG}
+    # Pulled from GitHub Container Registry. Pushed by chopnow-api's
+    # deploy-staging job on every push to the `staging` branch. The package
+    # is public so `docker pull` works without authentication on the droplet
+    # — flip the package to private and add `docker login ghcr.io` to the
+    # deploy script if we want to lock it down later.
+    image: ghcr.io/chopnow-app/chopnow-api:staging-${IMAGE_TAG}
     container_name: chopnow-staging-api
     restart: unless-stopped
     depends_on:

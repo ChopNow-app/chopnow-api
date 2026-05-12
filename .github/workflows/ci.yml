@@ -202,28 +202,53 @@ jobs:
   # Gated on `lint-test-build` succeeding for that same SHA.
   #
   # Flow:
-  #   1. Build the amd64 production image (DO Basic droplets are x86_64)
-  #   2. Save → gzip → scp the tar to the droplet (no registry yet)
+  #   1. Login to ghcr.io with GITHUB_TOKEN (workflow-scoped, ephemeral)
+  #   2. Build amd64 image (DO Basic droplets are x86_64) and push to
+  #      ghcr.io/chopnow-app/chopnow-api:staging-<sha>
   #   3. Render .env from `staging` environment secrets
   #   4. scp .env + compose file to /opt/chopnow/staging/
-  #   5. SSH: docker load → up -d db redis → migrate → up -d api
+  #   5. SSH: docker compose pull (from ghcr.io) → up db/redis → migrate
+  #      → up -d api --force-recreate
   #   6. Health check via SSH tunnel (3001 is bound to 127.0.0.1 only,
   #      not exposed externally yet)
+  #
+  # Why ghcr.io and not tar+scp? With Hetzner prod arriving end of June we'll
+  # have two deploy targets; the registry lets the same built image serve
+  # both without re-running the build per target. Build history is also
+  # browsable in the GitHub Packages UI, which makes rollbacks faster (pick
+  # any prior `staging-<sha>` tag, redeploy).
   deploy-staging:
     needs: lint-test-build
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
     environment: staging
+    permissions:
+      contents: read
+      packages: write # required to push to ghcr.io
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build amd64 staging image
-        run: docker build -t chopnow-api:staging-${{ github.sha }} .
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Save image as tar.gz
+      - name: Build + push amd64 staging image
+        # Native amd64 build on the runner. ~30s + ~30-60s for the push.
+        # Tag pattern: ghcr.io/<org>/chopnow-api:staging-<sha>
+        # Also push a moving `staging` tag pointing at the same digest so
+        # the compose file or rollbacks can reference `staging` for "current".
         run: |
-          docker save chopnow-api:staging-${{ github.sha }} | gzip > /tmp/chopnow-staging.tar.gz
-          ls -lh /tmp/chopnow-staging.tar.gz
+          IMAGE_REPO=ghcr.io/${{ github.repository_owner }}/chopnow-api
+          IMAGE_REPO_LC=$(echo "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]')
+          docker build \
+            -t "$IMAGE_REPO_LC:staging-${{ github.sha }}" \
+            -t "$IMAGE_REPO_LC:staging" \
+            .
+          docker push "$IMAGE_REPO_LC:staging-${{ github.sha }}"
+          docker push "$IMAGE_REPO_LC:staging"
 
       - name: Set up SSH (deploy key)
         # webfactory/ssh-agent handles the agent lifecycle + cleans up
@@ -264,12 +289,11 @@ jobs:
           IMAGE_TAG=${SHA}
           EOF
 
-      - name: Transfer artifacts to droplet
+      - name: Transfer config to droplet
         env:
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
           STAGING_USER: ${{ secrets.STAGING_USER }}
         run: |
-          scp /tmp/chopnow-staging.tar.gz "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/image.tar.gz"
           scp deploy/docker-compose.staging.yml "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/docker-compose.yml"
           scp /tmp/.env.staging "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/.env"
           # Local copy of the env file has plaintext secrets — wipe after upload.
@@ -284,9 +308,12 @@ jobs:
           set -euo pipefail
           cd /opt/chopnow/staging
 
-          # Load the image into the local docker daemon.
-          gunzip -c image.tar.gz | docker load
-          rm -f image.tar.gz
+          # Pull the image we just pushed. The package is public on ghcr.io
+          # (visibility set out-of-band via `gh api`), so no docker login is
+          # needed on the droplet. If we ever flip to private, add
+          # `docker login ghcr.io -u <user> --password-stdin` here, fed from
+          # a GitHub env secret holding a fine-grained PAT with read:packages.
+          docker compose pull api
 
           # Bring up DB + Redis first; wait for healthy via depends_on at next
           # `up` call. Doing it in two steps makes the migration phase explicit.
@@ -301,14 +328,8 @@ jobs:
           # Without BOTH, compose forwards the heredoc's remaining bytes into
           # the container as its stdin. The container silently consumes the
           # rest of the script and exits clean — the bash on the remote then
-          # has no more commands to run, so `up -d api --force-recreate` and
-          # the trailing `docker compose ps` never execute. Step exits 0,
-          # CI goes green, operator is left wondering. We tried `-T` alone in
-          # PR #115 — it disabled TTY but stdin was still attached, same
+          # has no more commands to run. We tried `-T` alone in PR #115 — same
           # symptom. </dev/null is the actual fix.
-          #
-          # We call prisma via `node node_modules/prisma/build/index.js` because
-          # npm/npx were stripped from the production image — see Dockerfile.
           docker compose run --rm -T api \
             node node_modules/prisma/build/index.js migrate deploy < /dev/null
 
@@ -317,7 +338,6 @@ jobs:
           #     unless-stopped). Compose's default `up -d` may not reliably
           #     touch a restarting container, leaving it stuck on the old image.
           # (2) Config drift between the on-disk compose.yml and what's running.
-          # Cost: a few extra seconds per deploy. Worth it for idempotence.
           docker compose up -d api --force-recreate --remove-orphans
 
           # Show the resulting state for the workflow log.
