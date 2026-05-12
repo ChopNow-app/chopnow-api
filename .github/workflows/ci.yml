@@ -45,6 +45,13 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Opt every JS action into Node 24 ahead of GitHub's June 2, 2026 forced
+# migration. Removes the deprecation warning emitted by checkout@v4,
+# setup-node@v4, webfactory/ssh-agent@v0.9.0, etc. Drop this line once those
+# actions ship Node 24 builds (mid-2026 timeframe).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   lint-test-build:
     runs-on: ubuntu-latest
