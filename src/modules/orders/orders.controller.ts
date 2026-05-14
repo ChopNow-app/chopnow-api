@@ -10,7 +10,7 @@ import {
   Query,
   Req,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { OrderStatus, UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
@@ -95,6 +95,7 @@ export class OrdersController {
     description:
       'Optional `status` query filters to a single state — pass `CONFIRMED` for "awaiting decision".',
   })
+  @ApiQuery({ name: 'status', required: false, enum: OrderStatus })
   vendorList(@Req() req: Request, @Query('status') status?: OrderStatus) {
     return this.orders.listVendorOrders((req.user as { id: string }).id, status);
   }

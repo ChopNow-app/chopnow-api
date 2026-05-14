@@ -76,6 +76,7 @@
     "@types/node": "^22.10.5",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
+    "chokidar": "^5.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
