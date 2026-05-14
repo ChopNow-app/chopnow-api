@@ -15,6 +15,7 @@ import { MailModule } from './infra/mail/mail.module';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { CatalogueModule } from './modules/catalogue/catalogue.module';
+import { RidersModule } from './modules/riders/riders.module';
 import { UsersModule } from './modules/users/users.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { HealthModule } from './health/health.module';
@@ -64,6 +65,7 @@ import { RolesGuard } from './shared/guards/roles.guard';
     UsersModule,
     OrdersModule,
     CatalogueModule,
+    RidersModule,
     // PaymentsModule, DispatchModule,
     // NotificationsModule, FinanceModule, AdminModule — wired in per-epic
     // --- Cross-cutting ---
