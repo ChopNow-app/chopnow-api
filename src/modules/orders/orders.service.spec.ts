@@ -14,6 +14,7 @@ describe('OrdersService', () => {
     order: { findUnique: jest.Mock; findMany: jest.Mock; create: jest.Mock; update: jest.Mock };
     item: { findMany: jest.Mock };
     vendor: { findUnique: jest.Mock };
+    orderRating: { create: jest.Mock };
     $queryRaw: jest.Mock;
     $transaction: jest.Mock;
   };
@@ -49,6 +50,11 @@ describe('OrdersService', () => {
       },
       item: { findMany: jest.fn() },
       vendor: { findUnique: jest.fn() },
+      orderRating: {
+        create: jest
+          .fn()
+          .mockImplementation(({ data }) => ({ id: 'rating-1', createdAt: new Date(), ...data })),
+      },
       $queryRaw: jest.fn().mockResolvedValue([{ distance_m: 1500 }]), // 1.5 km
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
@@ -311,6 +317,73 @@ describe('OrdersService', () => {
         DomainEvents.ORDER_REFUSED,
         expect.objectContaining({ reason: RefusalReason.POWER_OUTAGE }),
       );
+    });
+  });
+
+  describe('rateOrder (Story 3.9)', () => {
+    const justDelivered = () => ({
+      id: 'order-1',
+      userId: 'user-1',
+      vendorId: 'v-1',
+      status: OrderStatus.DELIVERED,
+      deliveredAt: new Date(Date.now() - 60_000),
+      rating: null,
+    });
+
+    it('creates a rating with both scores + comment', async () => {
+      prisma.order.findUnique.mockResolvedValue(justDelivered());
+      await service.rateOrder('order-1', 'user-1', {
+        vendorScore: 5,
+        riderScore: 4,
+        comment: 'Excellent',
+      });
+      expect(prisma.orderRating.create).toHaveBeenCalledWith({
+        data: {
+          orderId: 'order-1',
+          userId: 'user-1',
+          vendorId: 'v-1',
+          vendorScore: 5,
+          riderScore: 4,
+          comment: 'Excellent',
+        },
+      });
+    });
+
+    it('rejects when order is not DELIVERED', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...justDelivered(),
+        status: OrderStatus.ACCEPTED,
+      });
+      await expect(
+        service.rateOrder('order-1', 'user-1', { vendorScore: 5, riderScore: 5 }),
+      ).rejects.toMatchObject({ response: { code: 'order_not_rateable' } });
+    });
+
+    it('rejects when the order is already rated', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...justDelivered(),
+        rating: { id: 'rating-existing' },
+      });
+      await expect(
+        service.rateOrder('order-1', 'user-1', { vendorScore: 5, riderScore: 5 }),
+      ).rejects.toMatchObject({ response: { code: 'order_already_rated' } });
+    });
+
+    it('rejects after the 24h window', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        ...justDelivered(),
+        deliveredAt: new Date(Date.now() - 25 * 3600 * 1000),
+      });
+      await expect(
+        service.rateOrder('order-1', 'user-1', { vendorScore: 5, riderScore: 5 }),
+      ).rejects.toMatchObject({ response: { code: 'rating_window_expired' } });
+    });
+
+    it('returns 404 when order belongs to a different user', async () => {
+      prisma.order.findUnique.mockResolvedValue({ ...justDelivered(), userId: 'other' });
+      await expect(
+        service.rateOrder('order-1', 'user-1', { vendorScore: 5, riderScore: 5 }),
+      ).rejects.toMatchObject({ status: 404 });
     });
   });
 

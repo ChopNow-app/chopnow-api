@@ -15,6 +15,7 @@ import { OrderStatus, UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
 import { OrdersService } from './orders.service';
 
@@ -68,6 +69,21 @@ export class OrdersController {
   })
   cancel(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
     return this.orders.cancelOrder(orderId, (req.user as { id: string }).id);
+  }
+
+  @Post(':orderId/rating')
+  @ApiOperation({
+    summary: 'Rate vendor + rider post-delivery (Story 3.9)',
+    description:
+      'Both scores required. 24h window from deliveredAt. One rating per order. ' +
+      'Error codes: order_not_rateable, order_already_rated, rating_window_expired.',
+  })
+  rate(
+    @Req() req: Request,
+    @Param('orderId', new ParseUUIDPipe()) orderId: string,
+    @Body() dto: RateOrderDto,
+  ) {
+    return this.orders.rateOrder(orderId, (req.user as { id: string }).id, dto);
   }
 
   // ── vendor routes ──────────────────────────────────────────────────

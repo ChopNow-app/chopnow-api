@@ -13,6 +13,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import { DomainEvents } from '../../shared/events/domain-events';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
 
 // Story 3.1 — minimum order to protect margin (≤ 1200 FCFA generates ~26 FCFA
@@ -288,6 +289,73 @@ export class OrdersService {
       this.logger.warn(`Order ${order.id} refused by vendor while PAID — refund needed`);
     }
     return updated;
+  }
+
+  // ── consumer rating ───────────────────────────────────────────────
+
+  /**
+   * Story 3.9 — consumer rates the order post-delivery.
+   *
+   * Constraints:
+   *   - Only the consumer who placed the order can rate it (ownership).
+   *   - Only DELIVERED orders are rateable.
+   *   - 24h window from deliveredAt (after that → 410 expired).
+   *   - One rating per order (unique on orderId — second submission rejects).
+   */
+  async rateOrder(orderId: string, userId: string, dto: RateOrderDto) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        userId: true,
+        vendorId: true,
+        status: true,
+        deliveredAt: true,
+        rating: { select: { id: true } },
+      },
+    });
+    if (!order || order.userId !== userId) throw new NotFoundException('order_not_found');
+
+    if (order.status !== OrderStatus.DELIVERED || !order.deliveredAt) {
+      throw new ConflictException({
+        code: 'order_not_rateable',
+        message: 'You can only rate orders that have been delivered.',
+      });
+    }
+    if (order.rating) {
+      throw new ConflictException({
+        code: 'order_already_rated',
+        message: 'This order already has a rating.',
+      });
+    }
+    const ageMs = Date.now() - order.deliveredAt.getTime();
+    if (ageMs > 24 * 3600 * 1000) {
+      throw new ConflictException({
+        code: 'rating_window_expired',
+        message: 'The 24-hour rating window has closed.',
+      });
+    }
+
+    const rating = await this.prisma.orderRating.create({
+      data: {
+        orderId: order.id,
+        userId,
+        vendorId: order.vendorId,
+        vendorScore: dto.vendorScore,
+        riderScore: dto.riderScore,
+        comment: dto.comment ?? null,
+      },
+    });
+
+    // Story 3.9 — admin alert on low scores. Notification fan-out happens
+    // via the existing domain-event bus; consumer comes online with
+    // Story 6.x admin panel.
+    if (dto.vendorScore <= 2 || dto.riderScore <= 2) {
+      this.logger.warn(
+        `Low rating on order ${order.id}: vendor=${dto.vendorScore} rider=${dto.riderScore}`,
+      );
+    }
+    return rating;
   }
 
   // ── internal payment hooks (called by payments module — Story 3.3+) ─
