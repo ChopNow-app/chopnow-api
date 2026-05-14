@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Request } from 'express';
 import { Strategy } from 'passport-jwt';
 import { EnvService } from '../../../infra/config/env.service';
+import { JwtRevocationService } from '../jwt-revocation.service';
 import { JwtPayload } from './jwt.strategy';
 
 // Pulls the refresh token out of the JSON body. The access strategy reads from
@@ -18,7 +19,10 @@ function extractFromBody(req: Request): string | null {
 
 @Injectable()
 export class RefreshJwtStrategy extends PassportStrategy(Strategy, 'jwt-refresh') {
-  constructor(env: EnvService) {
+  constructor(
+    env: EnvService,
+    private readonly revocation: JwtRevocationService,
+  ) {
     super({
       jwtFromRequest: extractFromBody,
       ignoreExpiration: false,
@@ -37,6 +41,15 @@ export class RefreshJwtStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
       throw new UnauthorizedException({
         code: 'refresh_invalid_or_expired',
         message: 'Refresh token missing.',
+      });
+    }
+    // Story 1.7 — even a valid-looking refresh token must be rejected if its
+    // user is on the revocation list. Otherwise a suspended account could
+    // mint a fresh access token via /auth/refresh.
+    if (await this.revocation.isRevoked(payload.sub)) {
+      throw new UnauthorizedException({
+        code: 'account_suspended',
+        message: 'This account has been suspended.',
       });
     }
     return { id: payload.sub, role: payload.role, refreshToken };

@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { JwtRevocationService } from './jwt-revocation.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RefreshJwtStrategy } from './strategies/refresh-jwt.strategy';
 
@@ -10,7 +11,9 @@ import { RefreshJwtStrategy } from './strategies/refresh-jwt.strategy';
 @Module({
   imports: [PassportModule, JwtModule.register({})],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, RefreshJwtStrategy],
-  exports: [AuthService],
+  providers: [AuthService, JwtRevocationService, JwtStrategy, RefreshJwtStrategy],
+  // Exported so admin suspension endpoints (Stories 6.2 / 6.8 / 6.9) can
+  // call revokeUser() / reactivateUser() once they exist.
+  exports: [AuthService, JwtRevocationService],
 })
 export class AuthModule {}
