@@ -46,34 +46,47 @@ async function bootstrap() {
   app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
 
   // --- OpenAPI / Swagger ---
-  // Always built (cheap) so the frontend team can grab the spec at /api/docs-json,
-  // or run `npm run openapi:export` to regenerate openapi.json.
-  const openApiConfig = new DocumentBuilder()
-    .setTitle('ChopNow API')
-    .setDescription('Backend HTTP contract for chopnow-app (consumer / livreur / vendeur / admin).')
-    .setVersion(APP_VERSION)
-    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
-    .addTag('auth', 'OTP, JWT, sessions')
-    .addTag('users', 'Profile, role lookups')
-    .addTag('catalogue', 'Vendors, items, availability')
-    .addTag('orders', 'Cart and order lifecycle')
-    .addTag('payments', 'Campay MoMo + Orange Money')
-    .addTag('dispatch', 'Rider assignment, GPS, voice proxy')
-    .addTag('finance', 'Payouts, settlement, KYC')
-    .addTag('admin', 'Ops console, audit')
-    .build();
+  // Built when available; failures during introspection (e.g. circular enum
+  // refs in @nestjs/swagger 11.4+) must NOT block the actual API from booting.
+  // Docs are useful but not load-bearing.
+  try {
+    const openApiConfig = new DocumentBuilder()
+      .setTitle('ChopNow API')
+      .setDescription(
+        'Backend HTTP contract for chopnow-app (consumer / livreur / vendeur / admin).',
+      )
+      .setVersion(APP_VERSION)
+      .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' })
+      .addTag('auth', 'OTP, JWT, sessions')
+      .addTag('users', 'Profile, role lookups')
+      .addTag('catalogue', 'Vendors, items, availability')
+      .addTag('orders', 'Cart and order lifecycle')
+      .addTag('payments', 'Campay MoMo + Orange Money')
+      .addTag('dispatch', 'Rider assignment, GPS, voice proxy')
+      .addTag('finance', 'Payouts, settlement, KYC')
+      .addTag('admin', 'Ops console, audit')
+      .build();
 
-  const document = SwaggerModule.createDocument(app, openApiConfig);
-  SwaggerModule.setup('api/docs', app, document, {
-    swaggerOptions: { persistAuthorization: true },
-  });
+    const document = SwaggerModule.createDocument(app, openApiConfig);
+    SwaggerModule.setup('api/docs', app, document, {
+      swaggerOptions: { persistAuthorization: true },
+    });
 
-  // Optional: dump openapi.json for `npm run openapi:export`
-  if (env.openApiExport) {
-    const out = resolve(process.cwd(), 'openapi.json');
-    writeFileSync(out, JSON.stringify(document, null, 2));
-    console.log(`OpenAPI spec written to ${out}`);
-    process.exit(0);
+    if (env.openApiExport) {
+      const out = resolve(process.cwd(), 'openapi.json');
+      writeFileSync(out, JSON.stringify(document, null, 2));
+      console.log(`OpenAPI spec written to ${out}`);
+      process.exit(0);
+    }
+  } catch (err) {
+    console.warn(
+      `[swagger] OpenAPI doc build failed (${(err as Error).message.split('\n')[0]}). ` +
+        `Continuing without /api/docs — fix the offending decorator and restart.`,
+    );
+    if (env.openApiExport) {
+      // openapi:export requires a working doc — fail fast in that mode.
+      throw err;
+    }
   }
 
   await app.listen(env.port);
