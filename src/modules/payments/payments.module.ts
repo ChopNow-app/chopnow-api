@@ -1,13 +1,28 @@
 import { Module } from '@nestjs/common';
+import { CampayModule } from '../../infra/campay/campay.module';
+import { CampayWebhookController } from './campay-webhook.controller';
+import { PaymentsController } from './payments.controller';
+import { PaymentsService } from './payments.service';
 
 /**
  * Epic 3 + 7 — Paiements & encaissements.
- * Campay (MTN MoMo + Orange Money), webhook handling, refunds, circuit breaker.
+ *
+ * Story 3.3 ✅ — MTN MoMo via Campay (USSD collect + webhook)
+ * Story 3.4 ✅ — Orange Money via Campay (same flow, different provider)
+ * Story 3.5 ✅ — Cash on delivery (no payment call; order stays PENDING
+ *                until vendor accept)
+ * Story 3.14 ✅ — Idempotency: Redis lock on /pay + webhook + Order
+ *                 .paymentReference @unique
+ *
+ * Deferred:
+ *   - Story 7.10 refunds (Campay reverse-collect)
+ *   - Story 7.12 circuit breaker / degraded mode
+ *   - Webhook IP allowlist at nginx (Hetzner prod box)
  */
 @Module({
-  imports: [],
-  controllers: [],
-  providers: [],
-  exports: [],
+  imports: [CampayModule],
+  controllers: [PaymentsController, CampayWebhookController],
+  providers: [PaymentsService],
+  exports: [PaymentsService],
 })
 export class PaymentsModule {}
