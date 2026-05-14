@@ -6,6 +6,7 @@ import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
+import { parseDurationMs } from '../../shared/time/duration.util';
 
 const OTP_TTL_MINUTES = 5;
 const OTP_MAX_ATTEMPTS = 3;
@@ -107,7 +108,76 @@ export class AuthService {
     return this.signTokens(user.id, user.role);
   }
 
-  private async signTokens(userId: string, role: UserRole) {
+  /**
+   * Story 1.2 — rotate the refresh token.
+   *
+   * Returns a fresh access+refresh pair if the presented refresh token is
+   * valid, unrevoked, and the user is still active. Reuse of an already-
+   * rotated token triggers a family-wide revoke (defense against stolen
+   * tokens). All failure codes are structured so the consumer PWA can
+   * branch on `body.code` instead of message-matching.
+   */
+  async refresh(
+    userId: string,
+    role: UserRole,
+    rawRefreshToken: string,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !user.isActive || user.isDeleted) {
+      // Suspended/deleted user. Wipe whatever refresh tokens they had so the
+      // next refresh attempt — even if somehow valid — also fails.
+      await this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      throw new UnauthorizedException({
+        code: 'user_suspended',
+        message: 'Account suspended.',
+      });
+    }
+
+    // Load unexpired rows INCLUDING revoked ones — reuse detection depends on
+    // matching the presented token to an already-rotated row. Filtering
+    // revokedAt: null here would silently turn a replay into a generic
+    // "not found" and lose the signal.
+    const candidates = await this.prisma.refreshToken.findMany({
+      where: { userId, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    let matched: (typeof candidates)[number] | null = null;
+    for (const row of candidates) {
+      if (await argon2.verify(row.tokenHash, rawRefreshToken)) {
+        matched = row;
+        break;
+      }
+    }
+    if (!matched) {
+      throw new UnauthorizedException({
+        code: 'refresh_invalid_or_expired',
+        message: 'Session expired. Please sign in again.',
+      });
+    }
+
+    if (matched.revokedAt) {
+      // REUSE DETECTED — an already-rotated token was presented again. Either
+      // the user's device cloned state or an attacker captured an old token.
+      // Revoke every active token in the family to force a clean re-auth.
+      await this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      this.logger.warn(`Refresh token reuse detected for user ${userId} — family revoked`);
+      throw new UnauthorizedException({
+        code: 'refresh_reuse_detected',
+        message: 'Session compromised. Please sign in again.',
+      });
+    }
+
+    return this.signTokens(userId, role, matched.id);
+  }
+
+  private async signTokens(userId: string, role: UserRole, replacesTokenId?: string) {
     const accessTtl = this.env.jwtAccessTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
     const refreshTtl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
     const [accessToken, refreshToken] = await Promise.all([
@@ -120,6 +190,26 @@ export class AuthService {
         { secret: this.env.jwtRefreshSecret, expiresIn: refreshTtl },
       ),
     ]);
+
+    const refreshTokenHash = await argon2.hash(refreshToken);
+    const expiresAt = new Date(Date.now() + parseDurationMs(refreshTtl));
+
+    // Insert-new + revoke-old must be atomic. Without the transaction a crash
+    // mid-rotation can leave the user with two valid tokens (both readable in
+    // the candidates query) or zero (locked out until the surviving access
+    // token expires).
+    await this.prisma.$transaction(async (tx) => {
+      const row = await tx.refreshToken.create({
+        data: { userId, tokenHash: refreshTokenHash, expiresAt },
+      });
+      if (replacesTokenId) {
+        await tx.refreshToken.update({
+          where: { id: replacesTokenId },
+          data: { revokedAt: new Date(), replacedBy: row.id },
+        });
+      }
+    });
+
     return { accessToken, refreshToken };
   }
 

@@ -2,7 +2,7 @@ import { Test } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { OtpStatus } from '@prisma/client';
+import { OtpStatus, UserRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -16,7 +16,14 @@ describe('AuthService', () => {
       findFirst: jest.Mock;
       update: jest.Mock;
     };
-    user: { upsert: jest.Mock };
+    user: { upsert: jest.Mock; findUnique: jest.Mock };
+    refreshToken: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+    };
+    $transaction: jest.Mock;
   };
   let otpDelivery: { sendOtp: jest.Mock };
 
@@ -27,7 +34,20 @@ describe('AuthService', () => {
         findFirst: jest.fn(),
         update: jest.fn().mockResolvedValue({}),
       },
-      user: { upsert: jest.fn().mockResolvedValue({ id: 'user-1', role: 'CONSUMER' }) },
+      user: {
+        upsert: jest.fn().mockResolvedValue({ id: 'user-1', role: 'CONSUMER' }),
+        findUnique: jest.fn(),
+      },
+      refreshToken: {
+        // signTokens (called by verifyOtp + refresh) goes through $transaction,
+        // which forwards `tx` = the same prisma object. create/update inside
+        // the txn use these mocks.
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'rt-new', ...data })),
+        findMany: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
     otpDelivery = {
       sendOtp: jest.fn().mockResolvedValue({ channel: 'WHATSAPP', providerMessageId: 'SMxxx' }),
@@ -37,7 +57,17 @@ describe('AuthService', () => {
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prisma },
-        { provide: JwtService, useValue: { signAsync: jest.fn().mockResolvedValue('token') } },
+        {
+          provide: JwtService,
+          useValue: {
+            // Distinguish access vs refresh by inspecting the secret the caller
+            // passes — verifyOtp/signTokens calls signAsync twice, once per kind.
+            signAsync: jest.fn().mockImplementation((_payload, opts) => {
+              const secret = String(opts?.secret ?? '');
+              return Promise.resolve(secret.startsWith('a') ? 'access-jwt' : 'refresh-jwt');
+            }),
+          },
+        },
         {
           provide: EnvService,
           useValue: {
@@ -125,11 +155,184 @@ describe('AuthService', () => {
 
       const result = await service.verifyOtp('+237670000000', code);
 
-      expect(result).toEqual({ accessToken: 'token', refreshToken: 'token' });
+      expect(result).toEqual({ accessToken: 'access-jwt', refreshToken: 'refresh-jwt' });
       const statusFilter = prisma.otpLog.findFirst.mock.calls[0][0].where.status;
       expect(statusFilter.in).toEqual(
         expect.arrayContaining([OtpStatus.PENDING, OtpStatus.SENT, OtpStatus.DELIVERED]),
       );
+    });
+
+    it('persists a RefreshToken row on successful verify (Story 1.2)', async () => {
+      const code = '123456';
+      prisma.otpLog.findFirst.mockResolvedValue({
+        id: 'log-1',
+        codeHash: await argon2.hash(code),
+        attempts: 0,
+        status: OtpStatus.SENT,
+      });
+
+      await service.verifyOtp('+237670000000', code);
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.refreshToken.create).toHaveBeenCalledTimes(1);
+      const created = prisma.refreshToken.create.mock.calls[0][0].data;
+      expect(created.userId).toBe('user-1');
+      expect(typeof created.tokenHash).toBe('string');
+      // argon2 hashes always start with $argon2 — guards against a SHA fallback creeping in.
+      expect(created.tokenHash).toMatch(/^\$argon2/);
+      expect(created.expiresAt).toBeInstanceOf(Date);
+      // No replacesTokenId on the initial signup → no update on rotation chain.
+      expect(prisma.refreshToken.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refresh (Story 1.2)', () => {
+    const userId = 'user-1';
+    const incomingToken = 'incoming-refresh-jwt';
+
+    async function row(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 'rt-existing',
+        userId,
+        tokenHash: await argon2.hash(incomingToken),
+        expiresAt: new Date(Date.now() + 60_000),
+        revokedAt: null as Date | null,
+        replacedBy: null as string | null,
+        createdAt: new Date(),
+        ...overrides,
+      };
+    }
+
+    it('rotates: revokes old, inserts new, returns new pair', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      prisma.refreshToken.findMany.mockResolvedValue([await row()]);
+
+      const result = await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+
+      expect(result).toEqual({ accessToken: 'access-jwt', refreshToken: 'refresh-jwt' });
+      // Old token marked revoked + linked to the replacement.
+      expect(prisma.refreshToken.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'rt-existing' },
+          data: expect.objectContaining({ revokedAt: expect.any(Date), replacedBy: 'rt-new' }),
+        }),
+      );
+    });
+
+    it('reuse detection: replayed revoked token revokes the entire family', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      // The presented token matches a row that's ALREADY been revoked.
+      prisma.refreshToken.findMany.mockResolvedValue([
+        await row({ revokedAt: new Date(Date.now() - 10_000) }),
+      ]);
+
+      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
+        {
+          response: { code: 'refresh_reuse_detected' },
+        },
+      );
+
+      // Family wipe.
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      // No new pair issued.
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects with user_suspended when user.isActive=false (AC#5)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: false,
+        isDeleted: false,
+      });
+
+      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
+        {
+          response: { code: 'user_suspended' },
+        },
+      );
+
+      // All active tokens wiped even though we don't look at the candidates.
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      // Never reaches the rotation path.
+      expect(prisma.refreshToken.findMany).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects with user_suspended when the user record is missing entirely', async () => {
+      // JWT-signed user that has since been hard-deleted from the DB.
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
+        {
+          response: { code: 'user_suspended' },
+        },
+      );
+    });
+
+    it('rejects with user_suspended when user.isDeleted=true', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: true,
+      });
+
+      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
+        {
+          response: { code: 'user_suspended' },
+        },
+      );
+    });
+
+    it('rejects with refresh_invalid_or_expired when no unexpired row matches', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      // Either the DB is empty or every row's hash mismatches.
+      prisma.refreshToken.findMany.mockResolvedValue([]);
+
+      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
+        {
+          response: { code: 'refresh_invalid_or_expired' },
+        },
+      );
+
+      // No revoke side-effects — we don't know which family to touch.
+      expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('loads candidates INCLUDING revoked ones (so reuse detection works)', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      prisma.refreshToken.findMany.mockResolvedValue([await row()]);
+
+      await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+
+      const where = prisma.refreshToken.findMany.mock.calls[0][0].where;
+      // The presence of `revokedAt: null` in this filter would silently
+      // break reuse detection by hiding already-rotated rows.
+      expect(where).not.toHaveProperty('revokedAt');
+      expect(where.userId).toBe(userId);
+      expect(where.expiresAt).toEqual({ gt: expect.any(Date) });
     });
   });
 });

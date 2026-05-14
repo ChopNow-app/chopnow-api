@@ -149,4 +149,161 @@ describe('Auth flow (e2e)', () => {
       await prisma.$disconnect();
     }
   });
+
+  // ─── Story 1.2 — refresh token rotation ─────────────────────────────
+  it('rotates refresh tokens and detects reuse', async () => {
+    const phone = '670000002';
+    const canonical = '+237670000002';
+    const server = app.getHttpServer();
+    const prisma = new prismaModule.PrismaClient({ datasources: { db: { url: pgCtx.url } } });
+
+    try {
+      // Sign up.
+      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+      const verifyRes = await request(server)
+        .post('/api/auth/verify-otp')
+        .send({ phone, code })
+        .expect(200);
+      const pairA = verifyRes.body as { accessToken: string; refreshToken: string };
+
+      // verify-otp must have persisted the refresh row.
+      const user = await prisma.user.findUnique({ where: { phone: canonical } });
+      const initialRows = await prisma.refreshToken.findMany({ where: { userId: user!.id } });
+      expect(initialRows).toHaveLength(1);
+      expect(initialRows[0].revokedAt).toBeNull();
+
+      // ── Happy path: rotate ─────────────────────────────────────────
+      const refreshRes = await request(server)
+        .post('/api/auth/refresh')
+        .send({ refreshToken: pairA.refreshToken })
+        .expect(200);
+      const pairB = refreshRes.body as { accessToken: string; refreshToken: string };
+
+      expect(pairB.accessToken).not.toBe(pairA.accessToken);
+      expect(pairB.refreshToken).not.toBe(pairA.refreshToken);
+
+      // DB state: pairA's row revoked + replacedBy set; pairB's row inserted.
+      const rowsAfterRefresh = await prisma.refreshToken.findMany({
+        where: { userId: user!.id },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(rowsAfterRefresh).toHaveLength(2);
+      expect(rowsAfterRefresh[0].revokedAt).not.toBeNull();
+      expect(rowsAfterRefresh[0].replacedBy).toBe(rowsAfterRefresh[1].id);
+      expect(rowsAfterRefresh[1].revokedAt).toBeNull();
+
+      // pairB.accessToken authorizes /users/me.
+      await request(server)
+        .get('/api/users/me')
+        .set('Authorization', `Bearer ${pairB.accessToken}`)
+        .expect(200);
+
+      // ── Reuse detection: replay pairA → 401 + family revoke ────────
+      const reuseRes = await request(server)
+        .post('/api/auth/refresh')
+        .send({ refreshToken: pairA.refreshToken })
+        .expect(401);
+      expect(reuseRes.body.code).toBe('refresh_reuse_detected');
+
+      const familyAfterReuse = await prisma.refreshToken.findMany({
+        where: { userId: user!.id, revokedAt: null },
+      });
+      expect(familyAfterReuse).toHaveLength(0);
+
+      // pairB now also fails — its row was revoked by the family wipe.
+      const followupRes = await request(server)
+        .post('/api/auth/refresh')
+        .send({ refreshToken: pairB.refreshToken })
+        .expect(401);
+      // Could be reuse_detected (if it matches a revoked row) — both codes
+      // correctly signal "this session is over". Accept either.
+      expect(['refresh_invalid_or_expired', 'refresh_reuse_detected']).toContain(
+        followupRes.body.code,
+      );
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  // ─── Story 1.2 AC#1 — re-verifying same phone reuses the same user row ─
+  it('returns the same userId when an existing phone re-verifies', async () => {
+    const phone = '670000003';
+    const canonical = '+237670000003';
+    const server = app.getHttpServer();
+    const prisma = new prismaModule.PrismaClient({ datasources: { db: { url: pgCtx.url } } });
+
+    try {
+      // First signup.
+      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      const code1: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+      const verify1 = await request(server)
+        .post('/api/auth/verify-otp')
+        .send({ phone, code: code1 })
+        .expect(200);
+
+      const userAfter1 = await prisma.user.findUnique({ where: { phone: canonical } });
+      const userCount1 = await prisma.user.count({ where: { phone: canonical } });
+      expect(userCount1).toBe(1);
+
+      // Second flow on the same phone — must reuse the user row.
+      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      const code2: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+      const verify2 = await request(server)
+        .post('/api/auth/verify-otp')
+        .send({ phone, code: code2 })
+        .expect(200);
+
+      const userCount2 = await prisma.user.count({ where: { phone: canonical } });
+      expect(userCount2).toBe(1);
+
+      // The JWT subject should be the same user.id across both verifies.
+      const subFromToken = (jwt: string) =>
+        JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString('utf8')).sub;
+      expect(subFromToken(verify2.body.accessToken)).toBe(userAfter1!.id);
+      expect(subFromToken(verify1.body.accessToken)).toBe(userAfter1!.id);
+
+      // Both refresh tokens are valid and present in the DB.
+      const tokens = await prisma.refreshToken.findMany({
+        where: { userId: userAfter1!.id, revokedAt: null },
+      });
+      expect(tokens).toHaveLength(2);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  // ─── Story 1.2 AC#5 — suspension forces a structured 401 ────────────
+  it('blocks refresh with user_suspended when user.isActive=false', async () => {
+    const phone = '670000004';
+    const canonical = '+237670000004';
+    const server = app.getHttpServer();
+    const prisma = new prismaModule.PrismaClient({ datasources: { db: { url: pgCtx.url } } });
+
+    try {
+      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+      const verifyRes = await request(server)
+        .post('/api/auth/verify-otp')
+        .send({ phone, code })
+        .expect(200);
+      const { refreshToken } = verifyRes.body as { refreshToken: string };
+
+      await prisma.user.update({ where: { phone: canonical }, data: { isActive: false } });
+
+      const refreshRes = await request(server)
+        .post('/api/auth/refresh')
+        .send({ refreshToken })
+        .expect(401);
+      expect(refreshRes.body.code).toBe('user_suspended');
+
+      const user = await prisma.user.findUnique({ where: { phone: canonical } });
+      const active = await prisma.refreshToken.count({
+        where: { userId: user!.id, revokedAt: null },
+      });
+      expect(active).toBe(0);
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
 });
