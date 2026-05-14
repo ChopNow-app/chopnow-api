@@ -250,6 +250,9 @@ model Address {
   landmarkId   String?
   landmark     Landmark? @relation(fields: [landmarkId], references: [id])
   location     Unsupported("geography(Point, 4326)")
+  // Phone the rider will call if lost. Saved separately from the user's main
+  // phone so a client can deliver to e.g. a partner's home with their phone.
+  phone        String?
   isDefault    Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
