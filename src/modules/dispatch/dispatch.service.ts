@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OnEvent } from '@nestjs/event-emitter';
-import { RiderStatus, RiderVehicleType } from '@prisma/client';
+import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import { OrderStatus, PaymentStatus, RiderStatus, RiderVehicleType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
 
@@ -17,6 +17,19 @@ const RADIUS_KM_BY_VEHICLE: Record<RiderVehicleType, number> = {
 // excluded from dispatch even if isOnline is still true.
 const STALE_HEARTBEAT_SECONDS = 60;
 
+// Story 4.14 — no-rider-available retry policy. After the initial dispatch
+// fails, retry every 30s for up to 5 minutes (10 attempts). If still no
+// rider, mark the order EXPIRED with refusalReason = NO_RIDER_AVAILABLE and
+// trigger refund. Numbers chosen so a typical Douala rider going online
+// during the wait window has a real shot at picking up.
+const RETRY_INTERVAL_MS = 30_000;
+const MAX_RETRIES = 10;
+
+// Refusal reason sentinel — written into Order.refusalReason on terminal
+// no-rider giveup. Frontend branches on this value to render the refund /
+// retry UI.
+export const NO_RIDER_AVAILABLE_REASON = 'NO_RIDER_AVAILABLE';
+
 interface CandidateRow {
   rider_id: string;
   distance_m: number;
@@ -28,23 +41,135 @@ interface CandidateRow {
 export class DispatchService {
   private readonly logger = new Logger(DispatchService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
-
   /**
-   * Story 4.1 — auto-dispatch on order acceptance.
-   *
-   * MVP scope: find the single nearest online rider within their vehicle's
-   * radius and assign immediately (no top-3 broadcast, no 30s timeout, no
-   * score blending). The rider's app surfaces the offer; they confirm via
-   * POST /orders/:id/claim (next PR adds the claim endpoint).
-   *
-   * Re-dispatch on rejection / no-claim / escalation lands with Story 4.1
-   * full implementation (Bull MQ queue) — for MVP, admin manually
-   * re-triggers via a SUPER_ADMIN endpoint if a rider doesn't pick up.
+   * In-process retry timers, keyed by orderId. Lives on a single API node —
+   * fine for MVP since we run one instance. When we scale horizontally,
+   * swap for Bull MQ (a job per retry survives node restart + balances).
    */
+  private readonly retryTimers = new Map<string, NodeJS.Timeout>();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: EventEmitter2,
+  ) {}
+
   @OnEvent(DomainEvents.ORDER_ACCEPTED)
   async onOrderAccepted(payload: { orderId: string; vendorId: string }) {
-    await this.dispatchOrder(payload.orderId, payload.vendorId);
+    await this.tryDispatch(payload.orderId, payload.vendorId, 0);
+  }
+
+  /**
+   * Story 4.14 — single dispatch attempt + schedule next retry on failure.
+   *
+   * Each attempt either:
+   *   - assigns a rider and clears any scheduled retries, OR
+   *   - schedules another attempt 30s out, OR
+   *   - on the last attempt, marks the order EXPIRED and triggers refund.
+   *
+   * `attempt` is 0-indexed: 0 is the initial dispatch from the event, 1..9
+   * are the retries. After attempt 9 fails, we give up.
+   */
+  private async tryDispatch(orderId: string, vendorId: string, attempt: number): Promise<void> {
+    // Defensive: don't retry an order that's already been canceled or
+    // expired by another code path.
+    const current = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { status: true, riderId: true },
+    });
+    if (!current) return;
+    if (current.riderId) {
+      this.clearRetry(orderId);
+      return;
+    }
+    if (current.status === OrderStatus.CANCELLED || current.status === OrderStatus.EXPIRED) {
+      this.clearRetry(orderId);
+      return;
+    }
+
+    const result = await this.dispatchOrder(orderId, vendorId);
+    if (result) {
+      // Found a rider — kill any pending retry.
+      this.clearRetry(orderId);
+      return;
+    }
+
+    // No rider this round.
+    if (attempt < MAX_RETRIES - 1) {
+      this.logger.log(
+        `dispatch: order=${orderId} retry ${attempt + 1}/${MAX_RETRIES} scheduled in ${RETRY_INTERVAL_MS / 1000}s`,
+      );
+      const timer = setTimeout(() => {
+        void this.tryDispatch(orderId, vendorId, attempt + 1);
+      }, RETRY_INTERVAL_MS);
+      // Unref so a pending timer doesn't keep the node process alive on
+      // shutdown — Nest's graceful shutdown will let the timer be dropped.
+      timer.unref();
+      this.retryTimers.set(orderId, timer);
+      return;
+    }
+
+    // Last attempt failed — give up. Mark EXPIRED + refund.
+    await this.expireForNoRider(orderId);
+    this.clearRetry(orderId);
+  }
+
+  private clearRetry(orderId: string): void {
+    const t = this.retryTimers.get(orderId);
+    if (t) {
+      clearTimeout(t);
+      this.retryTimers.delete(orderId);
+    }
+  }
+
+  /**
+   * Terminal state: no rider found after all retries. Mark the order
+   * EXPIRED with a recognisable refusalReason and emit a refund event for
+   * MoMo orders. CASH orders don't need a refund (no money changed hands)
+   * but we still surface the EXPIRED state to the consumer so they know
+   * to re-order.
+   */
+  private async expireForNoRider(orderId: string): Promise<void> {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, status: true, paymentStatus: true, paymentMethod: true, userId: true },
+    });
+    if (!order) return;
+
+    // Only flip if still in a state where giving up is correct. If a vendor
+    // accepted and a rider was already assigned during the 30s gap, leave
+    // it alone — that path will run to completion.
+    const TERMINABLE: ReadonlySet<OrderStatus> = new Set([
+      OrderStatus.ACCEPTED,
+      OrderStatus.IN_PREP,
+      OrderStatus.READY_PICKUP,
+    ]);
+    if (!TERMINABLE.has(order.status)) return;
+
+    const isPaid = order.paymentStatus === PaymentStatus.PAID;
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: {
+        status: OrderStatus.EXPIRED,
+        refusalReason: NO_RIDER_AVAILABLE_REASON,
+        cancelledAt: new Date(),
+        // MoMo refund — flip the paymentStatus optimistically. The actual
+        // Campay refund call lands in the @OnEvent handler so this method
+        // stays a single transaction.
+        ...(isPaid ? { paymentStatus: PaymentStatus.REFUNDED } : {}),
+      },
+    });
+
+    this.logger.warn(
+      `dispatch: order=${orderId} EXPIRED — no rider available after ${MAX_RETRIES} attempts. ` +
+        `paymentStatus=${isPaid ? 'REFUNDED (was PAID)' : order.paymentStatus}`,
+    );
+
+    this.events.emit(DomainEvents.ORDER_CANCELLED, {
+      orderId: order.id,
+      userId: order.userId,
+      reason: NO_RIDER_AVAILABLE_REASON,
+      refundRequired: isPaid,
+    });
   }
 
   async dispatchOrder(orderId: string, vendorId: string): Promise<{ riderId: string } | null> {
@@ -96,9 +221,7 @@ export class DispatchService {
     `;
 
     if (candidates.length === 0) {
-      this.logger.warn(
-        `dispatch: no online rider for order=${orderId} vendor=${vendorId} — admin alert needed`,
-      );
+      this.logger.warn(`dispatch: no online rider for order=${orderId} vendor=${vendorId}`);
       return null;
     }
 
