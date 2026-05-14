@@ -240,6 +240,17 @@ model Vendor {
   momoPhone       String
   // Display badge: "Cuisine locale 🍲" / "Maquis 🍽️" / "Restaurant 🍽️"
   badge           String?
+  // Story 2.4 — vendor open/closed flag. Toggled in 1 tap from the dashboard
+  // (informal) or via cron based on `hours` (restaurant, cron landing later).
+  // Catalogue browse (Story 2.5) hides vendors with isOpen=false from Plan 1/2
+  // and shows them only on explicit "all vendors" view.
+  isOpen          Boolean  @default(false)
+  // Story 2.4 — per-day opening hours (RESTAURANT only; INFORMAL relies on
+  // the isOpen toggle). Shape: { mon: { open: "07:30", close: "21:00" }, ... }
+  // Days that are absent or null = closed that day. JSON keeps the schema
+  // simple at the cost of cross-row queryability — fine for MVP, the cron
+  // only reads vendor-by-vendor.
+  hours           Json?
   // Daily order capacity declared at onboarding ( <10 / 10-30 / >30 → 8 / 30 / 50 )
   declaredCapacity Int?
   // Commission rate as a fraction — overridable per vendor by admin
