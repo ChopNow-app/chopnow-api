@@ -387,17 +387,23 @@ describe('RidersService', () => {
     });
   });
 
-  describe('markPickedUp / markDelivered (Story 4.2)', () => {
+  describe('markPickedUp / markDelivered (Story 4.2 / 4.13)', () => {
     function riderOrder(status: OrderStatus) {
       prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
-      prisma.order.findUnique.mockResolvedValue({ id: 'o-1', riderId: 'r-1', status });
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o-1',
+        riderId: 'r-1',
+        status,
+        pickupCode: '1234',
+        deliveryCode: '5678',
+      });
     }
 
     it.each([OrderStatus.ACCEPTED, OrderStatus.IN_PREP, OrderStatus.READY_PICKUP])(
-      'markPickedUp flips %s → PICKED_UP',
+      'markPickedUp flips %s → PICKED_UP with correct code',
       async (status) => {
         riderOrder(status);
-        await service.markPickedUp('user-1', 'o-1');
+        await service.markPickedUp('user-1', 'o-1', '1234');
         expect(prisma.order.update).toHaveBeenCalledWith({
           where: { id: 'o-1' },
           data: { status: OrderStatus.PICKED_UP, pickedUpAt: expect.any(Date) },
@@ -405,25 +411,39 @@ describe('RidersService', () => {
       },
     );
 
-    it('markPickedUp refuses non-pickupable states', async () => {
+    it('markPickedUp rejects wrong pickup code', async () => {
+      riderOrder(OrderStatus.ACCEPTED);
+      await expect(service.markPickedUp('user-1', 'o-1', '9999')).rejects.toMatchObject({
+        response: { code: 'wrong_pickup_code' },
+      });
+    });
+
+    it('markPickedUp refuses non-pickupable states (even with correct code)', async () => {
       riderOrder(OrderStatus.PICKED_UP);
-      await expect(service.markPickedUp('user-1', 'o-1')).rejects.toMatchObject({
+      await expect(service.markPickedUp('user-1', 'o-1', '1234')).rejects.toMatchObject({
         response: { code: 'order_not_pickupable' },
       });
     });
 
-    it('markDelivered flips PICKED_UP → DELIVERED', async () => {
+    it('markDelivered flips PICKED_UP → DELIVERED with correct code', async () => {
       riderOrder(OrderStatus.PICKED_UP);
-      await service.markDelivered('user-1', 'o-1');
+      await service.markDelivered('user-1', 'o-1', '5678');
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 'o-1' },
         data: { status: OrderStatus.DELIVERED, deliveredAt: expect.any(Date) },
       });
     });
 
+    it('markDelivered rejects wrong delivery code', async () => {
+      riderOrder(OrderStatus.PICKED_UP);
+      await expect(service.markDelivered('user-1', 'o-1', '0000')).rejects.toMatchObject({
+        response: { code: 'wrong_delivery_code' },
+      });
+    });
+
     it('markDelivered refuses if not yet PICKED_UP', async () => {
       riderOrder(OrderStatus.ACCEPTED);
-      await expect(service.markDelivered('user-1', 'o-1')).rejects.toMatchObject({
+      await expect(service.markDelivered('user-1', 'o-1', '5678')).rejects.toMatchObject({
         response: { code: 'order_not_in_delivery' },
       });
     });
@@ -434,8 +454,12 @@ describe('RidersService', () => {
         id: 'o-1',
         riderId: 'r-OTHER',
         status: OrderStatus.PICKED_UP,
+        pickupCode: '1234',
+        deliveryCode: '5678',
       });
-      await expect(service.markDelivered('user-1', 'o-1')).rejects.toMatchObject({ status: 404 });
+      await expect(service.markDelivered('user-1', 'o-1', '5678')).rejects.toMatchObject({
+        status: 404,
+      });
     });
   });
 });
