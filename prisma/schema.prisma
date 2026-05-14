@@ -136,6 +136,7 @@ model User {
   vendor            Vendor?
   rider             Rider?
   orders            Order[]
+  orderRatings      OrderRating[]
   passwordResets    AdminPasswordReset[]
 
   @@index([phone])
@@ -313,6 +314,7 @@ model Vendor {
   categories MenuCategory[]
   items      Item[]
   orders     Order[]
+  ratings    OrderRating[]
 
   @@index([status])
   @@index([type])
@@ -418,7 +420,8 @@ model Order {
   // create a duplicate. Scoped per user (composite uniqueness below).
   idempotencyKey String?
 
-  items OrderItem[]
+  items  OrderItem[]
+  rating OrderRating?
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -426,6 +429,27 @@ model Order {
   @@index([status])
   @@index([placedAt])
   @@map("orders")
+}
+
+// Story 3.9 — post-delivery rating. One per order (unique on orderId).
+// Both scores are required when the consumer submits; we don't show partial
+// ratings publicly.
+model OrderRating {
+  id           String   @id @default(uuid())
+  orderId      String   @unique
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vendorId     String
+  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorScore  Int      // 1..5
+  riderScore   Int      // 1..5 (null-ish for ON_FOOT-only orders is future)
+  comment      String?  @db.VarChar(200)
+  createdAt    DateTime @default(now())
+
+  @@index([vendorId])
+  @@index([userId])
+  @@map("order_ratings")
 }
 
 // Line items — snapshot price + name at order time so menu changes after
