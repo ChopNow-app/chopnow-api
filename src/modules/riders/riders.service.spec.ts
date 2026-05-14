@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
+import { OrderStatus, Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
 import { RidersService } from './riders.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
@@ -12,6 +12,8 @@ describe('RidersService', () => {
   let prisma: {
     user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
     rider: { upsert: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
+    order: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+    $executeRaw: jest.Mock;
     $transaction: jest.Mock;
   };
   let r2: { uploadImage: jest.Mock };
@@ -56,6 +58,12 @@ describe('RidersService', () => {
         findUnique: jest.fn(),
         update: jest.fn(),
       },
+      order: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id, ...data })),
+      },
+      $executeRaw: jest.fn().mockResolvedValue(1),
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
     r2 = {
@@ -334,6 +342,100 @@ describe('RidersService', () => {
       await service.updateOwn('user-1', { preferredZone: 'X' });
       const data = prisma.rider.update.mock.calls[0][0].data;
       expect(data.momoPhone).toBeUndefined();
+    });
+  });
+
+  describe('setAvailability (Story 4.1)', () => {
+    it('flips isOnline when rider is ACTIVE', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1', status: RiderStatus.ACTIVE });
+      prisma.rider.update.mockResolvedValue({ id: 'r-1', isOnline: true, lastSeenAt: new Date() });
+
+      await service.setAvailability('user-1', { isOnline: true });
+
+      expect(prisma.rider.update).toHaveBeenCalledWith({
+        where: { id: 'r-1' },
+        data: { isOnline: true, lastSeenAt: expect.any(Date) },
+        select: expect.any(Object),
+      });
+    });
+
+    it('rejects non-ACTIVE riders from going online', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1', status: RiderStatus.PENDING_REVIEW });
+      await expect(service.setAvailability('user-1', { isOnline: true })).rejects.toMatchObject({
+        response: { code: 'rider_not_active' },
+      });
+    });
+  });
+
+  describe('pushHeartbeat (Story 4.4)', () => {
+    it('updates lastLocation + lastSeenAt via raw SQL', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1', status: RiderStatus.ACTIVE });
+
+      await service.pushHeartbeat('user-1', { lat: 4.0511, lng: 9.7679 });
+
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      const sql = (prisma.$executeRaw.mock.calls[0][0] as TemplateStringsArray).join('');
+      expect(sql).toMatch(/UPDATE "riders"/);
+      expect(sql).toMatch(/ST_SetSRID\(ST_MakePoint\(/);
+    });
+
+    it('rejects non-ACTIVE riders from sending heartbeat', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1', status: RiderStatus.SUSPENDED });
+      await expect(service.pushHeartbeat('user-1', { lat: 0, lng: 0 })).rejects.toMatchObject({
+        response: { code: 'rider_not_active' },
+      });
+    });
+  });
+
+  describe('markPickedUp / markDelivered (Story 4.2)', () => {
+    function riderOrder(status: OrderStatus) {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
+      prisma.order.findUnique.mockResolvedValue({ id: 'o-1', riderId: 'r-1', status });
+    }
+
+    it.each([OrderStatus.ACCEPTED, OrderStatus.IN_PREP, OrderStatus.READY_PICKUP])(
+      'markPickedUp flips %s → PICKED_UP',
+      async (status) => {
+        riderOrder(status);
+        await service.markPickedUp('user-1', 'o-1');
+        expect(prisma.order.update).toHaveBeenCalledWith({
+          where: { id: 'o-1' },
+          data: { status: OrderStatus.PICKED_UP, pickedUpAt: expect.any(Date) },
+        });
+      },
+    );
+
+    it('markPickedUp refuses non-pickupable states', async () => {
+      riderOrder(OrderStatus.PICKED_UP);
+      await expect(service.markPickedUp('user-1', 'o-1')).rejects.toMatchObject({
+        response: { code: 'order_not_pickupable' },
+      });
+    });
+
+    it('markDelivered flips PICKED_UP → DELIVERED', async () => {
+      riderOrder(OrderStatus.PICKED_UP);
+      await service.markDelivered('user-1', 'o-1');
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'o-1' },
+        data: { status: OrderStatus.DELIVERED, deliveredAt: expect.any(Date) },
+      });
+    });
+
+    it('markDelivered refuses if not yet PICKED_UP', async () => {
+      riderOrder(OrderStatus.ACCEPTED);
+      await expect(service.markDelivered('user-1', 'o-1')).rejects.toMatchObject({
+        response: { code: 'order_not_in_delivery' },
+      });
+    });
+
+    it('returns 404 when the order belongs to another rider', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o-1',
+        riderId: 'r-OTHER',
+        status: OrderStatus.PICKED_UP,
+      });
+      await expect(service.markDelivered('user-1', 'o-1')).rejects.toMatchObject({ status: 404 });
     });
   });
 });

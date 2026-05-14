@@ -406,12 +406,19 @@ model Order {
   // terminal-failure state.
   refusalReason String?
 
+  // Story 4.1 — assigned rider. Null until dispatch picks one and the
+  // rider claims the order. CASCADE on rider delete would be wrong (we
+  // want to keep audit), so the FK uses SET NULL.
+  riderId  String?
+  rider    Rider?  @relation(fields: [riderId], references: [id], onDelete: SetNull)
+
   // Lifecycle timestamps — null until the corresponding transition fires.
   placedAt    DateTime  @default(now())
   paidAt      DateTime?
   acceptedAt  DateTime?
   refusedAt   DateTime?
   preparedAt  DateTime?
+  assignedAt  DateTime? // Story 4.1 — rider claimed this order
   pickedUpAt  DateTime?
   deliveredAt DateTime?
   cancelledAt DateTime?
@@ -426,6 +433,7 @@ model Order {
   @@unique([userId, idempotencyKey])
   @@index([userId])
   @@index([vendorId])
+  @@index([riderId])
   @@index([status])
   @@index([placedAt])
   @@map("orders")
@@ -491,6 +499,11 @@ model Rider {
   momoPhone       String
   // Reliability score, 0..100. Bumped/decreased by Story 4.6 logic.
   reliabilityScore Int             @default(80)
+  // Story 4.1 — online flag (rider has tapped "Je commence" in the app).
+  // Story 4.4 — last GPS ping; `stale` if lastSeenAt > 60s old.
+  isOnline        Boolean          @default(false)
+  lastLocation    Unsupported("geography(Point, 4326)")?
+  lastSeenAt      DateTime?
   // Validation lifecycle
   submittedAt     DateTime         @default(now())
   validatedAt     DateTime?
@@ -499,7 +512,10 @@ model Rider {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
+  orders Order[]
+
   @@index([status])
   @@index([vehicleType])
+  @@index([isOnline])
   @@map("riders")
 }
