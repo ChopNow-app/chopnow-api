@@ -22,6 +22,8 @@ export const envSchema = Joi.object({
   TWILIO_AUTH_TOKEN: Joi.string().optional(),
   TWILIO_WHATSAPP_FROM: Joi.string().optional(),
   TWILIO_SMS_FROM: Joi.string().optional(),
+  // Story 4.17 voice proxy — Twilio caller ID number (e.g. +14155238886).
+  TWILIO_VOICE_FROM: Joi.string().optional(),
   // Public URL Twilio POSTs delivery status updates to (e.g. https://api.example.com/api/twilio/status).
   // Leave unset in dev — rows then stay at SENT until reconciled.
   TWILIO_STATUS_CALLBACK_URL: Joi.string().uri().allow('').optional(),
