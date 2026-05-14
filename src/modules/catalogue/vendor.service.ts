@@ -1,11 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { UserRole, VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 import { CAPACITY_TO_INT, SubmitVendorDto } from './dto/submit-vendor.dto';
+import { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
 
 // Default pickup point for newly-submitted vendors. Story 2.15 (landmarks)
 // will replace this with the resolved landmark coordinates; for now we plant
@@ -139,6 +146,60 @@ export class VendorService {
       status: VendorStatus.PENDING_REVIEW,
       message: '✅ Demande envoyée ! Notre équipe vous contacte sur WhatsApp dans les 2 heures.',
     };
+  }
+
+  /**
+   * Story 1.8 — vendor self-update.
+   *
+   * Editable in this slice: name, description, momoPhone, and (separately)
+   * the profile photo via PATCH /vendors/me/photo. Quartier / landmark
+   * moves, vehicleType-equivalent badge changes, and commission edits stay
+   * admin-only and live elsewhere.
+   */
+  async updateOwn(userId: string, dto: UpdateVendorProfileDto) {
+    if (Object.values(dto).every((v) => v === undefined)) {
+      throw new BadRequestException('no_fields_to_update');
+    }
+
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+
+    return this.prisma.vendor.update({
+      where: { id: vendor.id },
+      data: {
+        name: dto.name,
+        description: dto.description,
+        momoPhone: dto.momoPhone ? normalizePhone(dto.momoPhone) : undefined,
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        momoPhone: true,
+        status: true,
+        updatedAt: true,
+      },
+    });
+  }
+
+  /** Story 1.8 — replace the vendor profile photo. Old R2 key is left to a sweeper. */
+  async updateOwnProfilePhoto(userId: string, file: Express.Multer.File) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+
+    const upload = await this.r2.uploadImage(file.buffer, { keyPrefix: 'vendor-profile' });
+
+    return this.prisma.vendor.update({
+      where: { id: vendor.id },
+      data: { profilePhotoUrl: upload.key },
+      select: { id: true, profilePhotoUrl: true, updatedAt: true },
+    });
   }
 
   private async sendSubmissionConfirmation(toE164: string, vendorName: string): Promise<void> {

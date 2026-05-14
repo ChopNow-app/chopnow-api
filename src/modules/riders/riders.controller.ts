@@ -3,15 +3,21 @@ import {
   Controller,
   HttpCode,
   ParseFilePipeBuilder,
+  Patch,
   Post,
+  Req,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { UserRole } from '@prisma/client';
+import { Request } from 'express';
 import { Public } from '../../shared/decorators/public.decorator';
+import { Roles } from '../../shared/decorators/roles.decorator';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
+import { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
 import { RidersService } from './riders.service';
 
 // KYC photos can be a little larger than menu photos — ID cards and selfies
@@ -75,5 +81,19 @@ export class RidersController {
     if (vehiclePhoto) await kycImagePipe.transform(vehiclePhoto);
 
     return this.riders.submit(dto, { idCardPhoto, selfiePhoto, vehiclePhoto });
+  }
+
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Patch('me')
+  @ApiOperation({
+    summary: 'Update own rider profile (Story 1.8)',
+    description:
+      'Rider-self-update for preferredZone and momoPhone. vehicleType, photos, and ' +
+      'licensePlate changes trigger admin re-validation and live in Story 6.2.',
+  })
+  updateMe(@Req() req: Request, @Body() dto: UpdateRiderProfileDto) {
+    const user = req.user as { id: string };
+    return this.riders.updateOwn(user.id, dto);
   }
 }
