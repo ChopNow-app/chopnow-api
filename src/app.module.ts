@@ -13,6 +13,7 @@ import { TwilioModule } from './infra/twilio/twilio.module';
 import { R2Module } from './infra/r2/r2.module';
 import { MailModule } from './infra/mail/mail.module';
 
+import { AdminModule } from './modules/admin/admin.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CatalogueModule } from './modules/catalogue/catalogue.module';
 import { RidersModule } from './modules/riders/riders.module';
@@ -66,8 +67,9 @@ import { RolesGuard } from './shared/guards/roles.guard';
     OrdersModule,
     CatalogueModule,
     RidersModule,
+    AdminModule,
     // PaymentsModule, DispatchModule,
-    // NotificationsModule, FinanceModule, AdminModule — wired in per-epic
+    // NotificationsModule, FinanceModule — wired in per-epic
     // --- Cross-cutting ---
     HealthModule,
   ],

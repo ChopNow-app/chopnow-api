@@ -24,6 +24,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
+    "seed:admin": "ts-node prisma/seed-admin.ts",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "openapi:export": "OPENAPI_EXPORT=true ts-node -r tsconfig-paths/register src/main.ts",
