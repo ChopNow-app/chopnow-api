@@ -40,10 +40,11 @@ services:
 
   api:
     # Pulled from GitHub Container Registry. Pushed by chopnow-api's
-    # deploy-staging job on every push to the `staging` branch. The package
-    # is public so `docker pull` works without authentication on the droplet
-    # — flip the package to private and add `docker login ghcr.io` to the
-    # deploy script if we want to lock it down later.
+    # cd-staging.yml workflow on every push to the `staging` branch.
+    # The package is private (org disallows public packages); the deploy
+    # workflow runs `docker login ghcr.io` on the droplet before
+    # `docker compose pull` using STAGING_GHCR_TOKEN (classic PAT,
+    # scope: read:packages only).
     image: ghcr.io/chopnow-app/chopnow-api:staging-${IMAGE_TAG}
     container_name: chopnow-staging-api
     restart: unless-stopped

@@ -116,14 +116,25 @@ jobs:
         env:
           STAGING_HOST: ${{ secrets.STAGING_HOST }}
           STAGING_USER: ${{ secrets.STAGING_USER }}
+          GHCR_USER: ${{ secrets.STAGING_GHCR_USER }}
+          GHCR_TOKEN: ${{ secrets.STAGING_GHCR_TOKEN }}
         run: |
-          ssh "${STAGING_USER}@${STAGING_HOST}" 'bash -s' <<'EOF'
+          ssh "${STAGING_USER}@${STAGING_HOST}" \
+            "GHCR_USER='${GHCR_USER}' GHCR_TOKEN='${GHCR_TOKEN}' bash -s" <<'EOF'
           set -euo pipefail
           cd /opt/chopnow/staging
 
-          # Pull the image we just pushed. The package is public on ghcr.io;
-          # if we flip it to private later, add `docker login ghcr.io -u <user>
-          # --password-stdin` here, fed from a fine-grained PAT secret.
+          # Login to ghcr.io. The package is private (org disallows public
+          # packages), so the droplet needs to authenticate before pulling.
+          # Token is a classic PAT with read:packages scope, stored in the
+          # `staging` env secret STAGING_GHCR_TOKEN. Login is idempotent —
+          # running on an already-authenticated host is a no-op.
+          # --password-stdin keeps the token out of process listings; the
+          # SSH-level exposure via the command argument is the one trade-off
+          # (visible briefly in `ps` on the droplet during the 1-2s ssh exec).
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+          # Pull the image we just pushed.
           docker compose pull api
 
           # Bring up DB + Redis first; depends_on healthcheck in compose
