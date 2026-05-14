@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AvailabilityController } from './availability.controller';
 import { AvailabilityService } from './availability.service';
+import { BrowseController } from './browse.controller';
+import { BrowseService } from './browse.service';
 import { MenuController } from './menu.controller';
 import { MenuService } from './menu.service';
 import { VendorController } from './vendor.controller';
@@ -13,16 +15,17 @@ import { VendorService } from './vendor.service';
  * Story 1.8  ✅ — vendor self-update (PATCH /vendors/me)
  * Story 2.2  ✅ — informal menu management (items CRUD + stock toggle)
  * Story 2.3  ✅ — restaurant menu management (categories CRUD)
- * Story 2.4  ✅ — availability toggle + hours (PATCH /availability, PUT /hours)
- * Story 2.10 ✅ — 1-tap stock toggle (PATCH /vendors/me/items/:id/stock)
- * Story 2.11 (partial) ✅ — item photo upload (single WebP; multi-variant deferred)
+ * Story 2.4  ✅ — availability toggle + hours
+ * Story 2.5  ✅ — consumer browse (GET /catalogue)
+ * Story 2.6  ✅ — vendor public page (GET /vendors/:id)
+ * Story 2.10 ✅ — 1-tap stock toggle
+ * Story 2.11 (partial) ✅ — item photo upload (single WebP)
  * Story 2.1 — restaurant formel onboarding (pending)
- * Story 2.5 — consumer browse (next PR)
- * Story 2.6 — vendor public page (next PR)
+ * Story 2.12 — FTS search (post-MVP)
  */
 @Module({
-  controllers: [VendorController, MenuController, AvailabilityController],
-  providers: [VendorService, MenuService, AvailabilityService],
-  exports: [VendorService, MenuService, AvailabilityService],
+  controllers: [VendorController, MenuController, AvailabilityController, BrowseController],
+  providers: [VendorService, MenuService, AvailabilityService, BrowseService],
+  exports: [VendorService, MenuService, AvailabilityService, BrowseService],
 })
 export class CatalogueModule {}
