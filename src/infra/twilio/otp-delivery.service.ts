@@ -29,11 +29,14 @@ export class OtpDeliveryService {
     const body = this.formatBody(code);
     const statusCallback = this.env.twilio.statusCallbackUrl;
 
-    // Dev convenience: skip live delivery if Twilio isn't configured.
-    if (!this.isTwilioConfigured()) {
-      this.logger.warn(
-        `[DEV] Twilio not configured — OTP for ${e164} is "${code}" (would send via WhatsApp)`,
-      );
+    // Dev convenience: skip live delivery if Twilio isn't configured OR if the
+    // operator has explicitly opted in to bypass (OTP_DEV_BYPASS=true).
+    // Bypass mode is the right call when smoke-testing against test phones
+    // you don't own (e.g. seeded vendor/rider) — the alternative is editing
+    // .env to remove real Twilio creds and accidentally losing them.
+    if (!this.isTwilioConfigured() || process.env.OTP_DEV_BYPASS === 'true') {
+      const reason = !this.isTwilioConfigured() ? 'Twilio not configured' : 'OTP_DEV_BYPASS=true';
+      this.logger.warn(`[DEV] ${reason} — OTP for ${e164} is "${code}"`);
       return { channel: OtpChannel.WHATSAPP, providerMessageId: 'dev-' + Date.now() };
     }
 

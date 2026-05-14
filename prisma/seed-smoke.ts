@@ -25,14 +25,21 @@ import {
 
 const MAKEPE = { lat: 4.0744, lng: 9.7565 };
 
+// AuthService.normalizePhone converts the 9-digit Cameroon format to E.164 on
+// signup, so the User row's `phone` column is always the +237 form. Seed in
+// the same format so smoke-test signups find the existing row (otherwise
+// verify-otp creates a fresh CONSUMER duplicate).
+const VENDOR_PHONE = '+237670000091';
+const RIDER_PHONE = '+237670000092';
+
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
   try {
     // ── Vendor ────────────────────────────────────────────────────────
     const vendorUser = await prisma.user.upsert({
-      where: { phone: '670000091' },
+      where: { phone: VENDOR_PHONE },
       update: { isActive: true, role: UserRole.VENDOR },
-      create: { phone: '670000091', role: UserRole.VENDOR, displayName: 'Maman Smoke' },
+      create: { phone: VENDOR_PHONE, role: UserRole.VENDOR, displayName: 'Maman Smoke' },
     });
 
     const existingVendor = await prisma.vendor.findUnique({ where: { userId: vendorUser.id } });
@@ -108,9 +115,9 @@ async function main(): Promise<void> {
 
     // ── Rider ─────────────────────────────────────────────────────────
     const riderUser = await prisma.user.upsert({
-      where: { phone: '670000092' },
+      where: { phone: RIDER_PHONE },
       update: { isActive: true, role: UserRole.RIDER },
-      create: { phone: '670000092', role: UserRole.RIDER, displayName: 'Jean Smoke' },
+      create: { phone: RIDER_PHONE, role: UserRole.RIDER, displayName: 'Jean Smoke' },
     });
 
     const existingRider = await prisma.rider.findUnique({ where: { userId: riderUser.id } });
