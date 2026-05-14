@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
 import { RidersService } from './riders.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -11,7 +11,7 @@ describe('RidersService', () => {
   let service: RidersService;
   let prisma: {
     user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
-    rider: { upsert: jest.Mock };
+    rider: { upsert: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
     $transaction: jest.Mock;
   };
   let r2: { uploadImage: jest.Mock };
@@ -53,6 +53,8 @@ describe('RidersService', () => {
         upsert: jest
           .fn()
           .mockResolvedValue({ id: 'rider-new', status: RiderStatus.PENDING_REVIEW }),
+        findUnique: jest.fn(),
+        update: jest.fn(),
       },
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
@@ -286,5 +288,52 @@ describe('RidersService', () => {
     expect(result.status).toBe(RiderStatus.PENDING_REVIEW);
     await new Promise((r) => setImmediate(r));
     expect(twilio.sendWhatsApp).toHaveBeenCalled();
+  });
+
+  describe('updateOwn (Story 1.8)', () => {
+    it('updates preferredZone + normalises momoPhone', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
+      prisma.rider.update.mockResolvedValue({
+        id: 'r-1',
+        preferredZone: 'Bonamoussadi',
+        momoPhone: '+237670000099',
+      });
+
+      const result = await service.updateOwn('user-1', {
+        preferredZone: 'Bonamoussadi',
+        momoPhone: '670000099',
+      });
+
+      expect(prisma.rider.findUnique).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        select: { id: true },
+      });
+      expect(prisma.rider.update).toHaveBeenCalledWith({
+        where: { id: 'r-1' },
+        data: { preferredZone: 'Bonamoussadi', momoPhone: '+237670000099' },
+        select: expect.any(Object),
+      });
+      expect(result.momoPhone).toBe('+237670000099');
+    });
+
+    it('rejects empty body with no_fields_to_update', async () => {
+      await expect(service.updateOwn('user-1', {})).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.rider.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the caller has no Rider row', async () => {
+      prisma.rider.findUnique.mockResolvedValue(null);
+      await expect(service.updateOwn('user-1', { preferredZone: 'X' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('does NOT touch momoPhone when undefined', async () => {
+      prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
+      prisma.rider.update.mockResolvedValue({ id: 'r-1' });
+      await service.updateOwn('user-1', { preferredZone: 'X' });
+      const data = prisma.rider.update.mock.calls[0][0].data;
+      expect(data.momoPhone).toBeUndefined();
+    });
   });
 });

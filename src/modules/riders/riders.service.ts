@@ -1,10 +1,17 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
+import { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
 
 // Statuses that allow re-submission. A pending or already-rejected rider can
 // re-upload corrected docs; an ACTIVE or SUSPENDED rider cannot — those go
@@ -184,6 +191,40 @@ export class RidersService {
       message:
         "✅ Demande reçue ! Notre équipe va vérifier votre profil dans les 4 heures. Nous vous prévenons dès que c'est validé.",
     };
+  }
+
+  /**
+   * Story 1.8 — rider self-update.
+   *
+   * Editable: preferredZone, momoPhone. vehicleType / photos / licensePlate
+   * changes go through the admin re-validation flow (Story 6.2) — they're
+   * intentionally not exposed here.
+   */
+  async updateOwn(userId: string, dto: UpdateRiderProfileDto) {
+    if (Object.values(dto).every((v) => v === undefined)) {
+      throw new BadRequestException('no_fields_to_update');
+    }
+
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+
+    return this.prisma.rider.update({
+      where: { id: rider.id },
+      data: {
+        preferredZone: dto.preferredZone,
+        momoPhone: dto.momoPhone ? normalizePhone(dto.momoPhone) : undefined,
+      },
+      select: {
+        id: true,
+        preferredZone: true,
+        momoPhone: true,
+        status: true,
+        updatedAt: true,
+      },
+    });
   }
 
   private async sendSubmissionConfirmation(toE164: string, riderName: string): Promise<void> {

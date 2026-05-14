@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { UserRole, VendorStatus } from '@prisma/client';
 import { VendorService } from './vendor.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -12,6 +12,7 @@ describe('VendorService', () => {
   let prisma: {
     user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
     item: { create: jest.Mock };
+    vendor: { findUnique: jest.Mock; update: jest.Mock };
     $executeRaw: jest.Mock;
     $transaction: jest.Mock;
   };
@@ -47,6 +48,7 @@ describe('VendorService', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       item: { create: jest.fn().mockResolvedValue({ id: 'item-1' }) },
+      vendor: { findUnique: jest.fn(), update: jest.fn() },
       $executeRaw: jest.fn().mockResolvedValue(1),
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
@@ -246,6 +248,92 @@ describe('VendorService', () => {
       // Give the microtask a chance to land + assert the call was attempted.
       await new Promise((r) => setImmediate(r));
       expect(twilio.sendWhatsApp).toHaveBeenCalled();
+    });
+  });
+
+  describe('updateOwn (Story 1.8)', () => {
+    it('updates name + description + normalises momoPhone', async () => {
+      prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
+      prisma.vendor.update.mockResolvedValue({
+        id: 'v-1',
+        name: 'New Name',
+        description: 'New desc',
+        momoPhone: '+237670000099',
+      });
+
+      const result = await service.updateOwn('user-1', {
+        name: 'New Name',
+        description: 'New desc',
+        momoPhone: '670000099',
+      });
+
+      expect(prisma.vendor.findUnique).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        select: { id: true },
+      });
+      expect(prisma.vendor.update).toHaveBeenCalledWith({
+        where: { id: 'v-1' },
+        data: {
+          name: 'New Name',
+          description: 'New desc',
+          momoPhone: '+237670000099',
+        },
+        select: expect.any(Object),
+      });
+      expect(result.momoPhone).toBe('+237670000099');
+    });
+
+    it('rejects empty body with no_fields_to_update', async () => {
+      await expect(service.updateOwn('user-1', {})).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.vendor.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when the caller has no Vendor row', async () => {
+      prisma.vendor.findUnique.mockResolvedValue(null);
+      await expect(service.updateOwn('user-1', { name: 'X' })).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('does NOT touch momoPhone when undefined (vs explicit empty)', async () => {
+      prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
+      prisma.vendor.update.mockResolvedValue({ id: 'v-1', name: 'X' });
+
+      await service.updateOwn('user-1', { name: 'X' });
+
+      const data = prisma.vendor.update.mock.calls[0][0].data;
+      expect(data.momoPhone).toBeUndefined();
+    });
+  });
+
+  describe('updateOwnProfilePhoto (Story 1.8)', () => {
+    it('uploads the new photo and stores the R2 key on the vendor row', async () => {
+      prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
+      prisma.vendor.update.mockResolvedValue({
+        id: 'v-1',
+        profilePhotoUrl: 'vendor-profile/test-uuid.webp',
+      });
+
+      const result = await service.updateOwnProfilePhoto('user-1', file('photo'));
+
+      expect(r2.uploadImage).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ keyPrefix: 'vendor-profile' }),
+      );
+      expect(prisma.vendor.update).toHaveBeenCalledWith({
+        where: { id: 'v-1' },
+        data: { profilePhotoUrl: 'vendor-profile/test-uuid.webp' },
+        select: expect.any(Object),
+      });
+      expect(result.profilePhotoUrl).toBe('vendor-profile/test-uuid.webp');
+    });
+
+    it('throws NotFoundException when the caller has no Vendor row', async () => {
+      prisma.vendor.findUnique.mockResolvedValue(null);
+      await expect(service.updateOwnProfilePhoto('user-1', file('photo'))).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(r2.uploadImage).not.toHaveBeenCalled();
     });
   });
 });

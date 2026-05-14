@@ -1,17 +1,25 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   HttpCode,
   ParseFilePipeBuilder,
+  Patch,
   Post,
+  Req,
+  UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
+import { UserRole } from '@prisma/client';
+import { Request } from 'express';
 import { Public } from '../../shared/decorators/public.decorator';
+import { Roles } from '../../shared/decorators/roles.decorator';
 import { SubmitVendorDto } from './dto/submit-vendor.dto';
+import { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
 import { VendorService } from './vendor.service';
 
 // Photo upload guardrail. 5MB matches what the Vendor form on Android Chrome
@@ -73,5 +81,36 @@ export class VendorController {
     if (firstItemPhoto) await imagePipe.transform(firstItemPhoto);
 
     return this.vendors.submitInformal(dto, { profilePhoto, firstItemPhoto });
+  }
+
+  @Roles(UserRole.VENDOR)
+  @ApiBearerAuth()
+  @Patch('me')
+  @ApiOperation({
+    summary: 'Update own vendor profile (Story 1.8)',
+    description:
+      'Vendor-self-update for name, description, and momoPhone. Photo is a separate ' +
+      'multipart endpoint (PATCH /vendors/me/photo). Quartier / landmark moves and ' +
+      'commission edits stay admin-only.',
+  })
+  updateMe(@Req() req: Request, @Body() dto: UpdateVendorProfileDto) {
+    const user = req.user as { id: string };
+    return this.vendors.updateOwn(user.id, dto);
+  }
+
+  @Roles(UserRole.VENDOR)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: MAX_PHOTO_BYTES } }))
+  @Patch('me/photo')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Replace own profile photo (Story 1.8)',
+    description: 'Multipart field `photo`. Same size + MIME guardrails as onboarding.',
+  })
+  async updateMePhoto(@Req() req: Request, @UploadedFile() photo: Express.Multer.File) {
+    if (!photo) throw new BadRequestException('photo is required');
+    await imagePipe.transform(photo);
+    const user = req.user as { id: string };
+    return this.vendors.updateOwnProfilePhoto(user.id, photo);
   }
 }
