@@ -1,8 +1,11 @@
 import {
   Body,
   Controller,
+  Get,
   HttpCode,
+  Param,
   ParseFilePipeBuilder,
+  ParseUUIDPipe,
   Patch,
   Post,
   Req,
@@ -16,6 +19,7 @@ import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { RiderAvailabilityDto, RiderHeartbeatDto } from './dto/rider-availability.dto';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
 import { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
 import { RidersService } from './riders.service';
@@ -95,5 +99,68 @@ export class RidersController {
   updateMe(@Req() req: Request, @Body() dto: UpdateRiderProfileDto) {
     const user = req.user as { id: string };
     return this.riders.updateOwn(user.id, dto);
+  }
+
+  // ── Story 4.1 / 4.4 — availability + heartbeat ─────────────────────
+
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Patch('me/availability')
+  @ApiOperation({
+    summary: 'Toggle online / offline (Story 4.1)',
+    description:
+      '1-tap "Je commence" / "Pause". Account must be ACTIVE — riders in PENDING_REVIEW ' +
+      'or CORRECTION_REQUESTED cannot go online.',
+  })
+  setAvailability(@Req() req: Request, @Body() dto: RiderAvailabilityDto) {
+    return this.riders.setAvailability((req.user as { id: string }).id, dto);
+  }
+
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Throttle({ default: { limit: 12, ttl: 60_000 } }) // 1 per 5s tolerated burst
+  @Post('me/location')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Push 15s GPS heartbeat (Story 4.4)',
+    description:
+      'Updates lastLocation + lastSeenAt. Implicit online — keeps dispatch eligible ' +
+      'through brief network blips. Rider is dropped from dispatch once lastSeenAt > 60s.',
+  })
+  pushHeartbeat(@Req() req: Request, @Body() dto: RiderHeartbeatDto) {
+    return this.riders.pushHeartbeat((req.user as { id: string }).id, dto);
+  }
+
+  // ── Story 4.1 / 4.2 — rider course lifecycle ───────────────────────
+
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Get('me/courses')
+  @ApiOperation({ summary: 'List assigned + in-flight courses (Story 4.2)' })
+  listCourses(@Req() req: Request) {
+    return this.riders.listCourses((req.user as { id: string }).id);
+  }
+
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Patch('me/courses/:orderId/picked-up')
+  @ApiOperation({
+    summary: 'Rider confirms pickup at vendor (Story 4.2)',
+    description: 'Transitions ACCEPTED / IN_PREP / READY_PICKUP → PICKED_UP.',
+  })
+  markPickedUp(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
+    return this.riders.markPickedUp((req.user as { id: string }).id, orderId);
+  }
+
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Patch('me/courses/:orderId/delivered')
+  @ApiOperation({
+    summary: 'Rider confirms drop-off (Story 4.2)',
+    description:
+      'Transitions PICKED_UP → DELIVERED. Delivery proof photo (Story 4.10) lands later.',
+  })
+  markDelivered(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
+    return this.riders.markDelivered((req.user as { id: string }).id, orderId);
   }
 }

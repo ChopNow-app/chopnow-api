@@ -5,11 +5,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
+import { OrderStatus, Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
+import { RiderAvailabilityDto, RiderHeartbeatDto } from './dto/rider-availability.dto';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
 import { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
 
@@ -225,6 +226,134 @@ export class RidersService {
         updatedAt: true,
       },
     });
+  }
+
+  // ── Story 4.1 / 4.4 — availability + heartbeat ─────────────────────
+
+  async setAvailability(userId: string, dto: RiderAvailabilityDto) {
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true, status: true },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+    if (rider.status !== RiderStatus.ACTIVE) {
+      throw new BadRequestException({
+        code: 'rider_not_active',
+        message: 'Your account must be approved by an admin before you can go online.',
+      });
+    }
+    return this.prisma.rider.update({
+      where: { id: rider.id },
+      data: { isOnline: dto.isOnline, lastSeenAt: dto.isOnline ? new Date() : undefined },
+      select: { id: true, isOnline: true, lastSeenAt: true },
+    });
+  }
+
+  /**
+   * Story 4.4 — 15s GPS heartbeat.
+   *
+   * Writes both `lastLocation` (PostGIS point) and `lastSeenAt` in one raw
+   * SQL call — Prisma can't write the Unsupported geography column. Marks
+   * the rider as online implicitly so a hot resume after a brief network
+   * loss reactivates dispatch without an extra round trip.
+   */
+  async pushHeartbeat(userId: string, dto: RiderHeartbeatDto) {
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true, status: true },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+    if (rider.status !== RiderStatus.ACTIVE) {
+      throw new BadRequestException({
+        code: 'rider_not_active',
+        message: 'Your account must be approved before sending location updates.',
+      });
+    }
+    await this.prisma.$executeRaw`
+      UPDATE "riders"
+      SET "lastLocation" = ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326)::geography,
+          "lastSeenAt"   = NOW(),
+          "isOnline"     = true
+      WHERE id = ${rider.id}
+    `;
+    return { ok: true as const };
+  }
+
+  // ── Story 4.1 / 4.2 — rider order lifecycle ────────────────────────
+
+  async listCourses(userId: string) {
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+
+    return this.prisma.order.findMany({
+      where: {
+        riderId: rider.id,
+        status: {
+          in: [
+            OrderStatus.ACCEPTED,
+            OrderStatus.IN_PREP,
+            OrderStatus.READY_PICKUP,
+            OrderStatus.PICKED_UP,
+          ],
+        },
+      },
+      orderBy: { assignedAt: 'desc' },
+      include: { vendor: { select: { id: true, name: true, quartier: true } } },
+    });
+  }
+
+  async markPickedUp(userId: string, orderId: string) {
+    const order = await this.requireRiderOrder(userId, orderId);
+    const PICKUPABLE = new Set<OrderStatus>([
+      OrderStatus.ACCEPTED,
+      OrderStatus.IN_PREP,
+      OrderStatus.READY_PICKUP,
+    ]);
+    if (!PICKUPABLE.has(order.status)) {
+      throw new ConflictException({
+        code: 'order_not_pickupable',
+        message: 'Order is not in a state ready for pickup.',
+      });
+    }
+    return this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.PICKED_UP, pickedUpAt: new Date() },
+    });
+  }
+
+  async markDelivered(userId: string, orderId: string) {
+    const order = await this.requireRiderOrder(userId, orderId);
+    if (order.status !== OrderStatus.PICKED_UP) {
+      throw new ConflictException({
+        code: 'order_not_in_delivery',
+        message: 'Order must be PICKED_UP before it can be marked DELIVERED.',
+      });
+    }
+    return this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.DELIVERED, deliveredAt: new Date() },
+    });
+  }
+
+  private async requireRiderOrder(userId: string, orderId: string) {
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, riderId: true, status: true },
+    });
+    if (!order || order.riderId !== rider.id) {
+      // 404 — never confirm an order id exists if it's not yours.
+      throw new NotFoundException('order_not_found');
+    }
+    return order;
   }
 
   private async sendSubmissionConfirmation(toE164: string, riderName: string): Promise<void> {
