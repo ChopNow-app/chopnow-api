@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -180,14 +181,20 @@ export class AuthService {
   private async signTokens(userId: string, role: UserRole, replacesTokenId?: string) {
     const accessTtl = this.env.jwtAccessTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
     const refreshTtl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    // Unique JWT IDs per token. Without `jti`, two tokens minted in the same
+    // second for the same user produce identical signatures (`iat` is second-
+    // resolution) — which makes Story 1.2's rotation indistinguishable from
+    // no-op. `jti` also gives us a stable handle for per-session audit logs.
+    const accessJti = randomUUID();
+    const refreshJti = randomUUID();
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(
         { sub: userId, role },
-        { secret: this.env.jwtAccessSecret, expiresIn: accessTtl },
+        { secret: this.env.jwtAccessSecret, expiresIn: accessTtl, jwtid: accessJti },
       ),
       this.jwt.signAsync(
         { sub: userId, role },
-        { secret: this.env.jwtRefreshSecret, expiresIn: refreshTtl },
+        { secret: this.env.jwtRefreshSecret, expiresIn: refreshTtl, jwtid: refreshJti },
       ),
     ]);
 
