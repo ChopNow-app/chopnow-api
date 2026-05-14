@@ -301,7 +301,19 @@ export class RidersService {
         },
       },
       orderBy: { assignedAt: 'desc' },
-      include: { vendor: { select: { id: true, name: true, quartier: true } } },
+      include: {
+        vendor: { select: { id: true, name: true, quartier: true } },
+        // Rider needs items for the pickup screen (what to grab from the vendor)
+        // and for the summary card on /livreur showing "N plat(s)".
+        items: {
+          select: {
+            id: true,
+            nameSnapshot: true,
+            quantity: true,
+            lineXAF: true,
+          },
+        },
+      },
     });
   }
 
