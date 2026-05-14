@@ -305,7 +305,7 @@ export class RidersService {
     });
   }
 
-  async markPickedUp(userId: string, orderId: string) {
+  async markPickedUp(userId: string, orderId: string, submittedCode: string) {
     const order = await this.requireRiderOrder(userId, orderId);
     const PICKUPABLE = new Set<OrderStatus>([
       OrderStatus.ACCEPTED,
@@ -318,18 +318,34 @@ export class RidersService {
         message: 'Order is not in a state ready for pickup.',
       });
     }
+    // Story 4.13 — rider must produce the 4-digit pickup code the vendor
+    // showed them. Compared in constant-ish time via plain === since the
+    // code space is intentionally tiny (10k) and the auth path already
+    // pins this to a specific rider+order pair.
+    if (submittedCode !== order.pickupCode) {
+      throw new ConflictException({
+        code: 'wrong_pickup_code',
+        message: 'Code de retrait incorrect. Demande-le au vendeur.',
+      });
+    }
     return this.prisma.order.update({
       where: { id: order.id },
       data: { status: OrderStatus.PICKED_UP, pickedUpAt: new Date() },
     });
   }
 
-  async markDelivered(userId: string, orderId: string) {
+  async markDelivered(userId: string, orderId: string, submittedCode: string) {
     const order = await this.requireRiderOrder(userId, orderId);
     if (order.status !== OrderStatus.PICKED_UP) {
       throw new ConflictException({
         code: 'order_not_in_delivery',
         message: 'Order must be PICKED_UP before it can be marked DELIVERED.',
+      });
+    }
+    if (submittedCode !== order.deliveryCode) {
+      throw new ConflictException({
+        code: 'wrong_delivery_code',
+        message: 'Code de livraison incorrect. Demande-le au client.',
       });
     }
     return this.prisma.order.update({
@@ -347,7 +363,13 @@ export class RidersService {
 
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, riderId: true, status: true },
+      select: {
+        id: true,
+        riderId: true,
+        status: true,
+        pickupCode: true,
+        deliveryCode: true,
+      },
     });
     if (!order || order.riderId !== rider.id) {
       // 404 — never confirm an order id exists if it's not yours.

@@ -402,6 +402,14 @@ model Order {
   deliveryDescription String?
   deliveryPhone       String
 
+  // Story 4.13 — pickup + delivery confirmation codes. Each is 4 digits, set
+  // at order creation. Rider reads pickupCode from the vendor and deliveryCode
+  // from the consumer; both are submitted on the corresponding state
+  // transition. Prevents a rider from marking a step done without actually
+  // being there.
+  pickupCode   String @db.VarChar(4)
+  deliveryCode String @db.VarChar(4)
+
   // Refusal / cancellation context — populated when status enters a
   // terminal-failure state.
   refusalReason String?

@@ -127,6 +127,8 @@ export class OrdersService {
     // 5) Initial status: cash + momo both start PENDING; momo flips to
     // CONFIRMED once the Campay webhook lands (Story 3.3).
     const code = this.generateOrderCode();
+    const pickupCode = this.generate4DigitCode();
+    const deliveryCode = this.generate4DigitCode();
     const order = await this.prisma.$transaction(async (tx) => {
       return tx.order.create({
         data: {
@@ -146,6 +148,8 @@ export class OrdersService {
           deliveryLandmark: dto.deliveryLandmark ?? null,
           deliveryDescription: dto.deliveryDescription ?? null,
           deliveryPhone: dto.deliveryPhone,
+          pickupCode,
+          deliveryCode,
           idempotencyKey: idempotencyKey ?? null,
           items: { createMany: { data: lines } },
         },
@@ -169,7 +173,13 @@ export class OrdersService {
   async getOrder(orderId: string, userId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: true, vendor: { select: { id: true, userId: true, name: true } } },
+      include: {
+        items: true,
+        vendor: { select: { id: true, userId: true, name: true } },
+        // Surface the rating so the frontend can hide the rating form once
+        // the consumer has rated (Story 3.9).
+        rating: { select: { id: true, vendorScore: true, riderScore: true, comment: true } },
+      },
     });
     if (!order) throw new NotFoundException('order_not_found');
 
@@ -180,16 +190,28 @@ export class OrdersService {
       // 404, not 403 — never confirm that an order id exists.
       throw new NotFoundException('order_not_found');
     }
-    return order;
+
+    // Story 4.13 — scope codes by viewer role so neither party leaks the
+    // other's secret. Consumer sees their delivery code; vendor sees their
+    // pickup code. Rider gets neither via this endpoint (they read codes
+    // off the physical people they meet).
+    return {
+      ...order,
+      pickupCode: isVendorSide ? order.pickupCode : undefined,
+      deliveryCode: isOwner ? order.deliveryCode : undefined,
+    };
   }
 
   async listConsumerOrders(userId: string, limit = 30) {
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: { userId },
       orderBy: { placedAt: 'desc' },
       take: limit,
       include: { items: true, vendor: { select: { id: true, name: true, badge: true } } },
     });
+    // Story 4.13 — strip pickupCode (vendor's secret) before sending to the
+    // consumer.
+    return orders.map((o) => ({ ...o, pickupCode: undefined }));
   }
 
   // ── consumer cancellation ─────────────────────────────────────────
@@ -235,12 +257,15 @@ export class OrdersService {
     });
     if (!vendor) throw new NotFoundException('vendor_not_found');
 
-    return this.prisma.order.findMany({
+    const orders = await this.prisma.order.findMany({
       where: { vendorId: vendor.id, ...(status ? { status } : {}) },
       orderBy: { placedAt: 'desc' },
       take: 100,
       include: { items: true },
     });
+    // Story 4.13 — strip deliveryCode (consumer's secret) before sending to
+    // the vendor. Vendor only ever needs pickupCode.
+    return orders.map((o) => ({ ...o, deliveryCode: undefined }));
   }
 
   async acceptOrder(orderId: string, userId: string) {
@@ -431,6 +456,20 @@ export class OrdersService {
       out += alphabet[bytes[i] % alphabet.length];
     }
     return out;
+  }
+
+  /**
+   * Story 4.13 — 4-digit pickup/delivery confirmation code.
+   *
+   * Crypto-random source (not Math.random) because these gate physical
+   * actions worth ~3000 FCFA each — a predictable PRNG would let a rider
+   * skip pickup verification by guessing. Collision space is intentionally
+   * small (10k); per-order uniqueness is enforced by tying the code to a
+   * specific orderId, not globally.
+   */
+  private generate4DigitCode(): string {
+    const n = randomBytes(2).readUInt16BE(0) % 10000;
+    return n.toString().padStart(4, '0');
   }
 }
 
