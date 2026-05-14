@@ -14,6 +14,8 @@ export const DomainEvents = {
   // Orders
   ORDER_CREATED: 'order.created',
   ORDER_PAID: 'order.paid',
+  ORDER_ACCEPTED: 'order.accepted',
+  ORDER_REFUSED: 'order.refused',
   ORDER_CANCELLED: 'order.cancelled',
   ORDER_DELIVERED: 'order.delivered',
   ORDER_DISPUTED: 'order.disputed',

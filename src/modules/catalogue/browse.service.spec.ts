@@ -35,14 +35,16 @@ describe('BrowseService', () => {
   });
 
   describe('computeFee', () => {
+    // Delegates to the shared computeDeliveryFeeXAF util (v2 formula: floor
+    // 350, cap 1500, round UP to nearest 50). Detailed parametrisation lives
+    // in delivery-fee.util.spec.ts.
     it.each([
-      [0.5, 300], // floor
-      [1.0, 350],
+      [0.5, 350],
       [2.0, 450],
       [5.0, 750],
-      [12.5, 1500], // cap
-      [50, 1500], // far over cap
-    ])('km=%s → %i FCFA', (km, expected) => {
+      [12.5, 1500],
+      [50, 1500],
+    ])('km=%s → %i FCFA (delegated)', (km, expected) => {
       expect(service.computeFee(km)).toBe(expected);
     });
   });
@@ -83,7 +85,8 @@ describe('BrowseService', () => {
       const card = result.vendors[0];
       expect(card.id).toBe('v-1');
       expect(card.distanceKm).toBe(1.2); // rounded to 1 decimal
-      expect(card.deliveryFeeXAF).toBe(373);
+      // 1.234 km → 250 + 123.4 = 373.4 → floor=350 → round up to 400.
+      expect(card.deliveryFeeXAF).toBe(400);
       expect(card.plan).toBe(1);
       expect(card.etaMinutes).toBeGreaterThan(20); // 20 base + drive time
       expect(card.isOpenNow).toBe(true);
