@@ -73,6 +73,46 @@ enum RiderStatus {
   REJECTED
 }
 
+// Epic 3 — order lifecycle.
+// PENDING       — cart submitted, payment not yet completed (cash always
+//                 lands here too until vendor accepts).
+// CONFIRMED     — MoMo payment confirmed by Campay webhook; awaiting vendor.
+// ACCEPTED      — vendor accepted the order; dispatch starts.
+// IN_PREP       — vendor toggled "in kitchen" (optional intermediate state).
+// READY_PICKUP  — food ready, rider can collect.
+// PICKED_UP     — rider has the food, en route to client.
+// DELIVERED     — terminal happy state.
+// CANCELLED     — terminal: client cancellation, refund processed (or
+//                 cash never paid).
+// REFUSED       — terminal: vendor rejected before accepting; refund processed.
+// EXPIRED       — terminal: vendor never responded within timeout window.
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  ACCEPTED
+  IN_PREP
+  READY_PICKUP
+  PICKED_UP
+  DELIVERED
+  CANCELLED
+  REFUSED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  MTN_MOMO
+  ORANGE_MONEY
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING       // not initiated yet (cash, or before /pay call)
+  PROCESSING    // Campay USSD prompt sent, awaiting webhook
+  PAID
+  FAILED
+  REFUNDED
+}
+
 // =====================================================================
 // Identity (Stories 1.1, 1.2, 1.4, 1.6, 1.7, 1.8)
 // =====================================================================
@@ -95,6 +135,7 @@ model User {
   addresses         Address[]
   vendor            Vendor?
   rider             Rider?
+  orders            Order[]
   passwordResets    AdminPasswordReset[]
 
   @@index([phone])
@@ -268,6 +309,7 @@ model Vendor {
 
   categories MenuCategory[]
   items      Item[]
+  orders     Order[]
 
   @@index([status])
   @@index([type])
@@ -294,6 +336,7 @@ model MenuCategory {
 
 model Item {
   id           String        @id @default(uuid())
+  orderItems   OrderItem[]
   vendorId     String
   vendor       Vendor        @relation(fields: [vendorId], references: [id], onDelete: Cascade)
   categoryId   String?
@@ -314,6 +357,92 @@ model Item {
   @@index([vendorId])
   @@index([categoryId])
   @@map("items")
+}
+
+// =====================================================================
+// Orders (Epic 3)
+// =====================================================================
+
+model Order {
+  id        String      @id @default(uuid())
+  // Short human-readable code (e.g. "TC-A23F4") — shown to client + vendor.
+  code      String      @unique
+  userId    String
+  user      User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  vendorId  String
+  vendor    Vendor      @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  status    OrderStatus @default(PENDING)
+
+  // Money — all in XAF integer (no decimals; XAF smallest unit is 5 but we
+  // round to whole FCFA for orders).
+  subtotalXAF    Int
+  deliveryFeeXAF Int
+  totalXAF       Int
+  noteForVendor  String? @db.VarChar(120)
+
+  paymentMethod    PaymentMethod
+  paymentStatus    PaymentStatus @default(PENDING)
+  // Provider transaction reference (Campay txn id). Unique so a webhook
+  // can't double-credit an order on retry.
+  paymentReference String?       @unique
+  payerPhone       String?
+
+  // Delivery address — snapshotted inline. We don't FK to `addresses`
+  // because the client can edit / delete the saved address later and that
+  // shouldn't break our order audit trail. Story 3.2's landmark goes here too.
+  deliveryLat         Float
+  deliveryLng         Float
+  deliveryQuartier    String
+  deliveryLandmark    String?
+  deliveryDescription String?
+  deliveryPhone       String
+
+  // Refusal / cancellation context — populated when status enters a
+  // terminal-failure state.
+  refusalReason String?
+
+  // Lifecycle timestamps — null until the corresponding transition fires.
+  placedAt    DateTime  @default(now())
+  paidAt      DateTime?
+  acceptedAt  DateTime?
+  refusedAt   DateTime?
+  preparedAt  DateTime?
+  pickedUpAt  DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+
+  // Story 3.14 — client-supplied key so a re-tried POST /orders doesn't
+  // create a duplicate. Scoped per user (composite uniqueness below).
+  idempotencyKey String?
+
+  items OrderItem[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId])
+  @@index([vendorId])
+  @@index([status])
+  @@index([placedAt])
+  @@map("orders")
+}
+
+// Line items — snapshot price + name at order time so menu changes after
+// purchase never rewrite history.
+model OrderItem {
+  id      String  @id @default(uuid())
+  orderId String
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  itemId  String?
+  item    Item?   @relation(fields: [itemId], references: [id], onDelete: SetNull)
+
+  nameSnapshot     String
+  priceXAFSnapshot Int
+  quantity         Int
+  lineXAF          Int
+
+  createdAt DateTime @default(now())
+
+  @@index([orderId])
+  @@map("order_items")
 }
 
 // =====================================================================

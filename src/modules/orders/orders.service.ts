@@ -1,36 +1,370 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
+import { OrderStatus, PaymentStatus, Prisma, VendorStatus } from '@prisma/client';
+import { PrismaService } from '../../infra/prisma/prisma.service';
+import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import { DomainEvents } from '../../shared/events/domain-events';
+import { CreateOrderDto } from './dto/create-order.dto';
+import { RefuseOrderDto } from './dto/vendor-decision.dto';
 
-/**
- * Reference implementation of the domain-event pattern (Architecture Rule #3).
- * Devs landing real Stories 3.x should follow this shape.
- *
- * Producer: emit named events on EventEmitter2 — never call cross-module services directly.
- * Consumer: subscribe with @OnEvent(EventName) — handler runs in-process today,
- *           becomes a queue worker the day a module is extracted.
- */
+// Story 3.1 — minimum order to protect margin (≤ 1200 FCFA generates ~26 FCFA
+// net, near loss). Hard-coded for MVP; surface as an admin config later.
+const MIN_ORDER_XAF = 1200;
+
+// Status sets — keep transition gates explicit so a bug in one branch can't
+// silently teleport an order past the wrong gate.
+const VENDOR_CAN_DECIDE: ReadonlySet<OrderStatus> = new Set([
+  OrderStatus.PENDING, // cash flow lands here before vendor decision
+  OrderStatus.CONFIRMED, // MoMo flow after webhook
+]);
+const CONSUMER_CAN_CANCEL: ReadonlySet<OrderStatus> = new Set([
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED,
+]);
+
+interface DistanceRow {
+  distance_m: number;
+}
+
 @Injectable()
 export class OrdersService {
   private readonly logger = new Logger(OrdersService.name);
 
-  constructor(private readonly events: EventEmitter2) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly events: EventEmitter2,
+  ) {}
 
-  /**
-   * Example producer — Story 3.3/3.4 will replace this with the real flow.
-   * After Campay confirms payment, mark order PAID and let dispatch / notifications react.
-   */
-  async markPaid(orderId: string): Promise<void> {
-    // ...persistence logic lands here (Story 3.6)...
-    this.events.emit(DomainEvents.ORDER_PAID, { orderId, paidAt: new Date() });
+  // ── consumer write path ────────────────────────────────────────────
+
+  async createOrder(userId: string, dto: CreateOrderDto, idempotencyKey?: string) {
+    // Idempotency short-circuit — same client retry → same order back.
+    if (idempotencyKey) {
+      const existing = await this.prisma.order.findUnique({
+        where: { userId_idempotencyKey: { userId, idempotencyKey } },
+        include: { items: true },
+      });
+      if (existing) return existing;
+    }
+
+    // 1) Vendor must exist + be ACTIVE + isOpen — closed/pending vendors
+    // aren't legal targets.
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { id: dto.vendorId },
+      select: { id: true, status: true, isOpen: true },
+    });
+    if (!vendor || vendor.status !== VendorStatus.ACTIVE) {
+      throw new NotFoundException({
+        code: 'vendor_not_found',
+        message: 'Vendor unavailable or not yet approved.',
+      });
+    }
+    if (!vendor.isOpen) {
+      throw new ConflictException({
+        code: 'vendor_closed',
+        message: 'This vendor just went offline. Please pick another vendor.',
+      });
+    }
+
+    // 2) Load + verify items. All cart lines must belong to this vendor,
+    // be available, in stock, and resolved server-side (no client-supplied
+    // prices — those come from the DB).
+    const itemIds = dto.items.map((l) => l.itemId);
+    const items = await this.prisma.item.findMany({
+      where: { id: { in: itemIds }, vendorId: vendor.id },
+      select: { id: true, name: true, priceXAF: true, isAvailable: true, isInStock: true },
+    });
+    if (items.length !== itemIds.length) {
+      throw new BadRequestException({
+        code: 'item_not_in_vendor_menu',
+        message: "One or more items don't belong to this vendor or were just removed.",
+      });
+    }
+    const unavailable = items.find((i) => !i.isAvailable || !i.isInStock);
+    if (unavailable) {
+      throw new ConflictException({
+        code: 'item_out_of_stock',
+        message: `"${unavailable.name}" is currently out of stock.`,
+      });
+    }
+
+    // 3) Subtotal from DB prices.
+    const itemMap = new Map(items.map((i) => [i.id, i]));
+    const lines = dto.items.map((cartLine) => {
+      const item = itemMap.get(cartLine.itemId)!;
+      const lineXAF = item.priceXAF * cartLine.quantity;
+      return {
+        itemId: item.id,
+        nameSnapshot: item.name,
+        priceXAFSnapshot: item.priceXAF,
+        quantity: cartLine.quantity,
+        lineXAF,
+      };
+    });
+    const subtotalXAF = lines.reduce((sum, l) => sum + l.lineXAF, 0);
+
+    // 4) Delivery fee from PostGIS distance.
+    const distanceKm = await this.computeDistanceKm(vendor.id, dto.deliveryLat, dto.deliveryLng);
+    const deliveryFeeXAF = computeDeliveryFeeXAF(distanceKm);
+    const totalXAF = subtotalXAF + deliveryFeeXAF;
+
+    if (totalXAF < MIN_ORDER_XAF) {
+      throw new BadRequestException({
+        code: 'order_below_minimum',
+        message: `Commande minimum ${MIN_ORDER_XAF} FCFA — ajoutez un plat pour continuer.`,
+      });
+    }
+
+    // 5) Initial status: cash + momo both start PENDING; momo flips to
+    // CONFIRMED once the Campay webhook lands (Story 3.3).
+    const code = this.generateOrderCode();
+    const order = await this.prisma.$transaction(async (tx) => {
+      return tx.order.create({
+        data: {
+          code,
+          userId,
+          vendorId: vendor.id,
+          status: OrderStatus.PENDING,
+          subtotalXAF,
+          deliveryFeeXAF,
+          totalXAF,
+          noteForVendor: dto.noteForVendor ?? null,
+          paymentMethod: dto.paymentMethod,
+          paymentStatus: PaymentStatus.PENDING,
+          deliveryLat: dto.deliveryLat,
+          deliveryLng: dto.deliveryLng,
+          deliveryQuartier: dto.deliveryQuartier,
+          deliveryLandmark: dto.deliveryLandmark ?? null,
+          deliveryDescription: dto.deliveryDescription ?? null,
+          deliveryPhone: dto.deliveryPhone,
+          idempotencyKey: idempotencyKey ?? null,
+          items: { createMany: { data: lines } },
+        },
+        include: { items: true },
+      });
+    });
+
+    this.events.emit(DomainEvents.ORDER_CREATED, {
+      orderId: order.id,
+      code: order.code,
+      vendorId: order.vendorId,
+      userId: order.userId,
+      paymentMethod: order.paymentMethod,
+    });
+
+    return order;
+  }
+
+  // ── consumer read path ────────────────────────────────────────────
+
+  async getOrder(orderId: string, userId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      include: { items: true, vendor: { select: { id: true, userId: true, name: true } } },
+    });
+    if (!order) throw new NotFoundException('order_not_found');
+
+    // Read auth: consumer owner, or vendor whose row matches.
+    const isOwner = order.userId === userId;
+    const isVendorSide = order.vendor.userId === userId;
+    if (!isOwner && !isVendorSide) {
+      // 404, not 403 — never confirm that an order id exists.
+      throw new NotFoundException('order_not_found');
+    }
+    return order;
+  }
+
+  async listConsumerOrders(userId: string, limit = 30) {
+    return this.prisma.order.findMany({
+      where: { userId },
+      orderBy: { placedAt: 'desc' },
+      take: limit,
+      include: { items: true, vendor: { select: { id: true, name: true, badge: true } } },
+    });
+  }
+
+  // ── consumer cancellation ─────────────────────────────────────────
+
+  async cancelOrder(orderId: string, userId: string) {
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    if (!order || order.userId !== userId) throw new NotFoundException('order_not_found');
+
+    if (!CONSUMER_CAN_CANCEL.has(order.status)) {
+      throw new ConflictException({
+        code: 'order_not_cancellable',
+        message: 'The vendor has already accepted this order. Please contact support to cancel.',
+      });
+    }
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.CANCELLED, cancelledAt: new Date() },
+    });
+
+    this.events.emit(DomainEvents.ORDER_CANCELLED, {
+      orderId: order.id,
+      paymentStatus: order.paymentStatus,
+      cancelledBy: 'consumer',
+    });
+
+    // MoMo refund is wired in Story 3.8 once the payments module handles
+    // Campay refund calls — log the intent now so admin can replay if needed.
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      this.logger.warn(
+        `Order ${order.id} cancelled while PAID — refund needed (Story 3.8 pending wiring)`,
+      );
+    }
+    return updated;
+  }
+
+  // ── vendor decision path ──────────────────────────────────────────
+
+  async listVendorOrders(userId: string, status?: OrderStatus) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+
+    return this.prisma.order.findMany({
+      where: { vendorId: vendor.id, ...(status ? { status } : {}) },
+      orderBy: { placedAt: 'desc' },
+      take: 100,
+      include: { items: true },
+    });
+  }
+
+  async acceptOrder(orderId: string, userId: string) {
+    const order = await this.requireVendorOrder(orderId, userId);
+    if (!VENDOR_CAN_DECIDE.has(order.status)) {
+      throw new ConflictException({
+        code: 'order_not_pending',
+        message: 'This order is no longer awaiting your decision.',
+      });
+    }
+    const now = new Date();
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.ACCEPTED, acceptedAt: now },
+    });
+    this.events.emit(DomainEvents.ORDER_ACCEPTED, {
+      orderId: order.id,
+      vendorId: order.vendorId,
+      acceptedAt: now,
+    });
+    return updated;
+  }
+
+  async refuseOrder(orderId: string, userId: string, dto: RefuseOrderDto) {
+    const order = await this.requireVendorOrder(orderId, userId);
+    if (!VENDOR_CAN_DECIDE.has(order.status)) {
+      throw new ConflictException({
+        code: 'order_not_pending',
+        message: 'This order is no longer awaiting your decision.',
+      });
+    }
+    const reasonLabel = dto.note ? `${dto.reason}: ${dto.note}` : dto.reason;
+    const now = new Date();
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: { status: OrderStatus.REFUSED, refusedAt: now, refusalReason: reasonLabel },
+    });
+    this.events.emit(DomainEvents.ORDER_REFUSED, {
+      orderId: order.id,
+      vendorId: order.vendorId,
+      reason: dto.reason,
+      refusedAt: now,
+    });
+    // Refund wiring: same TODO as cancelOrder.
+    if (order.paymentStatus === PaymentStatus.PAID) {
+      this.logger.warn(`Order ${order.id} refused by vendor while PAID — refund needed`);
+    }
+    return updated;
+  }
+
+  // ── internal payment hooks (called by payments module — Story 3.3+) ─
+
+  @OnEvent(DomainEvents.PAYMENT_SUCCEEDED)
+  async onPaymentSucceeded(payload: {
+    orderId: string;
+    providerReference: string;
+    payerPhone?: string;
+  }) {
+    const order = await this.prisma.order.findUnique({ where: { id: payload.orderId } });
+    if (!order || order.paymentStatus === PaymentStatus.PAID) return; // idempotent
+
+    const updated = await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        status: OrderStatus.CONFIRMED,
+        paymentStatus: PaymentStatus.PAID,
+        paymentReference: payload.providerReference,
+        payerPhone: payload.payerPhone ?? order.payerPhone,
+        paidAt: new Date(),
+      },
+    });
+    this.events.emit(DomainEvents.ORDER_PAID, { orderId: updated.id, paidAt: updated.paidAt });
+  }
+
+  // ── helpers ──────────────────────────────────────────────────────
+
+  private async requireVendorOrder(orderId: string, userId: string) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!vendor) throw new ForbiddenException('vendor_not_found');
+
+    const order = await this.prisma.order.findUnique({ where: { id: orderId } });
+    // 404 (not 403) when the order belongs to a different vendor — same
+    // no-enumeration principle as /vendors/:id.
+    if (!order || order.vendorId !== vendor.id) {
+      throw new NotFoundException('order_not_found');
+    }
+    return order;
+  }
+
+  /** Distance between vendor pin and delivery address, in km, via PostGIS. */
+  private async computeDistanceKm(vendorId: string, lat: number, lng: number): Promise<number> {
+    const rows = await this.prisma.$queryRaw<DistanceRow[]>`
+      SELECT ST_Distance(
+        v.location,
+        ST_SetSRID(ST_MakePoint(${lng}, ${lat}), 4326)::geography
+      ) AS distance_m
+      FROM vendors v
+      WHERE v.id = ${vendorId}
+      LIMIT 1
+    `;
+    if (rows.length === 0) {
+      throw new NotFoundException('vendor_not_found');
+    }
+    return rows[0].distance_m / 1000;
   }
 
   /**
-   * Example consumer — orders module also reacts to its own events for audit logging.
-   * Cross-module consumers (DispatchService, NotificationsService) live in their own modules.
+   * Short human-readable code "TC-XXXXX" (5 base32 chars).
+   * Collision odds: 1 in 33^5 ≈ 39M; uniqueness enforced by DB anyway. The
+   * generated value is decoupled from the UUID so customer-service can quote
+   * it over the phone without spelling out hyphens.
    */
-  @OnEvent(DomainEvents.ORDER_PAID)
-  handleOrderPaid(payload: { orderId: string; paidAt: Date }): void {
-    this.logger.log(`order.paid → ${payload.orderId} at ${payload.paidAt.toISOString()}`);
+  private generateOrderCode(): string {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/O/0/1 — phone-spelling friendly
+    const bytes = randomBytes(5);
+    let out = 'TC-';
+    for (let i = 0; i < 5; i++) {
+      out += alphabet[bytes[i] % alphabet.length];
+    }
+    return out;
   }
 }
+
+// Re-export so the controller doesn't need to import Prisma directly.
+export type { Prisma };

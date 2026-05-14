@@ -1,16 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import { BrowseCatalogueDto } from './dto/browse-catalogue.dto';
 import { AvailabilityService, WeeklyHours } from './availability.service';
 
-// Story 2.5 — delivery economics (taken straight from the spec):
-//   fee = 250 + (km × 100), floor 300, cap 1500 FCFA
-//   eta = (km / 25 km/h) × 60 min + vendor_avg_prep_time
-const DELIVERY_BASE_FEE_XAF = 250;
-const DELIVERY_PER_KM_XAF = 100;
-const DELIVERY_FEE_FLOOR_XAF = 300;
-const DELIVERY_FEE_CAP_XAF = 1500;
+// Story 2.5 — ETA only; fee math is shared with order checkout via
+// computeDeliveryFeeXAF so the catalogue preview never drifts from the
+// number a consumer actually pays at /orders.
 const MOTO_AVG_KMH = 25;
 // Vendor.avgPrepTimeMinutes not on schema yet (Story 2.7 follow-up); use a
 // conservative default so the consumer ETA isn't wildly optimistic.
@@ -197,9 +194,9 @@ export class BrowseService {
 
   // ── helpers ────────────────────────────────────────────────────────
 
+  /** Re-exports the shared util so existing callers (and tests) keep working. */
   computeFee(distanceKm: number): number {
-    const raw = DELIVERY_BASE_FEE_XAF + distanceKm * DELIVERY_PER_KM_XAF;
-    return Math.round(Math.min(DELIVERY_FEE_CAP_XAF, Math.max(DELIVERY_FEE_FLOOR_XAF, raw)));
+    return computeDeliveryFeeXAF(distanceKm);
   }
 
   classifyPlan(distanceKm: number): 1 | 2 | 3 {
