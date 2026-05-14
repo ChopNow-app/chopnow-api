@@ -44,10 +44,17 @@ describe('Auth flow (e2e)', () => {
     const { OtpDeliveryService } = await import('../src/infra/twilio/otp-delivery.service');
     prismaModule = await import('@prisma/client');
 
+    // Unique SID per call — otp_logs.providerMessageId is @unique (added in
+    // PR #100). A static value made the first test pass but every subsequent
+    // request-otp threw Prisma's unique-constraint error.
+    let sidCounter = 0;
     otpDelivery = {
-      sendOtp: jest
-        .fn()
-        .mockResolvedValue({ channel: OtpChannel.WHATSAPP, providerMessageId: 'SMtest-e2e' }),
+      sendOtp: jest.fn().mockImplementation(() =>
+        Promise.resolve({
+          channel: OtpChannel.WHATSAPP,
+          providerMessageId: `SMtest-e2e-${++sidCounter}`,
+        }),
+      ),
     };
 
     const moduleRef = await Test.createTestingModule({
@@ -108,7 +115,7 @@ describe('Auth flow (e2e)', () => {
       });
       expect(sentLog).not.toBeNull();
       expect(sentLog!.status).toBe(OtpStatus.SENT);
-      expect(sentLog!.providerMessageId).toBe('SMtest-e2e');
+      expect(sentLog!.providerMessageId).toMatch(/^SMtest-e2e-\d+$/);
       expect(sentLog!.channel).toBe(OtpChannel.WHATSAPP);
 
       // ── Step 2: verify OTP ─────────────────────────────────────────
