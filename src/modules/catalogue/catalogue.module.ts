@@ -1,14 +1,18 @@
 import { Module } from '@nestjs/common';
+import { VendorController } from './vendor.controller';
+import { VendorService } from './vendor.service';
 
 /**
  * Epic 2 — Catalogue & Gestion Vendeur.
  * Vendors, items, availability, search, photos.
- * Wire stories into this module as they land.
+ *
+ * Story 2.0 ✅ — informal vendor onboarding (POST /vendors).
+ * Story 2.1 — restaurant formel onboarding (pending).
+ * Story 2.2+ — menu management, browse, search, etc.
  */
 @Module({
-  imports: [],
-  controllers: [],
-  providers: [],
-  exports: [],
+  controllers: [VendorController],
+  providers: [VendorService],
+  exports: [VendorService],
 })
 export class CatalogueModule {}

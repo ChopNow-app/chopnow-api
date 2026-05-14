@@ -14,6 +14,7 @@ import { R2Module } from './infra/r2/r2.module';
 import { MailModule } from './infra/mail/mail.module';
 
 import { AuthModule } from './modules/auth/auth.module';
+import { CatalogueModule } from './modules/catalogue/catalogue.module';
 import { UsersModule } from './modules/users/users.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { HealthModule } from './health/health.module';
@@ -62,7 +63,8 @@ import { RolesGuard } from './shared/guards/roles.guard';
     AuthModule,
     UsersModule,
     OrdersModule,
-    // CatalogueModule, PaymentsModule, DispatchModule,
+    CatalogueModule,
+    // PaymentsModule, DispatchModule,
     // NotificationsModule, FinanceModule, AdminModule — wired in per-epic
     // --- Cross-cutting ---
     HealthModule,
