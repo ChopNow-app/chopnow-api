@@ -1,54 +1,44 @@
-# Multi-tier CI + deploy.
+# Continuous Integration — verification only.
+# Deploys live in cd-staging.yml and cd-production.yml.
 #
-# Tier 1 — every feature-branch push + every PR: fast feedback for the
-#         developer. Lint, typecheck, unit tests, dep audit, secret scan, SAST.
-#         Targets ~1 minute.
+# Tiers (controlled by step-level `if:` so the required check name
+# `lint-test-build` stays stable across all branches' rulesets):
 #
-# Tier 2 — every PR (skipped on feature pushes to save runner minutes):
-#         Integration tests against an ephemeral PostGIS via testcontainers,
-#         then a full nest build. Targets ~3 minutes.
+#   Tier 1 — every feature-branch push + every PR: lint, typecheck, unit
+#            tests, dep audit, secret scan, SAST. Targets ~1 minute.
+#   Tier 2 — every PR: integration tests (testcontainers PostGIS),
+#            full nest build, e2e suite. Skipped on feature-branch pushes
+#            to keep the inner loop fast.
+#   Tier 2.5 — PR → staging or main: amd64 docker build. Catches
+#            Dockerfile regressions before they reach a deploy branch.
+#   Tier 3 — PR → main only: arm64 docker build (Hetzner target) + Trivy
+#            scan, blocking on HIGH/CRITICAL.
 #
-# Tier 2.5 — PRs targeting `staging` or `main`: also build the production
-#         Docker image. Catches Dockerfile regressions one tier earlier than
-#         only-on-main.
-#
-# Tier 3 — PR → main only: Trivy scan of the built image. HIGH/CRITICAL
-#         OS-level vulns block the merge.
-#
-# Deploy:
-# - push to staging → deploy-staging job (DigitalOcean droplet, ~26 juin 2026)
-# - push to main    → deploy-production job (Hetzner CAX11 Falkenstein)
-#
-# Why one CI job (and not three): the rulesets on `develop` / `staging` / `main`
-# require the status check named `lint-test-build`. Splitting the gate jobs
-# would force ruleset edits. We use step-level `if:` instead so the required
-# check name stays stable while the work tiers up by trigger. Deploy jobs
-# are separate (they don't gate merges, they react to merges).
+# Push to staging/main does NOT run CI here — the PR that produced those
+# commits already passed CI, and the CD workflows take over post-merge.
 
 name: CI
 
 on:
   workflow_dispatch:
-  # Run on push EXCEPT to develop (only ever PR-merged commits, already
-  # validated by the PR's check). Staging and main DO get push CI because
-  # we want a final post-merge validation gate before deploy fires.
   push:
+    # Only feature branches. Trunk branches (develop, staging, main) only ever
+    # receive PR-merged commits, which were already validated by the PR-time CI.
     branches-ignore:
       - develop
+      - staging
+      - main
   pull_request:
     branches: [develop, staging, main]
 
-# Cancel in-progress runs on the same ref. Deploy jobs follow the gate; if
-# a newer commit arrives mid-run, the older deploy is cancelled — the newer
-# one runs to completion, leaving the system at the latest state.
+# Cancel in-progress runs on the same ref. Saves runner minutes during
+# rapid iteration on a feature branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Opt every JS action into Node 24 ahead of GitHub's June 2, 2026 forced
-# migration. Removes the deprecation warning emitted by checkout@v4,
-# setup-node@v4, webfactory/ssh-agent@v0.9.0, etc. Drop this line once those
-# actions ship Node 24 builds (mid-2026 timeframe).
+# migration. Drop once bundled actions ship Node 24 builds.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -100,9 +90,8 @@ jobs:
 
       - name: Secrets scan (gitleaks)
         # Catches accidentally committed credentials in the diff or history.
-        # We use the binary directly (not gitleaks-action) because the action
-        # requires a paid license for commercial orgs. Bump GITLEAKS_VERSION
-        # manually on advisory; the binary is reproducible from a tagged release.
+        # Binary pinned (not the action) because gitleaks-action requires a
+        # paid license for commercial orgs.
         run: |
           GITLEAKS_VERSION=8.21.2
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
@@ -110,9 +99,8 @@ jobs:
           /tmp/gitleaks detect --source . --redact --exit-code 1 --no-banner
 
       - name: SAST scan (Semgrep)
-        # Static analysis for Node/TS security issues (auth bypass, SSRF, XSS,
-        # SQL/NoSQL injection patterns, etc.). 0 findings on develop today;
-        # any new PR that introduces a flagged pattern fails here.
+        # Static analysis for Node/TS security issues. 0 findings on develop
+        # today; any new PR that introduces a flagged pattern fails here.
         run: |
           python3 -m pip install --quiet semgrep
           semgrep scan \
@@ -146,26 +134,16 @@ jobs:
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.changed_files, 'prisma/migrations/')
         run: echo "::warning::This PR modifies Prisma migrations. Verify they're idempotent and reversible."
 
-      # ─── Tier 2.5: PR → staging or main (image build) ────────────────
-      # Catches Dockerfile regressions before they reach a deployable branch.
-      # PR → develop deliberately skips this — fast inner loop matters more
-      # there than catching prod-image issues that early.
+      # ─── Tier 2.5: PR → staging or main (image build verification) ───
+      # Doesn't push anywhere — just proves the Dockerfile compiles. The CD
+      # workflows do the actual push + deploy on post-merge.
       - name: Build production Docker image (amd64 — staging target)
         if: github.event_name == 'pull_request' && (github.base_ref == 'staging' || github.base_ref == 'main')
-        # Native amd64 build on the ubuntu-latest runner. Validates that the
-        # Dockerfile + production install graph still works — covers DO staging
-        # which runs Intel/AMD x86_64. Hetzner prod runs arm64 (CAX11 Ampere);
-        # that variant is built + scanned by the Trivy step below on PR → main.
-        # Single-arch keeps this step fast (~20s) so the inner loop on
-        # develop → staging stays tight.
         run: docker build -t chopnow-api:${{ github.sha }}-amd64 .
 
       # ─── Tier 3: PR → main only (arm64 build + Trivy) ────────────────
-      # The amd64 image was already built in Tier 2.5 and validated the
-      # Dockerfile mechanically. Tier 3 additionally builds the arm64 variant
-      # (the actual Hetzner CAX11 prod target, QEMU-emulated under buildx) and
-      # runs Trivy against it. Splitting CI builds per architecture keeps
-      # Tier 2.5 fast for the common develop → staging flow.
+      # arm64 = Hetzner CAX11 prod target. Built via QEMU on the amd64 runner,
+      # then scanned with Trivy. HIGH/CRITICAL findings block the merge.
       - name: Set up QEMU (arm64 emulation)
         if: github.event_name == 'pull_request' && github.base_ref == 'main'
         uses: docker/setup-qemu-action@v3
@@ -196,187 +174,3 @@ jobs:
           exit-code: '1'
           # Don't fail solely on Trivy failing to fetch its DB (transient infra issue).
           ignore-unfixed: true
-
-  # ─── Deploy: staging (DigitalOcean) ──────────────────────────────────
-  # Fires on every push to `staging` (i.e. after a PR merge from develop).
-  # Gated on `lint-test-build` succeeding for that same SHA.
-  #
-  # Flow:
-  #   1. Login to ghcr.io with GITHUB_TOKEN (workflow-scoped, ephemeral)
-  #   2. Build amd64 image (DO Basic droplets are x86_64) and push to
-  #      ghcr.io/chopnow-app/chopnow-api:staging-<sha>
-  #   3. Render .env from `staging` environment secrets
-  #   4. scp .env + compose file to /opt/chopnow/staging/
-  #   5. SSH: docker compose pull (from ghcr.io) → up db/redis → migrate
-  #      → up -d api --force-recreate
-  #   6. Health check via SSH tunnel (3001 is bound to 127.0.0.1 only,
-  #      not exposed externally yet)
-  #
-  # Why ghcr.io and not tar+scp? With Hetzner prod arriving end of June we'll
-  # have two deploy targets; the registry lets the same built image serve
-  # both without re-running the build per target. Build history is also
-  # browsable in the GitHub Packages UI, which makes rollbacks faster (pick
-  # any prior `staging-<sha>` tag, redeploy).
-  deploy-staging:
-    needs: lint-test-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
-    runs-on: ubuntu-latest
-    environment: staging
-    permissions:
-      contents: read
-      packages: write # required to push to ghcr.io
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Login to ghcr.io
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build + push amd64 staging image
-        # Native amd64 build on the runner. ~30s + ~30-60s for the push.
-        # Tag pattern: ghcr.io/<org>/chopnow-api:staging-<sha>
-        # Also push a moving `staging` tag pointing at the same digest so
-        # the compose file or rollbacks can reference `staging` for "current".
-        run: |
-          IMAGE_REPO=ghcr.io/${{ github.repository_owner }}/chopnow-api
-          IMAGE_REPO_LC=$(echo "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]')
-          docker build \
-            -t "$IMAGE_REPO_LC:staging-${{ github.sha }}" \
-            -t "$IMAGE_REPO_LC:staging" \
-            .
-          docker push "$IMAGE_REPO_LC:staging-${{ github.sha }}"
-          docker push "$IMAGE_REPO_LC:staging"
-
-      - name: Set up SSH (deploy key)
-        # webfactory/ssh-agent handles the agent lifecycle + cleans up
-        # the private key from memory at job end. Cleaner than writing
-        # the key to ~/.ssh/ ourselves.
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.STAGING_SSH_KEY }}
-
-      - name: Trust droplet host key
-        run: ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
-
-      - name: Render .env from secrets
-        env:
-          STAGING_HOST: ${{ secrets.STAGING_HOST }}
-          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
-          STAGING_JWT_ACCESS_SECRET: ${{ secrets.STAGING_JWT_ACCESS_SECRET }}
-          STAGING_JWT_REFRESH_SECRET: ${{ secrets.STAGING_JWT_REFRESH_SECRET }}
-          SHA: ${{ github.sha }}
-        run: |
-          cat > /tmp/.env.staging <<EOF
-          NODE_ENV=production
-          PORT=3001
-          APP_URL=http://${STAGING_HOST}:3001
-          DB_PASSWORD=${STAGING_DB_PASSWORD}
-          DATABASE_URL=postgresql://chopnow:${STAGING_DB_PASSWORD}@db:5432/chopnow?schema=public
-          REDIS_HOST=redis
-          REDIS_PORT=6379
-          REDIS_PASSWORD=
-          JWT_ACCESS_SECRET=${STAGING_JWT_ACCESS_SECRET}
-          JWT_REFRESH_SECRET=${STAGING_JWT_REFRESH_SECRET}
-          JWT_ACCESS_TTL=24h
-          JWT_REFRESH_TTL=30d
-          MAIL_FROM=ChopNow Staging <noreply@chopnow.app>
-          THROTTLE_TTL_SECONDS=60
-          THROTTLE_LIMIT=100
-          CORS_ORIGINS=http://localhost:3000,http://${STAGING_HOST}:3001
-          IMAGE_TAG=${SHA}
-          EOF
-
-      - name: Transfer config to droplet
-        env:
-          STAGING_HOST: ${{ secrets.STAGING_HOST }}
-          STAGING_USER: ${{ secrets.STAGING_USER }}
-        run: |
-          scp deploy/docker-compose.staging.yml "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/docker-compose.yml"
-          scp /tmp/.env.staging "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/.env"
-          # Local copy of the env file has plaintext secrets — wipe after upload.
-          shred -u /tmp/.env.staging 2>/dev/null || rm -f /tmp/.env.staging
-
-      - name: Deploy on droplet
-        env:
-          STAGING_HOST: ${{ secrets.STAGING_HOST }}
-          STAGING_USER: ${{ secrets.STAGING_USER }}
-        run: |
-          ssh "${STAGING_USER}@${STAGING_HOST}" 'bash -s' <<'EOF'
-          set -euo pipefail
-          cd /opt/chopnow/staging
-
-          # Pull the image we just pushed. The package is public on ghcr.io
-          # (visibility set out-of-band via `gh api`), so no docker login is
-          # needed on the droplet. If we ever flip to private, add
-          # `docker login ghcr.io -u <user> --password-stdin` here, fed from
-          # a GitHub env secret holding a fine-grained PAT with read:packages.
-          docker compose pull api
-
-          # Bring up DB + Redis first; wait for healthy via depends_on at next
-          # `up` call. Doing it in two steps makes the migration phase explicit.
-          docker compose up -d db redis
-
-          # Run Prisma migrations in a one-off container.
-          #
-          # Two stdin-related guards are needed here, both because we're inside
-          # an `ssh host 'bash -s' <<'EOF' ... EOF` heredoc:
-          #   -T              disables TTY allocation
-          #   </dev/null      explicitly closes the container's stdin
-          # Without BOTH, compose forwards the heredoc's remaining bytes into
-          # the container as its stdin. The container silently consumes the
-          # rest of the script and exits clean — the bash on the remote then
-          # has no more commands to run. We tried `-T` alone in PR #115 — same
-          # symptom. </dev/null is the actual fix.
-          docker compose run --rm -T api \
-            node node_modules/prisma/build/index.js migrate deploy < /dev/null
-
-          # Now bring up the API. --force-recreate handles two edge cases:
-          # (1) Previous deploy left the api container in a crashloop (restart:
-          #     unless-stopped). Compose's default `up -d` may not reliably
-          #     touch a restarting container, leaving it stuck on the old image.
-          # (2) Config drift between the on-disk compose.yml and what's running.
-          docker compose up -d api --force-recreate --remove-orphans
-
-          # Show the resulting state for the workflow log.
-          docker compose ps
-          EOF
-
-      - name: Health check
-        env:
-          STAGING_HOST: ${{ secrets.STAGING_HOST }}
-          STAGING_USER: ${{ secrets.STAGING_USER }}
-        run: |
-          # 3001 is bound to 127.0.0.1 on the droplet (firewall doesn't even
-          # need to forward it from the outside yet — that comes when nginx
-          # + TLS land). So we ssh in and curl localhost.
-          for i in 1 2 3 4 5 6; do
-            if ssh "${STAGING_USER}@${STAGING_HOST}" 'curl -fs http://localhost:3001/health'; then
-              echo
-              echo "Health check passed on attempt $i"
-              exit 0
-            fi
-            echo "attempt $i/6: not ready, retrying in 5s..."
-            sleep 5
-          done
-          echo "Health check failed after 30s. Last 50 lines of api logs:"
-          ssh "${STAGING_USER}@${STAGING_HOST}" \
-            'cd /opt/chopnow/staging && docker compose logs api --tail=50'
-          exit 1
-
-  # ─── Deploy: production (Hetzner) ────────────────────────────────────
-  # Fires on every push to `main`. Same shape as staging — different secrets
-  # and target host. Gated on `lint-test-build` (which already ran Trivy on
-  # the PR that produced this commit, since main only accepts PR merges).
-  deploy-production:
-    needs: lint-test-build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-      - name: Placeholder — wire up SSH deploy once Hetzner CAX11 IP is known
-        run: |
-          echo "::notice::Production deploy placeholder. Provision Hetzner CAX11 (Falkenstein), add PROD_HOST + PROD_SSH_KEY secrets to the 'production' environment, then replace this step."
