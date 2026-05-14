@@ -169,7 +169,13 @@ export class OrdersService {
   async getOrder(orderId: string, userId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      include: { items: true, vendor: { select: { id: true, userId: true, name: true } } },
+      include: {
+        items: true,
+        vendor: { select: { id: true, userId: true, name: true } },
+        // Surface the rating so the frontend can hide the rating form once
+        // the consumer has rated (Story 3.9).
+        rating: { select: { id: true, vendorScore: true, riderScore: true, comment: true } },
+      },
     });
     if (!order) throw new NotFoundException('order_not_found');
 
