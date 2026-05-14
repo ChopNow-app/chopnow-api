@@ -1,0 +1,49 @@
+# Continuous Deployment — production (Hetzner CAX11 Falkenstein).
+#
+# **Status: placeholder.** The Hetzner droplet is provisioned + bootstrapped
+# end of June 2026. Until then this workflow emits a notice and exits.
+#
+# Once the host is ready, replace the placeholder step with the same shape
+# as cd-staging.yml, with these differences:
+#   - arm64 image build (Hetzner CAX11 = Ampere ARM, not x86)
+#     `docker buildx build --platform linux/arm64 --push …`
+#   - Tags: `prod-<sha>` + moving `prod` tag
+#   - Secrets: PROD_HOST, PROD_USER, PROD_SSH_KEY, PROD_DB_PASSWORD,
+#     PROD_JWT_ACCESS_SECRET, PROD_JWT_REFRESH_SECRET
+#   - APP_URL: https://api.chopnow.app (Cloudflare in front)
+#   - CORS_ORIGINS: https://chopnow.app + any additional consumer surfaces
+#   - Compose file: deploy/docker-compose.production.yml (to be added —
+#     adds nginx + Let's Encrypt + Cloudflare-IP-restricted firewall)
+#
+# Fires on every push to `main` (i.e. squash-merged PR from `staging`).
+
+name: CD — production
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: cd-production
+  # Production: do NOT cancel an in-flight deploy. Half-deployed prod is worse
+  # than waiting for completion. If a newer commit arrives mid-deploy, it
+  # queues and runs after.
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Placeholder — wire up arm64 build + Hetzner SSH deploy
+        run: |
+          echo "::notice::Production deploy placeholder. Provision Hetzner CAX11 (Falkenstein), add PROD_HOST + PROD_USER + PROD_SSH_KEY + DB/JWT secrets to the 'production' environment, then port the steps from cd-staging.yml with the arm64 / prod tag adjustments documented at the top of this file."

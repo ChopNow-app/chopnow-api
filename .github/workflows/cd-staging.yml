@@ -1,0 +1,171 @@
+# Continuous Deployment — staging (DigitalOcean droplet).
+#
+# Fires on every push to the `staging` branch (i.e. immediately after a
+# squash-merged PR from `develop`). The PR's CI run already validated the
+# tree state via ci.yml, so this workflow assumes the commit is good and
+# focuses entirely on shipping the image + bringing up the API.
+#
+# Also supports `workflow_dispatch` so a stuck deploy can be re-triggered
+# from the Actions UI on the same SHA without re-merging.
+#
+# Flow:
+#   1. Login to ghcr.io with GITHUB_TOKEN
+#   2. Build amd64 image (DO Basic droplets are x86_64) and push
+#      ghcr.io/chopnow-app/chopnow-api:staging-<sha> + :staging
+#   3. Render .env from `staging` environment secrets
+#   4. scp .env + compose file to /opt/chopnow/staging/
+#   5. SSH: docker compose pull → up db/redis → migrate → up -d api
+#      --force-recreate
+#   6. Health check via SSH tunnel (3001 is bound to 127.0.0.1 only)
+
+name: CD — staging
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [staging]
+
+# Cancel an in-flight deploy when a newer commit arrives on staging.
+# A partial deploy that gets cancelled is preferable to a stale image
+# overwriting a newer one.
+concurrency:
+  group: cd-staging
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: write # required to push to ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push amd64 staging image
+        # Native amd64 build on the runner. ~30s build + ~30-60s push.
+        # Two tags: `staging-<sha>` for traceability + a moving `staging`
+        # pointer so rollback by tag works.
+        run: |
+          IMAGE_REPO=ghcr.io/${{ github.repository_owner }}/chopnow-api
+          IMAGE_REPO_LC=$(echo "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]')
+          docker build \
+            -t "$IMAGE_REPO_LC:staging-${{ github.sha }}" \
+            -t "$IMAGE_REPO_LC:staging" \
+            .
+          docker push "$IMAGE_REPO_LC:staging-${{ github.sha }}"
+          docker push "$IMAGE_REPO_LC:staging"
+
+      - name: Set up SSH (deploy key)
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_KEY }}
+
+      - name: Trust droplet host key
+        run: ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Render .env from secrets
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
+          STAGING_JWT_ACCESS_SECRET: ${{ secrets.STAGING_JWT_ACCESS_SECRET }}
+          STAGING_JWT_REFRESH_SECRET: ${{ secrets.STAGING_JWT_REFRESH_SECRET }}
+          SHA: ${{ github.sha }}
+        run: |
+          cat > /tmp/.env.staging <<EOF
+          NODE_ENV=production
+          PORT=3001
+          APP_URL=http://${STAGING_HOST}:3001
+          DB_PASSWORD=${STAGING_DB_PASSWORD}
+          DATABASE_URL=postgresql://chopnow:${STAGING_DB_PASSWORD}@db:5432/chopnow?schema=public
+          REDIS_HOST=redis
+          REDIS_PORT=6379
+          REDIS_PASSWORD=
+          JWT_ACCESS_SECRET=${STAGING_JWT_ACCESS_SECRET}
+          JWT_REFRESH_SECRET=${STAGING_JWT_REFRESH_SECRET}
+          JWT_ACCESS_TTL=24h
+          JWT_REFRESH_TTL=30d
+          MAIL_FROM=ChopNow Staging <noreply@chopnow.app>
+          THROTTLE_TTL_SECONDS=60
+          THROTTLE_LIMIT=100
+          CORS_ORIGINS=http://localhost:3000,http://${STAGING_HOST}:3001
+          IMAGE_TAG=${SHA}
+          EOF
+
+      - name: Transfer config to droplet
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+        run: |
+          scp deploy/docker-compose.staging.yml "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/docker-compose.yml"
+          scp /tmp/.env.staging "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/.env"
+          # Local copy of the env file has plaintext secrets — wipe after upload.
+          shred -u /tmp/.env.staging 2>/dev/null || rm -f /tmp/.env.staging
+
+      - name: Deploy on droplet
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+        run: |
+          ssh "${STAGING_USER}@${STAGING_HOST}" 'bash -s' <<'EOF'
+          set -euo pipefail
+          cd /opt/chopnow/staging
+
+          # Pull the image we just pushed. The package is public on ghcr.io;
+          # if we flip it to private later, add `docker login ghcr.io -u <user>
+          # --password-stdin` here, fed from a fine-grained PAT secret.
+          docker compose pull api
+
+          # Bring up DB + Redis first; depends_on healthcheck in compose
+          # gates the migration container's start.
+          docker compose up -d db redis
+
+          # Run Prisma migrations in a one-off container. Two stdin guards
+          # are mandatory inside an ssh heredoc (we lost 65 minutes to this
+          # on the first staging deploy — see runbook deploy-staging.md):
+          #   -T              disables TTY allocation
+          #   </dev/null      closes stdin so it can't be consumed by the
+          #                   container as input
+          docker compose run --rm -T api \
+            node node_modules/prisma/build/index.js migrate deploy < /dev/null
+
+          # Now bring up the API. --force-recreate handles two edge cases:
+          # (1) Previous deploy left the container in a crashloop —
+          #     `up -d` alone may not reliably touch a restarting container.
+          # (2) Config drift between the on-disk compose.yml and what's running.
+          docker compose up -d api --force-recreate --remove-orphans
+
+          # Show the resulting state for the workflow log.
+          docker compose ps
+          EOF
+
+      - name: Health check
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+        run: |
+          # 3001 is bound to 127.0.0.1 on the droplet (no public exposure
+          # yet — nginx + TLS land in a later PR). SSH in and curl localhost.
+          for i in 1 2 3 4 5 6; do
+            if ssh "${STAGING_USER}@${STAGING_HOST}" 'curl -fs http://localhost:3001/health'; then
+              echo
+              echo "Health check passed on attempt $i"
+              exit 0
+            fi
+            echo "attempt $i/6: not ready, retrying in 5s..."
+            sleep 5
+          done
+          echo "Health check failed after 30s. Last 50 lines of api logs:"
+          ssh "${STAGING_USER}@${STAGING_HOST}" \
+            'cd /opt/chopnow/staging && docker compose logs api --tail=50'
+          exit 1
