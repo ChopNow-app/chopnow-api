@@ -1,0 +1,158 @@
+import { randomUUID } from 'node:crypto';
+import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { UserRole, VendorStatus, VendorType } from '@prisma/client';
+import { PrismaService } from '../../infra/prisma/prisma.service';
+import { R2Service } from '../../infra/r2/r2.service';
+import { TwilioService } from '../../infra/twilio/twilio.service';
+import { normalizePhone } from '../../shared/phone/phone.util';
+import { CAPACITY_TO_INT, SubmitVendorDto } from './dto/submit-vendor.dto';
+
+// Default pickup point for newly-submitted vendors. Story 2.15 (landmarks)
+// will replace this with the resolved landmark coordinates; for now we plant
+// the pin at Douala city center so the geography column has a valid value.
+// The pin is NOT shown to consumers — it only matters once dispatch starts
+// computing distances (Sprint 2+).
+const DOUALA_CENTER_LNG = 9.7679;
+const DOUALA_CENTER_LAT = 4.0511;
+
+/** Vendor onboarding domain service — Story 2.0 (informal vendor flow). */
+@Injectable()
+export class VendorService {
+  private readonly logger = new Logger(VendorService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly r2: R2Service,
+    private readonly twilio: TwilioService,
+  ) {}
+
+  async submitInformal(
+    dto: SubmitVendorDto,
+    files: { profilePhoto?: Express.Multer.File; firstItemPhoto?: Express.Multer.File },
+  ): Promise<{ vendorId: string; status: VendorStatus; message: string }> {
+    if (!files.profilePhoto) throw new BadRequestException('profilePhoto is required');
+    if (!files.firstItemPhoto) throw new BadRequestException('firstItemPhoto is required');
+
+    const whatsappPhone = normalizePhone(dto.whatsappPhone);
+    const momoPhone = normalizePhone(dto.momoPhone);
+
+    // Idempotency — one Vendor per phone. A returning consumer can become a
+    // vendor (we upgrade their role inside the transaction below), but a
+    // phone that already has a vendor row must not submit again.
+    const existingUser = await this.prisma.user.findUnique({
+      where: { phone: whatsappPhone },
+      include: { vendor: true },
+    });
+    if (existingUser?.vendor) {
+      throw new ConflictException({
+        code: 'vendor_already_submitted',
+        message: 'A vendor profile already exists for this phone number.',
+      });
+    }
+
+    // Upload BEFORE the transaction so a slow/failed upload doesn't hold a
+    // DB transaction open. If the transaction subsequently fails, the
+    // uploaded objects become orphans — acceptable; an R2 lifecycle rule
+    // can sweep stale keys with no DB reference later.
+    const [profileUpload, firstItemUpload] = await Promise.all([
+      this.r2.uploadImage(files.profilePhoto.buffer, { keyPrefix: 'vendor-profile' }),
+      this.r2.uploadImage(files.firstItemPhoto.buffer, { keyPrefix: 'item-photo' }),
+    ]);
+
+    const capacityInt = CAPACITY_TO_INT[dto.declaredCapacity];
+    const vendorId = randomUUID();
+
+    await this.prisma.$transaction(async (tx) => {
+      // 1) Ensure a User row. New phone → create with VENDOR role. Existing
+      // CONSUMER who's becoming a vendor → upgrade role. (Other roles —
+      // RIDER, ADMIN — are rejected, since vendor onboarding from those
+      // accounts isn't supported.)
+      let userId: string;
+      if (!existingUser) {
+        const created = await tx.user.create({
+          data: { phone: whatsappPhone, role: UserRole.VENDOR },
+        });
+        userId = created.id;
+      } else {
+        if (existingUser.role !== UserRole.CONSUMER && existingUser.role !== UserRole.VENDOR) {
+          throw new ConflictException({
+            code: 'phone_used_by_other_role',
+            message: 'This phone is registered for a non-vendor account.',
+          });
+        }
+        if (existingUser.role === UserRole.CONSUMER) {
+          await tx.user.update({
+            where: { id: existingUser.id },
+            data: { role: UserRole.VENDOR },
+          });
+        }
+        userId = existingUser.id;
+      }
+
+      // 2) Insert vendor row. `location` is `geography(Point, 4326) NOT NULL`
+      // which Prisma marks `Unsupported` — we have to populate it via raw
+      // SQL. Everything else still gets the safety of parameterised binding.
+      await tx.$executeRaw`
+        INSERT INTO vendors (
+          id, "userId", name, type, status, quartier, "pointOfReference",
+          "whatsappPhone", "momoPhone", badge, "declaredCapacity",
+          "profilePhotoUrl", location, "submittedAt", "createdAt", "updatedAt"
+        ) VALUES (
+          ${vendorId},
+          ${userId},
+          ${dto.name},
+          ${VendorType.INFORMAL}::"VendorType",
+          ${VendorStatus.PENDING_REVIEW}::"VendorStatus",
+          ${dto.quartier},
+          ${dto.pointOfReference ?? null},
+          ${whatsappPhone},
+          ${momoPhone},
+          ${'Cuisine locale 🍲'},
+          ${capacityInt},
+          ${profileUpload.key},
+          ST_SetSRID(ST_MakePoint(${DOUALA_CENTER_LNG}, ${DOUALA_CENTER_LAT}), 4326)::geography,
+          NOW(), NOW(), NOW()
+        )
+      `;
+
+      // 3) First menu item (Écran 5).
+      await tx.item.create({
+        data: {
+          vendorId,
+          name: dto.firstItemName,
+          priceXAF: dto.firstItemPriceXAF,
+          photoUrl: firstItemUpload.key,
+          isAvailable: true,
+          isInStock: true,
+        },
+      });
+    });
+
+    // Fire-and-forget WhatsApp confirmation. A delivery failure doesn't
+    // affect the submission outcome — the vendor sees the on-screen
+    // confirmation immediately. Twilio is reachable from the dashboard
+    // notification UI for retries (Story 2.13).
+    void this.sendSubmissionConfirmation(whatsappPhone, dto.name);
+
+    return {
+      vendorId,
+      status: VendorStatus.PENDING_REVIEW,
+      message: '✅ Demande envoyée ! Notre équipe vous contacte sur WhatsApp dans les 2 heures.',
+    };
+  }
+
+  private async sendSubmissionConfirmation(toE164: string, vendorName: string): Promise<void> {
+    const body =
+      `Bonjour ${vendorName} ! ✅\n` +
+      `Votre demande TchopNow est bien reçue. ` +
+      `Notre équipe valide votre profil sous 2 heures et vous prévient ici dès que votre cuisine est en ligne. 🍲`;
+    try {
+      await this.twilio.sendWhatsApp(toE164, body);
+    } catch (err) {
+      // Don't surface to caller — the submission already succeeded. Log so
+      // ops can replay if needed.
+      const msg = (err as Error).message;
+      this.logger.warn(`Vendor submission WhatsApp failed for ${toE164}: ${msg}`);
+    }
+  }
+}
