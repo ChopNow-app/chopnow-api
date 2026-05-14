@@ -74,6 +74,7 @@ export class EnvService {
     authToken?: string;
     whatsappFrom?: string;
     smsFrom?: string;
+    voiceFrom?: string;
     statusCallbackUrl?: string;
   } {
     const cb = this.raw.get<string>('TWILIO_STATUS_CALLBACK_URL');
@@ -82,6 +83,7 @@ export class EnvService {
       authToken: this.raw.get<string>('TWILIO_AUTH_TOKEN'),
       whatsappFrom: this.raw.get<string>('TWILIO_WHATSAPP_FROM'),
       smsFrom: this.raw.get<string>('TWILIO_SMS_FROM'),
+      voiceFrom: this.raw.get<string>('TWILIO_VOICE_FROM'),
       statusCallbackUrl: cb && cb.length > 0 ? cb : undefined,
     };
   }

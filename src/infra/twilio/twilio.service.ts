@@ -46,4 +46,25 @@ export class TwilioService {
     });
     return msg.sid;
   }
+
+  /**
+   * Story 4.17 — start a masked Twilio Voice call.
+   *
+   * Twilio first calls `toE164` (the leg holding the phone). On answer, Twilio
+   * fetches `bridgeUrl` which must return TwiML that <Dial>s the other party.
+   * Both parties see `voiceFrom` as the caller ID — neither sees the other's
+   * real number. POC-4 validated this flow on 2026-04-13.
+   */
+  async startBridgedCall(toE164: string, bridgeUrl: string): Promise<string> {
+    const cfg = this.env.twilio;
+    if (!cfg.voiceFrom) throw new Error('TWILIO_VOICE_FROM is not set');
+    const call = await this.client.calls.create({
+      from: cfg.voiceFrom,
+      to: toE164,
+      url: bridgeUrl,
+      // Hard 3-min cap (spec) — Twilio terminates the bridge after timeLimit s.
+      timeLimit: 180,
+    });
+    return call.sid;
+  }
 }
