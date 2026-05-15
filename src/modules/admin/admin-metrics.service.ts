@@ -46,7 +46,7 @@ export class AdminMetricsService {
       this.prisma.$queryRaw<[{ avg_ms: number | null }]>(
         Prisma.sql`
           SELECT AVG(EXTRACT(EPOCH FROM ("deliveredAt" - "pickedUpAt")) * 1000)::float AS avg_ms
-          FROM "Order"
+          FROM "orders"
           WHERE "status" = 'DELIVERED'
             AND "placedAt" >= ${from} AND "placedAt" < ${to}
             AND "deliveredAt" IS NOT NULL
@@ -56,7 +56,7 @@ export class AdminMetricsService {
       this.prisma.$queryRaw<[{ avg_ms: number | null }]>(
         Prisma.sql`
           SELECT AVG(EXTRACT(EPOCH FROM ("acceptedAt" - "placedAt")) * 1000)::float AS avg_ms
-          FROM "Order"
+          FROM "orders"
           WHERE "acceptedAt" IS NOT NULL
             AND "placedAt" >= ${from} AND "placedAt" < ${to}
         `,
