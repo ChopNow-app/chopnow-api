@@ -5,7 +5,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  RiderStatus,
+  RiderVehicleType,
+  UserRole,
+} from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
@@ -360,9 +368,20 @@ export class RidersService {
         message: 'Code de livraison incorrect. Demande-le au client.',
       });
     }
+    // For CASH orders, delivery == payment: livreur collects cash on handover,
+    // so flip paymentStatus to PAID in the same transaction. MoMo orders are
+    // already PAID by this point (set when Campay webhook fires).
+    const now = new Date();
+    const isCash = order.paymentMethod === PaymentMethod.CASH;
     return this.prisma.order.update({
       where: { id: order.id },
-      data: { status: OrderStatus.DELIVERED, deliveredAt: new Date() },
+      data: {
+        status: OrderStatus.DELIVERED,
+        deliveredAt: now,
+        ...(isCash && order.paymentStatus !== PaymentStatus.PAID
+          ? { paymentStatus: PaymentStatus.PAID, paidAt: now }
+          : {}),
+      },
     });
   }
 
@@ -381,6 +400,8 @@ export class RidersService {
         status: true,
         pickupCode: true,
         deliveryCode: true,
+        paymentMethod: true,
+        paymentStatus: true,
       },
     });
     if (!order || order.riderId !== rider.id) {

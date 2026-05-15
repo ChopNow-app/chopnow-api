@@ -1,6 +1,14 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { OrderStatus, Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  RiderStatus,
+  RiderVehicleType,
+  UserRole,
+} from '@prisma/client';
 import { RidersService } from './riders.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
@@ -388,7 +396,10 @@ describe('RidersService', () => {
   });
 
   describe('markPickedUp / markDelivered (Story 4.2 / 4.13)', () => {
-    function riderOrder(status: OrderStatus) {
+    function riderOrder(
+      status: OrderStatus,
+      opts: { paymentMethod?: PaymentMethod; paymentStatus?: PaymentStatus } = {},
+    ) {
       prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
       prisma.order.findUnique.mockResolvedValue({
         id: 'o-1',
@@ -396,6 +407,8 @@ describe('RidersService', () => {
         status,
         pickupCode: '1234',
         deliveryCode: '5678',
+        paymentMethod: opts.paymentMethod ?? PaymentMethod.MTN_MOMO,
+        paymentStatus: opts.paymentStatus ?? PaymentStatus.PAID,
       });
     }
 
@@ -425,12 +438,32 @@ describe('RidersService', () => {
       });
     });
 
-    it('markDelivered flips PICKED_UP → DELIVERED with correct code', async () => {
-      riderOrder(OrderStatus.PICKED_UP);
+    it('markDelivered flips PICKED_UP → DELIVERED for MoMo (already PAID) without touching payment fields', async () => {
+      riderOrder(OrderStatus.PICKED_UP, {
+        paymentMethod: PaymentMethod.MTN_MOMO,
+        paymentStatus: PaymentStatus.PAID,
+      });
       await service.markDelivered('user-1', 'o-1', '5678');
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 'o-1' },
         data: { status: OrderStatus.DELIVERED, deliveredAt: expect.any(Date) },
+      });
+    });
+
+    it('markDelivered flips PICKED_UP → DELIVERED for CASH and stamps paymentStatus=PAID + paidAt', async () => {
+      riderOrder(OrderStatus.PICKED_UP, {
+        paymentMethod: PaymentMethod.CASH,
+        paymentStatus: PaymentStatus.PENDING,
+      });
+      await service.markDelivered('user-1', 'o-1', '5678');
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'o-1' },
+        data: {
+          status: OrderStatus.DELIVERED,
+          deliveredAt: expect.any(Date),
+          paymentStatus: PaymentStatus.PAID,
+          paidAt: expect.any(Date),
+        },
       });
     });
 
