@@ -76,16 +76,28 @@ jobs:
 
       - name: Render .env from secrets
         env:
-          STAGING_HOST: ${{ secrets.STAGING_HOST }}
           STAGING_DB_PASSWORD: ${{ secrets.STAGING_DB_PASSWORD }}
           STAGING_JWT_ACCESS_SECRET: ${{ secrets.STAGING_JWT_ACCESS_SECRET }}
           STAGING_JWT_REFRESH_SECRET: ${{ secrets.STAGING_JWT_REFRESH_SECRET }}
+          STAGING_APP_URL: ${{ secrets.STAGING_APP_URL }}
+          STAGING_CORS_ORIGINS: ${{ secrets.STAGING_CORS_ORIGINS }}
+          STAGING_TWILIO_ACCOUNT_SID: ${{ secrets.STAGING_TWILIO_ACCOUNT_SID }}
+          STAGING_TWILIO_AUTH_TOKEN: ${{ secrets.STAGING_TWILIO_AUTH_TOKEN }}
+          STAGING_TWILIO_WHATSAPP_FROM: ${{ secrets.STAGING_TWILIO_WHATSAPP_FROM }}
+          STAGING_TWILIO_STATUS_CALLBACK_URL: ${{ secrets.STAGING_TWILIO_STATUS_CALLBACK_URL }}
+          STAGING_CAMPAY_API_URL: ${{ secrets.STAGING_CAMPAY_API_URL }}
+          STAGING_CAMPAY_USERNAME: ${{ secrets.STAGING_CAMPAY_USERNAME }}
+          STAGING_CAMPAY_PASSWORD: ${{ secrets.STAGING_CAMPAY_PASSWORD }}
+          STAGING_CAMPAY_WEBHOOK_SECRET: ${{ secrets.STAGING_CAMPAY_WEBHOOK_SECRET }}
+          STAGING_VAPID_PUBLIC_KEY: ${{ secrets.STAGING_VAPID_PUBLIC_KEY }}
+          STAGING_VAPID_PRIVATE_KEY: ${{ secrets.STAGING_VAPID_PRIVATE_KEY }}
+          STAGING_VAPID_SUBJECT: ${{ secrets.STAGING_VAPID_SUBJECT }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
           NODE_ENV=production
           PORT=3001
-          APP_URL=http://${STAGING_HOST}:3001
+          APP_URL=${STAGING_APP_URL}
           DB_PASSWORD=${STAGING_DB_PASSWORD}
           DATABASE_URL=postgresql://chopnow:${STAGING_DB_PASSWORD}@db:5432/chopnow?schema=public
           REDIS_HOST=redis
@@ -95,10 +107,26 @@ jobs:
           JWT_REFRESH_SECRET=${STAGING_JWT_REFRESH_SECRET}
           JWT_ACCESS_TTL=24h
           JWT_REFRESH_TTL=30d
-          MAIL_FROM=ChopNow Staging <noreply@chopnow.app>
+          TWILIO_ACCOUNT_SID=${STAGING_TWILIO_ACCOUNT_SID}
+          TWILIO_AUTH_TOKEN=${STAGING_TWILIO_AUTH_TOKEN}
+          TWILIO_WHATSAPP_FROM=${STAGING_TWILIO_WHATSAPP_FROM}
+          TWILIO_STATUS_CALLBACK_URL=${STAGING_TWILIO_STATUS_CALLBACK_URL}
+          CAMPAY_API_URL=${STAGING_CAMPAY_API_URL}
+          CAMPAY_USERNAME=${STAGING_CAMPAY_USERNAME}
+          CAMPAY_PASSWORD=${STAGING_CAMPAY_PASSWORD}
+          CAMPAY_WEBHOOK_SECRET=${STAGING_CAMPAY_WEBHOOK_SECRET}
+          VAPID_PUBLIC_KEY=${STAGING_VAPID_PUBLIC_KEY}
+          VAPID_PRIVATE_KEY=${STAGING_VAPID_PRIVATE_KEY}
+          VAPID_SUBJECT=${STAGING_VAPID_SUBJECT}
+          R2_ACCOUNT_ID=
+          R2_ACCESS_KEY_ID=
+          R2_SECRET_ACCESS_KEY=
+          R2_BUCKET=chopnow-staging-media
+          RESEND_API_KEY=
+          MAIL_FROM=ChopNow Staging <noreply@tchopnow.app>
           THROTTLE_TTL_SECONDS=60
           THROTTLE_LIMIT=100
-          CORS_ORIGINS=http://localhost:3000,http://${STAGING_HOST}:3001
+          CORS_ORIGINS=${STAGING_CORS_ORIGINS}
           IMAGE_TAG=${SHA}
           EOF
 
