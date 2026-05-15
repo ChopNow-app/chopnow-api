@@ -3,6 +3,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '../auth/auth.module';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
+import { AdminMetricsController } from './admin-metrics.controller';
+import { AdminMetricsService } from './admin-metrics.service';
 import { AdminValidationController } from './admin-validation.controller';
 import { AdminValidationService } from './admin-validation.service';
 
@@ -23,8 +25,8 @@ import { AdminValidationService } from './admin-validation.service';
  */
 @Module({
   imports: [JwtModule.register({}), AuthModule],
-  controllers: [AdminAuthController, AdminValidationController],
-  providers: [AdminAuthService, AdminValidationService],
-  exports: [AdminAuthService, AdminValidationService],
+  controllers: [AdminAuthController, AdminValidationController, AdminMetricsController],
+  providers: [AdminAuthService, AdminValidationService, AdminMetricsService],
+  exports: [AdminAuthService, AdminValidationService, AdminMetricsService],
 })
 export class AdminModule {}
