@@ -202,6 +202,34 @@ export class OrdersService {
     };
   }
 
+  /**
+   * Public-safe view of an order, intended for /t/<orderId> share links.
+   * Returns ONLY non-PII fields: order code, status, vendor display name,
+   * lifecycle timestamps. No customer/rider/payment info, no codes.
+   *
+   * Security model: UUID v4 is unguessable (122 bits of entropy), so the
+   * link itself is the access token. Don't leak it in screenshots/CS tickets.
+   */
+  async getOrderPublic(orderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        placedAt: true,
+        acceptedAt: true,
+        preparedAt: true,
+        pickedUpAt: true,
+        deliveredAt: true,
+        cancelledAt: true,
+        vendor: { select: { name: true } },
+      },
+    });
+    if (!order) throw new NotFoundException('order_not_found');
+    return order;
+  }
+
   async listConsumerOrders(userId: string, limit = 30) {
     const orders = await this.prisma.order.findMany({
       where: { userId },

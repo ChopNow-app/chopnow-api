@@ -444,4 +444,47 @@ describe('OrdersService', () => {
     expect(emitted).toContain(DomainEvents.ORDER_CREATED);
     expect(emitted).not.toContain(DomainEvents.ORDER_PAID);
   });
+
+  describe('getOrderPublic (share-link safe view)', () => {
+    it('returns only non-PII fields when order exists', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'o-1',
+        code: 'TC-A23F4',
+        status: OrderStatus.PICKED_UP,
+        placedAt: new Date('2026-05-15T12:00:00Z'),
+        acceptedAt: new Date('2026-05-15T12:02:00Z'),
+        preparedAt: null,
+        pickedUpAt: new Date('2026-05-15T12:18:00Z'),
+        deliveredAt: null,
+        cancelledAt: null,
+        vendor: { name: 'Chez Maman Smoke' },
+      });
+      const result = await service.getOrderPublic('o-1');
+      expect(result).toEqual({
+        id: 'o-1',
+        code: 'TC-A23F4',
+        status: OrderStatus.PICKED_UP,
+        placedAt: expect.any(Date),
+        acceptedAt: expect.any(Date),
+        preparedAt: null,
+        pickedUpAt: expect.any(Date),
+        deliveredAt: null,
+        cancelledAt: null,
+        vendor: { name: 'Chez Maman Smoke' },
+      });
+      // Confirm the prisma select narrows the fetch — no PII columns requested.
+      const selectArg = prisma.order.findUnique.mock.calls[0][0].select;
+      expect(selectArg).not.toHaveProperty('userId');
+      expect(selectArg).not.toHaveProperty('deliveryPhone');
+      expect(selectArg).not.toHaveProperty('deliveryCode');
+      expect(selectArg).not.toHaveProperty('pickupCode');
+      expect(selectArg).not.toHaveProperty('paymentReference');
+      expect(selectArg.vendor.select).toEqual({ name: true });
+    });
+
+    it('throws 404 when order id is unknown', async () => {
+      prisma.order.findUnique.mockResolvedValue(null);
+      await expect(service.getOrderPublic('missing')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
 });

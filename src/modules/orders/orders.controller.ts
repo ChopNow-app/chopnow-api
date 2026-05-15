@@ -13,6 +13,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { OrderStatus, UserRole } from '@prisma/client';
 import { Request } from 'express';
+import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RateOrderDto } from './dto/rate-order.dto';
@@ -58,6 +59,20 @@ export class OrdersController {
   })
   detail(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
     return this.orders.getOrder(orderId, (req.user as { id: string }).id);
+  }
+
+  @Public()
+  @Get(':orderId/public')
+  @ApiOperation({
+    summary: 'Public order status (no auth — UUID-as-token model)',
+    description:
+      'Returns only non-PII fields (order code, status, vendor name, lifecycle ' +
+      'timestamps) so consumers can share the link with friends/family without ' +
+      'exposing payment info, delivery code, or contact details. UUID-as-token: ' +
+      'the order id is the access key — treat the link as semi-secret.',
+  })
+  detailPublic(@Param('orderId', new ParseUUIDPipe()) orderId: string) {
+    return this.orders.getOrderPublic(orderId);
   }
 
   @Patch(':orderId/cancel')
