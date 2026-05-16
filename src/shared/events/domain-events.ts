@@ -17,6 +17,7 @@ export const DomainEvents = {
   ORDER_ACCEPTED: 'order.accepted',
   ORDER_REFUSED: 'order.refused',
   ORDER_CANCELLED: 'order.cancelled',
+  ORDER_READY: 'order.ready', // vendor marked all items prepared, rider can pick up
   ORDER_DELIVERED: 'order.delivered',
   ORDER_DISPUTED: 'order.disputed',
 
