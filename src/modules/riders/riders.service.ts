@@ -415,6 +415,38 @@ export class RidersService {
     return order;
   }
 
+  /**
+   * Story 1.4 follow-up (#13) — phone-keyed submission status check.
+   * Mirrors VendorService.getStatusByPhone — returns just the validation
+   * lifecycle fields, never KYC photos / name / address, so the public
+   * throttled endpoint can't be turned into a profile-enumeration tool.
+   */
+  async getStatusByPhone(phone: string) {
+    const normalized = normalizePhone(phone);
+    // Rider has no phone column directly — go via the User row.
+    const user = await this.prisma.user.findUnique({
+      where: { phone: normalized },
+      include: {
+        rider: {
+          select: {
+            status: true,
+            submittedAt: true,
+            validatedAt: true,
+            rejectedAt: true,
+            rejectionReason: true,
+          },
+        },
+      },
+    });
+    if (!user?.rider) {
+      throw new NotFoundException({
+        code: 'rider_not_found',
+        message: "Aucun dossier trouvé pour ce numéro. Vérifie le numéro ou refais l'inscription.",
+      });
+    }
+    return user.rider;
+  }
+
   private async sendSubmissionConfirmation(toE164: string, riderName: string): Promise<void> {
     const body =
       `Bonjour ${riderName} ! ✅\n` +

@@ -203,6 +203,39 @@ export class VendorService {
     });
   }
 
+  /**
+   * Story 2.0 follow-up (#13) — phone-keyed submission status check.
+   * Returns just enough for the vendor to know whether they should keep
+   * waiting (PENDING_REVIEW), fix something (CORRECTION_REQUESTED), or
+   * are good to go (ACTIVE). Throws 404 when no submission exists.
+   *
+   * Deliberately does NOT return name / address / KYC photos — those are
+   * already exposed by /vendors/:id for ACTIVE rows. Keeping the surface
+   * minimal so the public throttled endpoint can't be used as an
+   * enumeration tool against the rest of the vendor profile.
+   */
+  async getStatusByPhone(phone: string) {
+    const normalized = normalizePhone(phone);
+    const vendor = await this.prisma.vendor.findFirst({
+      where: { whatsappPhone: normalized },
+      select: {
+        status: true,
+        submittedAt: true,
+        validatedAt: true,
+        rejectedAt: true,
+        rejectionReason: true,
+      },
+    });
+    if (!vendor) {
+      throw new NotFoundException({
+        code: 'vendor_not_found',
+        message:
+          "Aucune demande trouvée pour ce numéro. Vérifie le numéro ou refais l'inscription.",
+      });
+    }
+    return vendor;
+  }
+
   /** Story 1.8 — replace the vendor profile photo. Old R2 key is left to a sweeper. */
   async updateOwnProfilePhoto(userId: string, file: Express.Multer.File) {
     const vendor = await this.prisma.vendor.findUnique({
