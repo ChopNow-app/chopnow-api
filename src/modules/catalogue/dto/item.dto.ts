@@ -1,7 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { ItemKind, StockLevel } from '@prisma/client';
 import {
   IsBoolean,
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
@@ -56,11 +58,48 @@ export class UpsertItemDto {
   @IsInt()
   @Min(0)
   sortOrder?: number;
+
+  @ApiProperty({
+    required: false,
+    enum: ItemKind,
+    default: ItemKind.FOOD,
+    description: 'Food/Drink — drives the /vendor/menu category tabs.',
+  })
+  @IsOptional()
+  @IsEnum(ItemKind)
+  kind?: ItemKind;
+
+  @ApiProperty({
+    required: false,
+    enum: StockLevel,
+    default: StockLevel.IN_STOCK,
+    description:
+      'Stock state. Defaults to IN_STOCK on create. Edit later from the menu screen / item editor.',
+  })
+  @IsOptional()
+  @IsEnum(StockLevel)
+  stockLevel?: StockLevel;
 }
 
-/** Story 2.10 — 1-tap stock toggle. */
+/** Story 2.10 — stock toggle, now 3-tier. The legacy boolean payload is
+ * accepted as a fallback so callers that haven't upgraded keep working
+ * (true → IN_STOCK, false → OUT_OF_STOCK). New callers send `stockLevel`. */
 export class UpdateItemStockDto {
-  @ApiProperty({ example: false, description: 'true = Disponible, false = Épuisé.' })
+  @ApiProperty({
+    example: false,
+    required: false,
+    description: 'Legacy fallback — true = IN_STOCK, false = OUT_OF_STOCK.',
+  })
+  @IsOptional()
   @IsBoolean()
-  isInStock!: boolean;
+  isInStock?: boolean;
+
+  @ApiProperty({
+    required: false,
+    enum: StockLevel,
+    description: 'Preferred — full 3-tier stock control.',
+  })
+  @IsOptional()
+  @IsEnum(StockLevel)
+  stockLevel?: StockLevel;
 }

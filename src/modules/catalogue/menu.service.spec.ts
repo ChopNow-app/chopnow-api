@@ -146,8 +146,8 @@ describe('MenuService', () => {
     });
   });
 
-  describe('setItemStock (Story 2.10 — 1-tap)', () => {
-    it('flips isInStock without touching other fields', async () => {
+  describe('setItemStock (Story 2.10 — 1-tap + 3-tier follow-up)', () => {
+    it('legacy isInStock=false maps to stockLevel OUT_OF_STOCK', async () => {
       prisma.vendor.findUnique.mockResolvedValue(informalVendor);
       prisma.item.findUnique.mockResolvedValue({ vendorId: 'v-informal' });
 
@@ -155,7 +155,37 @@ describe('MenuService', () => {
 
       expect(prisma.item.update).toHaveBeenCalledWith({
         where: { id: 'item-1' },
-        data: { isInStock: false },
+        data: { stockLevel: 'OUT_OF_STOCK', isInStock: false },
+        select: expect.any(Object),
+      });
+    });
+
+    it('stockLevel=LOW_STOCK keeps isInStock=true (consumer can still order)', async () => {
+      prisma.vendor.findUnique.mockResolvedValue(informalVendor);
+      prisma.item.findUnique.mockResolvedValue({ vendorId: 'v-informal' });
+
+      await service.setItemStock('user-1', 'item-1', { stockLevel: 'LOW_STOCK' });
+
+      expect(prisma.item.update).toHaveBeenCalledWith({
+        where: { id: 'item-1' },
+        data: { stockLevel: 'LOW_STOCK', isInStock: true },
+        select: expect.any(Object),
+      });
+    });
+
+    it('stockLevel=IN_STOCK wins over a legacy boolean disagreement', async () => {
+      prisma.vendor.findUnique.mockResolvedValue(informalVendor);
+      prisma.item.findUnique.mockResolvedValue({ vendorId: 'v-informal' });
+
+      // Both fields passed; the enum is the source of truth.
+      await service.setItemStock('user-1', 'item-1', {
+        stockLevel: 'IN_STOCK',
+        isInStock: false,
+      });
+
+      expect(prisma.item.update).toHaveBeenCalledWith({
+        where: { id: 'item-1' },
+        data: { stockLevel: 'IN_STOCK', isInStock: true },
         select: expect.any(Object),
       });
     });

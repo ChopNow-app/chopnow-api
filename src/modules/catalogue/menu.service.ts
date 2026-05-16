@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, VendorType } from '@prisma/client';
+import { Prisma, StockLevel, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { UpsertItemDto, UpdateItemStockDto } from './dto/item.dto';
@@ -26,6 +26,8 @@ const ITEM_SELECT = {
   photoUrl: true,
   isAvailable: true,
   isInStock: true,
+  stockLevel: true,
+  kind: true,
   preparationMinutes: true,
   sortOrder: true,
   createdAt: true,
@@ -78,6 +80,7 @@ export class MenuService {
       await this.requireCategoryBelongsTo(vendor.id, dto.categoryId);
     }
 
+    const stockLevel = dto.stockLevel ?? StockLevel.IN_STOCK;
     return this.prisma.item.create({
       data: {
         vendorId: vendor.id,
@@ -87,8 +90,10 @@ export class MenuService {
         categoryId: dto.categoryId ?? null,
         preparationMinutes: dto.preparationMinutes ?? null,
         sortOrder: dto.sortOrder ?? 0,
+        kind: dto.kind ?? undefined, // schema default = FOOD
         isAvailable: true,
-        isInStock: true,
+        isInStock: stockLevel !== StockLevel.OUT_OF_STOCK,
+        stockLevel,
       },
       select: ITEM_SELECT,
     });
@@ -101,6 +106,14 @@ export class MenuService {
       await this.requireCategoryBelongsTo(vendor.id, dto.categoryId);
     }
 
+    // When stockLevel is omitted, leave the existing value alone — the
+    // 1-tap toggle endpoint is the dedicated way to flip it (and the menu
+    // editor will send stockLevel explicitly when it wants to change it).
+    const stockUpdate =
+      dto.stockLevel !== undefined
+        ? { stockLevel: dto.stockLevel, isInStock: dto.stockLevel !== StockLevel.OUT_OF_STOCK }
+        : {};
+
     return this.prisma.item.update({
       where: { id: itemId },
       data: {
@@ -110,6 +123,8 @@ export class MenuService {
         categoryId: dto.categoryId ?? null,
         preparationMinutes: dto.preparationMinutes ?? null,
         sortOrder: dto.sortOrder ?? undefined,
+        kind: dto.kind ?? undefined,
+        ...stockUpdate,
       },
       select: ITEM_SELECT,
     });
@@ -122,13 +137,28 @@ export class MenuService {
     return { ok: true as const };
   }
 
-  /** Story 2.10 — 1-tap stock toggle. Frequent, deliberately tiny payload. */
+  /** Story 2.10 — 1-tap stock toggle. Accepts either the legacy boolean or
+   *  the new 3-tier `stockLevel`. Keeps the two fields consistent so the
+   *  consumer catalogue (`isInStock=true`) and the vendor menu screen
+   *  (`stockLevel=LOW_STOCK`) can't disagree about whether an item is sellable. */
   async setItemStock(userId: string, itemId: string, dto: UpdateItemStockDto) {
     const vendor = await this.requireVendor(userId);
     await this.requireItemBelongsTo(vendor.id, itemId);
+
+    const stockLevel: StockLevel =
+      dto.stockLevel ??
+      (dto.isInStock === true
+        ? StockLevel.IN_STOCK
+        : dto.isInStock === false
+          ? StockLevel.OUT_OF_STOCK
+          : StockLevel.IN_STOCK); // neither field present — fall back to IN_STOCK
+
     return this.prisma.item.update({
       where: { id: itemId },
-      data: { isInStock: dto.isInStock },
+      data: {
+        stockLevel,
+        isInStock: stockLevel !== StockLevel.OUT_OF_STOCK,
+      },
       select: ITEM_SELECT,
     });
   }
