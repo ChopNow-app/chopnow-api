@@ -151,4 +151,38 @@ export class SubmitVendorDto {
   @IsInt()
   @Min(100) // sanity floor; smallest market unit on local MoMo is 5 FCFA, but a real plat is >= 100
   firstItemPriceXAF!: number;
+
+  // Multi-item onboarding (#12) — up to 2 extra dishes captured as flat
+  // fields (avoids multipart JSON-array parsing gymnastics). The first
+  // item still gets the hero photo; extras are name + price only, which
+  // keeps the form fast on mobile and the validation surface small. The
+  // vendor adds more items via the /vendor dashboard once activated.
+
+  @ApiProperty({ description: "Nom d'un 2e plat (optionnel).", required: false, example: 'Ndolè' })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  extraItem1Name?: string;
+
+  @ApiProperty({ description: 'Prix du 2e plat en FCFA.', required: false, example: 2500 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  extraItem1PriceXAF?: number;
+
+  @ApiProperty({ description: "Nom d'un 3e plat (optionnel).", required: false, example: 'Eru' })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  extraItem2Name?: string;
+
+  @ApiProperty({ description: 'Prix du 3e plat en FCFA.', required: false, example: 2000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  extraItem2PriceXAF?: number;
 }

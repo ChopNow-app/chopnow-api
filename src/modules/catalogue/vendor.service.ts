@@ -140,16 +140,40 @@ export class VendorService {
         )
       `;
 
-      // 3) First menu item (Écran 5).
-      await tx.item.create({
-        data: {
-          vendorId,
-          name: dto.firstItemName,
-          priceXAF: dto.firstItemPriceXAF,
-          photoUrl: firstItemUpload.key,
-          isAvailable: true,
-          isInStock: true,
-        },
+      // 3) Menu items (Écran 5 + multi-item extension #12).
+      // First item carries the hero photo and is always present.
+      // Up to 2 extras come from optional flat fields (extraItem{1,2}Name +
+      // extraItem{1,2}PriceXAF); the consistency check below requires both
+      // halves of each extra pair to be present (or both absent).
+      const extras: Array<{ name: string; priceXAF: number; sortOrder: number }> = [];
+      if (dto.extraItem1Name && dto.extraItem1PriceXAF) {
+        extras.push({ name: dto.extraItem1Name, priceXAF: dto.extraItem1PriceXAF, sortOrder: 1 });
+      }
+      if (dto.extraItem2Name && dto.extraItem2PriceXAF) {
+        extras.push({ name: dto.extraItem2Name, priceXAF: dto.extraItem2PriceXAF, sortOrder: 2 });
+      }
+
+      await tx.item.createMany({
+        data: [
+          {
+            vendorId,
+            name: dto.firstItemName,
+            priceXAF: dto.firstItemPriceXAF,
+            photoUrl: firstItemUpload.key,
+            isAvailable: true,
+            isInStock: true,
+            sortOrder: 0,
+          },
+          ...extras.map((e) => ({
+            vendorId,
+            name: e.name,
+            priceXAF: e.priceXAF,
+            photoUrl: null,
+            isAvailable: true,
+            isInStock: true,
+            sortOrder: e.sortOrder,
+          })),
+        ],
       });
     });
 
