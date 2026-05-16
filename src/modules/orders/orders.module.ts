@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import { OrdersExpiryService } from './orders-expiry.service';
+import { OrderNotificationsService } from './order-notifications.service';
 
 /**
  * Epic 3 — Commande & Paiement.
@@ -17,7 +19,7 @@ import { OrdersService } from './orders.service';
  */
 @Module({
   controllers: [OrdersController],
-  providers: [OrdersService],
+  providers: [OrdersService, OrdersExpiryService, OrderNotificationsService],
   exports: [OrdersService],
 })
 export class OrdersModule {}
