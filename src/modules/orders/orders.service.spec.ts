@@ -14,6 +14,7 @@ describe('OrdersService', () => {
     order: { findUnique: jest.Mock; findMany: jest.Mock; create: jest.Mock; update: jest.Mock };
     item: { findMany: jest.Mock };
     vendor: { findUnique: jest.Mock };
+    orderItem: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
     orderRating: { create: jest.Mock };
     $queryRaw: jest.Mock;
     $transaction: jest.Mock;
@@ -49,6 +50,11 @@ describe('OrdersService', () => {
         update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id, ...data })),
       },
       item: { findMany: jest.fn() },
+      orderItem: {
+        findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id, ...data })),
+      },
       vendor: { findUnique: jest.fn() },
       orderRating: {
         create: jest
@@ -485,6 +491,102 @@ describe('OrdersService', () => {
     it('throws 404 when order id is unknown', async () => {
       prisma.order.findUnique.mockResolvedValue(null);
       await expect(service.getOrderPublic('missing')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('setItemPrepared', () => {
+    function setup(orderStatus: OrderStatus, itemsAfterUpdate: Array<{ preparedAt: Date | null }>) {
+      prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'order-1',
+        vendorId: 'v-1',
+        status: orderStatus,
+      });
+      prisma.orderItem.findUnique.mockResolvedValue({ id: 'oi-1', orderId: 'order-1' });
+      prisma.orderItem.findMany.mockResolvedValue(itemsAfterUpdate);
+    }
+
+    it('first prepared item flips ACCEPTED → IN_PREP', async () => {
+      setup(OrderStatus.ACCEPTED, [{ preparedAt: new Date() }, { preparedAt: null }]);
+      const result = await service.setItemPrepared('order-1', 'oi-1', 'user-1', true);
+      expect(result.status).toBe(OrderStatus.IN_PREP);
+      expect(result.preparedAt).toBeInstanceOf(Date);
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: OrderStatus.IN_PREP } }),
+      );
+    });
+
+    it('last unprepared toggle flips IN_PREP → ACCEPTED', async () => {
+      setup(OrderStatus.IN_PREP, [{ preparedAt: null }, { preparedAt: null }]);
+      const result = await service.setItemPrepared('order-1', 'oi-1', 'user-1', false);
+      expect(result.status).toBe(OrderStatus.ACCEPTED);
+      expect(result.preparedAt).toBeNull();
+    });
+
+    it('keeps IN_PREP when only some items are prepared', async () => {
+      setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: null }]);
+      const result = await service.setItemPrepared('order-1', 'oi-1', 'user-1', true);
+      expect(result.status).toBe(OrderStatus.IN_PREP);
+      expect(prisma.order.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses when order has already moved past the preparation phase', async () => {
+      setup(OrderStatus.READY_PICKUP, []);
+      await expect(
+        service.setItemPrepared('order-1', 'oi-1', 'user-1', true),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'order_not_in_prep_phase' }),
+      });
+    });
+
+    it('refuses an item that belongs to another order (no cross-tenant leak)', async () => {
+      setup(OrderStatus.IN_PREP, []);
+      prisma.orderItem.findUnique.mockResolvedValue({ id: 'oi-1', orderId: 'order-other' });
+      await expect(
+        service.setItemPrepared('order-1', 'oi-1', 'user-1', true),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('markOrderReady', () => {
+    function setup(orderStatus: OrderStatus, items: Array<{ preparedAt: Date | null }>) {
+      prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'order-1',
+        vendorId: 'v-1',
+        status: orderStatus,
+      });
+      prisma.orderItem.findMany.mockResolvedValue(items);
+    }
+
+    it('flips to READY_PICKUP + emits ORDER_READY when every item is prepared', async () => {
+      setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: new Date() }]);
+      const result = await service.markOrderReady('order-1', 'user-1');
+      expect(result.status).toBe(OrderStatus.READY_PICKUP);
+      expect(prisma.order.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: OrderStatus.READY_PICKUP }),
+        }),
+      );
+      expect(events.emit).toHaveBeenCalledWith(
+        DomainEvents.ORDER_READY,
+        expect.objectContaining({ orderId: 'order-1', vendorId: 'v-1' }),
+      );
+    });
+
+    it('refuses when at least one item is still unprepared', async () => {
+      setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: null }]);
+      await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'items_not_all_prepared' }),
+      });
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('refuses when order is no longer in the preparation phase', async () => {
+      setup(OrderStatus.READY_PICKUP, [{ preparedAt: new Date() }]);
+      await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'order_not_in_prep_phase' }),
+      });
     });
   });
 });

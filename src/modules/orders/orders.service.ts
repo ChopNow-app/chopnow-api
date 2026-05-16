@@ -354,6 +354,115 @@ export class OrdersService {
     return updated;
   }
 
+  // ── vendor preparation path ───────────────────────────────────────
+
+  /**
+   * Toggle a single OrderItem's prepared flag (the vendor's checkbox on the
+   * /vendor/preparation screen).
+   *
+   * Side-effect on order status:
+   *   - If status is ACCEPTED and we just prepared the FIRST item → flip to IN_PREP
+   *   - If status is IN_PREP and we just unprepared the LAST prepared item → flip back to ACCEPTED
+   * Status flips happen inside the same transaction as the OrderItem update so
+   * a partial failure can't leave the order in an inconsistent state.
+   *
+   * Refuses outside ACCEPTED / IN_PREP — once the vendor has marked the order
+   * READY_PICKUP, the kitchen-side checklist is closed.
+   */
+  async setItemPrepared(
+    orderId: string,
+    itemId: string,
+    userId: string,
+    prepared: boolean,
+  ): Promise<{ orderId: string; itemId: string; preparedAt: Date | null; status: OrderStatus }> {
+    const order = await this.requireVendorOrder(orderId, userId);
+    if (order.status !== OrderStatus.ACCEPTED && order.status !== OrderStatus.IN_PREP) {
+      throw new ConflictException({
+        code: 'order_not_in_prep_phase',
+        message: 'This order is no longer in the preparation phase.',
+      });
+    }
+
+    const item = await this.prisma.orderItem.findUnique({ where: { id: itemId } });
+    if (!item || item.orderId !== orderId) {
+      throw new NotFoundException('order_item_not_found');
+    }
+
+    const newPreparedAt = prepared ? new Date() : null;
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.orderItem.update({
+        where: { id: itemId },
+        data: { preparedAt: newPreparedAt },
+      });
+
+      // Recompute aggregate state from the items so the status flip is based
+      // on the post-update truth, not the optimistic local view.
+      const items = await tx.orderItem.findMany({
+        where: { orderId },
+        select: { preparedAt: true },
+      });
+      const anyPrepared = items.some((i) => i.preparedAt !== null);
+      const nextStatus =
+        anyPrepared && order.status === OrderStatus.ACCEPTED
+          ? OrderStatus.IN_PREP
+          : !anyPrepared && order.status === OrderStatus.IN_PREP
+            ? OrderStatus.ACCEPTED
+            : order.status;
+
+      if (nextStatus !== order.status) {
+        await tx.order.update({ where: { id: orderId }, data: { status: nextStatus } });
+      }
+
+      return { orderId, itemId, preparedAt: newPreparedAt, status: nextStatus };
+    });
+  }
+
+  /**
+   * Mark the whole order ready for pickup. Requires every OrderItem to have
+   * preparedAt set (the "all checkboxes ticked" precondition of the CTA).
+   * Flips status to READY_PICKUP, stamps Order.preparedAt, and emits
+   * ORDER_READY so any downstream notifier (rider PWA, consumer WhatsApp)
+   * can fan out.
+   */
+  async markOrderReady(
+    orderId: string,
+    userId: string,
+  ): Promise<{ status: OrderStatus; preparedAt: Date }> {
+    const order = await this.requireVendorOrder(orderId, userId);
+    if (order.status !== OrderStatus.ACCEPTED && order.status !== OrderStatus.IN_PREP) {
+      throw new ConflictException({
+        code: 'order_not_in_prep_phase',
+        message: 'This order is no longer in the preparation phase.',
+      });
+    }
+
+    const items = await this.prisma.orderItem.findMany({
+      where: { orderId },
+      select: { preparedAt: true },
+    });
+    if (items.length === 0 || items.some((i) => i.preparedAt === null)) {
+      throw new ConflictException({
+        code: 'items_not_all_prepared',
+        message: 'All articles must be marked prepared before marking the order ready.',
+      });
+    }
+
+    const now = new Date();
+    await this.prisma.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.READY_PICKUP, preparedAt: now },
+    });
+
+    this.events.emit(DomainEvents.ORDER_READY, {
+      orderId,
+      vendorId: order.vendorId,
+      preparedAt: now,
+    });
+
+    return { status: OrderStatus.READY_PICKUP, preparedAt: now };
+  }
+
   // ── consumer rating ───────────────────────────────────────────────
 
   /**

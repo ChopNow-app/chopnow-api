@@ -18,6 +18,7 @@ import { Roles } from '../../shared/decorators/roles.decorator';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
+import { SetItemPreparedDto } from './dto/set-item-prepared.dto';
 import { OrdersService } from './orders.service';
 
 @ApiTags('orders')
@@ -135,5 +136,33 @@ export class OrdersController {
     @Body() dto: RefuseOrderDto,
   ) {
     return this.orders.refuseOrder(orderId, (req.user as { id: string }).id, dto);
+  }
+
+  @Roles(UserRole.VENDOR)
+  @Patch(':orderId/items/:itemId/prepared')
+  @ApiOperation({
+    summary: 'Vendor toggles a single article as prepared (preparation checklist)',
+  })
+  setItemPrepared(
+    @Req() req: Request,
+    @Param('orderId', new ParseUUIDPipe()) orderId: string,
+    @Param('itemId', new ParseUUIDPipe()) itemId: string,
+    @Body() dto: SetItemPreparedDto,
+  ) {
+    return this.orders.setItemPrepared(
+      orderId,
+      itemId,
+      (req.user as { id: string }).id,
+      dto.prepared,
+    );
+  }
+
+  @Roles(UserRole.VENDOR)
+  @Patch(':orderId/ready')
+  @ApiOperation({
+    summary: 'Vendor marks an order ready for pickup — all items must be prepared first',
+  })
+  markReady(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
+    return this.orders.markOrderReady(orderId, (req.user as { id: string }).id);
   }
 }

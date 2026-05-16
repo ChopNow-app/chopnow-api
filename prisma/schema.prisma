@@ -492,6 +492,12 @@ model OrderItem {
   quantity         Int
   lineXAF          Int
 
+  // Vendor-side "this article is plated" checkbox on the /vendor/preparation
+  // screen. The first item flipping prepared also flips Order.status from
+  // ACCEPTED to IN_PREP; once all items are prepared, the vendor's
+  // "Commande prête" CTA flips status to READY_PICKUP.
+  preparedAt DateTime?
+
   createdAt DateTime @default(now())
 
   @@index([orderId])
