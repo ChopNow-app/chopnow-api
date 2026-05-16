@@ -73,7 +73,11 @@ export class RidersService {
       throw new BadRequestException(`licensePlate is required for ${dto.vehicleType}`);
     }
     // Strip the plate for vehicles that don't carry one — never persist it.
-    const licensePlate = REQUIRES_LICENSE_PLATE.has(dto.vehicleType) ? dto.licensePlate : null;
+    // Normalize: remove all whitespace + uppercase. Frontend accepts the
+    // visible "LT 1234 AB" form for readability; the DB stores "LT1234AB"
+    // so the @unique constraint catches duplicates regardless of formatting.
+    const rawPlate = REQUIRES_LICENSE_PLATE.has(dto.vehicleType) ? dto.licensePlate : null;
+    const licensePlate = rawPlate ? rawPlate.replace(/\s+/g, '').toUpperCase() : null;
 
     const phone = normalizePhone(dto.phone);
     const momoPhone = normalizePhone(dto.momoPhone);

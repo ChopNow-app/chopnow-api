@@ -17,7 +17,12 @@ import { IsEnum, IsOptional, IsString, Matches, MaxLength, MinLength } from 'cla
  */
 
 const PHONE_PATTERN = /^(?:6[5-9]\d{7}|\+?[1-9]\d{7,14})$/;
-const PLATE_PATTERN = /^[A-Z0-9-]{4,12}$/;
+// Cameroon plates can carry visual spaces ("LT 1234 AB"). The frontend
+// normalizes (strips spaces, uppercases) before submitting; we accept both
+// the visible form (with spaces) and the normalized form, then re-normalize
+// in the service before persisting. 15-char ceiling accommodates the
+// widest format observed in the field.
+const PLATE_PATTERN = /^[A-Z0-9 -]{4,15}$/;
 
 export class SubmitRiderDto {
   @ApiProperty({ description: 'Nom complet du livreur.', example: 'Jean Mboué' })
@@ -57,7 +62,9 @@ export class SubmitRiderDto {
   @IsOptional()
   @IsString()
   @Matches(PLATE_PATTERN, {
-    message: 'licensePlate must be 4-12 chars: uppercase letters, digits, dashes.',
+    message:
+      'licensePlate must be 4-15 chars: uppercase letters, digits, spaces, or dashes ' +
+      '(spaces are stripped before persisting).',
   })
   licensePlate?: string;
 
