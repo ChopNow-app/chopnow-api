@@ -50,6 +50,27 @@ enum VendorType {
   RESTAURANT
 }
 
+// Coarse food-vs-drink split for the /vendor/menu category tabs.
+// More granular categorization stays in MenuCategory for restaurant-tier
+// vendors who want full structured menus.
+enum ItemKind {
+  FOOD
+  DRINK
+}
+
+// Three-tier stock signal for the /vendor/menu screen. The boolean
+// `isInStock` is retained as a derived field for backward compat with
+// the catalogue browse path — the source of truth is now stockLevel.
+//   IN_STOCK     — normal availability
+//   LOW_STOCK    — vendor flags "running out, may run out soon"; consumer
+//                  sees a "stock faible" warning chip on the vendor card
+//   OUT_OF_STOCK — equivalent to the legacy isInStock=false (épuisé)
+enum StockLevel {
+  IN_STOCK
+  LOW_STOCK
+  OUT_OF_STOCK
+}
+
 enum VendorStatus {
   PENDING_REVIEW
   CORRECTION_REQUESTED
@@ -355,8 +376,18 @@ model Item {
   priceXAF     Int
   photoUrl     String?
   isAvailable  Boolean       @default(true)
-  // Story 2.10: rupture stock toggle — when false, item shown as "Épuisé"
+  // Story 2.10: rupture stock toggle — derived from stockLevel for legacy
+  // catalogue paths; keep in sync via Prisma updates on stockLevel changes.
   isInStock    Boolean       @default(true)
+  // Three-tier source of truth for stock (Story 2.10 follow-up — menu screen).
+  // OUT_OF_STOCK is identical to isInStock=false; LOW_STOCK is the new
+  // intermediate state that surfaces a "stock faible" warning on the
+  // consumer side without hiding the item.
+  stockLevel   StockLevel    @default(IN_STOCK)
+  // FOOD by default; vendor toggles per-item in the menu editor. Powers
+  // the /vendor/menu category tabs (Tout / Plats / Boissons) and the
+  // consumer-side category filter on the vendor detail page later.
+  kind         ItemKind      @default(FOOD)
   preparationMinutes Int?    // average prep time, used by dispatch ETA
   sortOrder    Int           @default(0)
   createdAt    DateTime      @default(now())
