@@ -2,17 +2,26 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Get,
   HttpCode,
   ParseFilePipeBuilder,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
@@ -112,5 +121,28 @@ export class VendorController {
     await imagePipe.transform(photo);
     const user = req.user as { id: string };
     return this.vendors.updateOwnProfilePhoto(user.id, photo);
+  }
+
+  // Story 2.0 follow-up (#13) — public submission status check. Lets a
+  // vendor who submitted via /vendre check their approval status without
+  // creating an account first. Throttled at 5/min/IP so a malicious actor
+  // can't enumerate phone numbers (the only PII exposed is the status
+  // enum + timestamps; we deliberately don't return name/address).
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Get('status')
+  @ApiOperation({
+    summary: 'Check vendor submission status by WhatsApp phone (Story 2.0 follow-up)',
+    description:
+      'Public, throttled. Returns PENDING_REVIEW / CORRECTION_REQUESTED / ACTIVE / SUSPENDED / REJECTED for the vendor row associated with `phone` (Cameroon local OR E.164). 404 if no submission exists. Does NOT leak name/address — only the validation lifecycle.',
+  })
+  @ApiQuery({
+    name: 'phone',
+    description: 'WhatsApp phone — Cameroon local or E.164',
+    example: '670000000',
+  })
+  getStatus(@Query('phone') phone: string) {
+    if (!phone) throw new BadRequestException('phone is required');
+    return this.vendors.getStatusByPhone(phone);
   }
 }

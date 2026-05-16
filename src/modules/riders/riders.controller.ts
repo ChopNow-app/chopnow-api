@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -8,12 +9,20 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
@@ -176,5 +185,26 @@ export class RidersController {
     @Body() dto: ConfirmationCodeDto,
   ) {
     return this.riders.markDelivered((req.user as { id: string }).id, orderId, dto.code);
+  }
+
+  // Story 1.4 follow-up (#13) — public submission status check, same
+  // pattern as POST /vendors/status. Lets a rider check approval state
+  // without an account. Throttled at 5/min/IP to discourage enumeration.
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @Get('status')
+  @ApiOperation({
+    summary: 'Check rider submission status by phone (Story 1.4 follow-up)',
+    description:
+      'Public, throttled. Returns PENDING_REVIEW / CORRECTION_REQUESTED / ACTIVE / SUSPENDED / REJECTED. 404 if no submission. No PII beyond status + timestamps.',
+  })
+  @ApiQuery({
+    name: 'phone',
+    description: 'WhatsApp phone — Cameroon local or E.164',
+    example: '670000020',
+  })
+  getStatus(@Query('phone') phone: string) {
+    if (!phone) throw new BadRequestException('phone is required');
+    return this.riders.getStatusByPhone(phone);
   }
 }
