@@ -19,6 +19,7 @@
  *   docker exec -w /app chopnow-staging-api node prisma/seed-pilot.js
  *   (compile first: npx tsc prisma/seed-pilot.ts → docker cp into container)
  */
+import { randomUUID } from 'node:crypto';
 import {
   PrismaClient,
   UserRole,
@@ -27,6 +28,8 @@ import {
   RiderVehicleType,
   RiderStatus,
 } from '@prisma/client';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import sharp from 'sharp';
 
 // ─── PILOT ZONE (EDIT ME) ───────────────────────────────────────────────
 // Default placeholder is Bonamoussadi, Douala — change to whichever
@@ -43,6 +46,28 @@ const BADGE_FOR_TYPE: Record<VendorType, string> = {
   [VendorType.INFORMAL]: 'Cuisine locale 🍲',
   [VendorType.SEMI_FORMAL]: 'Maquis 🍽️',
   [VendorType.RESTAURANT]: 'Restaurant 🍽️',
+};
+
+// ─── DEMO PHOTO URLS ────────────────────────────────────────────────────
+// Royalty-free Unsplash images used as placeholder vendor photos until
+// real onboarding photos land via /vendre. Each is downloaded at seed
+// time, re-encoded to WebP @ ≤1280px max-edge (same standard as the
+// VendorService image pipeline), and uploaded to R2. The placeholder
+// PLACEHOLDER suffix in vendor names is your visual reminder that the
+// catalogue is not yet showing real pilot vendors.
+const DEMO_PHOTOS = {
+  // INFORMAL — cozy home kitchen / market stall
+  informal: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1280&q=80',
+  // SEMI_FORMAL — small street-food / maquis exterior
+  semiFormal: 'https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=1280&q=80',
+  // RESTAURANT — restaurant interior
+  restaurant: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=1280&q=80',
+};
+
+const PHOTO_FOR_TYPE: Record<VendorType, string> = {
+  [VendorType.INFORMAL]: DEMO_PHOTOS.informal,
+  [VendorType.SEMI_FORMAL]: DEMO_PHOTOS.semiFormal,
+  [VendorType.RESTAURANT]: DEMO_PHOTOS.restaurant,
 };
 
 // ─── VENDORS (EDIT ME) ──────────────────────────────────────────────────
@@ -149,8 +174,61 @@ const RIDERS: Array<{
   },
 ];
 
+// Lazy-init R2 client — only spun up when we actually need to upload a
+// seed photo. Reads the same env vars as the running API so the seed
+// works wherever the API container does (local dev, staging droplet,
+// future Hetzner prod). Throws clearly if the env isn't configured so
+// the seed run fails fast rather than silently skipping photos.
+function makeR2Client(): { client: S3Client; bucket: string } {
+  const accountId = process.env.R2_ACCOUNT_ID;
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
+  const bucket = process.env.R2_BUCKET;
+  if (!accountId || !accessKeyId || !secretAccessKey || !bucket) {
+    throw new Error(
+      'R2 env not configured — set R2_ACCOUNT_ID + R2_ACCESS_KEY_ID + R2_SECRET_ACCESS_KEY + R2_BUCKET',
+    );
+  }
+  const client = new S3Client({
+    region: 'auto',
+    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+  return { client, bucket };
+}
+
+// Fetch an external image, re-encode to WebP @ ≤1280px (matching the
+// R2Service.uploadImage pipeline used by /vendre + /livrer), upload to
+// R2 under `vendor-profile/<uuid>.webp`, and return the storage key.
+async function downloadAndUploadPhoto(
+  sourceUrl: string,
+  r2: { client: S3Client; bucket: string },
+): Promise<string> {
+  const res = await fetch(sourceUrl);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch demo photo ${sourceUrl}: HTTP ${res.status}`);
+  }
+  const input = Buffer.from(await res.arrayBuffer());
+  const optimized = await sharp(input)
+    .rotate()
+    .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 80 })
+    .toBuffer();
+  const key = `vendor-profile/seed-${randomUUID()}.webp`;
+  await r2.client.send(
+    new PutObjectCommand({
+      Bucket: r2.bucket,
+      Key: key,
+      Body: optimized,
+      ContentType: 'image/webp',
+    }),
+  );
+  return key;
+}
+
 async function main(): Promise<void> {
   const prisma = new PrismaClient();
+  const r2 = makeR2Client();
   try {
     console.log(`Seeding pilot data for zone: ${PILOT_ZONE.name}`);
     console.log(`Zone center: (${PILOT_ZONE.center.lat}, ${PILOT_ZONE.center.lng})`);
@@ -166,13 +244,30 @@ async function main(): Promise<void> {
       const vendorLng = PILOT_ZONE.center.lng + v.lngOffset;
       const badge = BADGE_FOR_TYPE[v.type];
 
-      const existing = await prisma.vendor.findUnique({ where: { userId: user.id } });
+      const existing = await prisma.vendor.findUnique({
+        where: { userId: user.id },
+        select: { id: true, profilePhotoUrl: true },
+      });
+
+      // Photo: idempotent — only fetch + upload if the vendor doesn't
+      // already have one. Means re-running the seed is cheap (no double
+      // upload, no R2 churn). To force-refresh photos, NULL the column
+      // manually before re-running.
+      let profilePhotoUrl: string | null = existing?.profilePhotoUrl ?? null;
+      if (!profilePhotoUrl) {
+        const sourceUrl = PHOTO_FOR_TYPE[v.type];
+        console.log(`  ↳ uploading demo photo for "${v.restaurantName}" from ${sourceUrl}`);
+        profilePhotoUrl = await downloadAndUploadPhoto(sourceUrl, r2);
+        console.log(`    ✓ stored as ${profilePhotoUrl}`);
+      }
+
       let vendorId: string;
       if (!existing) {
         const inserted = await prisma.$queryRaw<Array<{ id: string }>>`
           INSERT INTO vendors (
             id, "userId", name, "ownerName", description, type, status,
             quartier, "pointOfReference", location, badge,
+            "profilePhotoUrl",
             "whatsappPhone", "momoPhone", "isOpen", "declaredCapacity",
             "createdAt", "updatedAt"
           ) VALUES (
@@ -182,6 +277,7 @@ async function main(): Promise<void> {
             ${PILOT_ZONE.name}, ${v.pointOfReference},
             ST_SetSRID(ST_MakePoint(${vendorLng}, ${vendorLat}), 4326)::geography,
             ${badge},
+            ${profilePhotoUrl},
             ${v.whatsappPhone}, ${v.momoPhone}, TRUE, 30,
             NOW(), NOW()
           )
@@ -198,6 +294,7 @@ async function main(): Promise<void> {
               description = ${v.description},
               type = ${v.type}::"VendorType",
               badge = ${badge},
+              "profilePhotoUrl" = ${profilePhotoUrl},
               "isOpen" = TRUE,
               status = ${VendorStatus.ACTIVE}::"VendorStatus",
               quartier = ${PILOT_ZONE.name},
