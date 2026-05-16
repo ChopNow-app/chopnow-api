@@ -1,0 +1,135 @@
+# One-shot seed of the Week-1 pilot data (3 vendors + 3 riders) into the
+# staging DigitalOcean droplet. Manual `workflow_dispatch` only — never
+# triggered by pushes, because this writes to the live staging database.
+#
+# Operator flow:
+#   1. Edit `prisma/seed-pilot.ts` constants (PILOT_ZONE, VENDORS, RIDERS)
+#      with real pilot data, commit, PR to develop, admin-merge.
+#   2. Fast-forward `staging` from `develop` + push so CD bakes the new
+#      seed-pilot.ts into the chopnow-staging-api Docker image.
+#   3. Open this workflow in the GitHub Actions UI, click "Run workflow",
+#      type "seed staging" in the confirmation field, run.
+#
+# How it works:
+#   - Runner compiles seed-pilot.ts → seed-pilot.js (the production image
+#     omits dev deps, so `ts-node` is unavailable inside the container).
+#   - SCP the compiled .js to /tmp on the droplet.
+#   - `docker cp` it into the running chopnow-staging-api container.
+#   - `docker exec node` runs it — Prisma client + DATABASE_URL come from
+#     the container's existing env (rendered by cd-staging.yml).
+#   - Clean up the temp file inside and outside the container.
+#   - Hit /api/catalogue to verify the seed landed.
+#
+# The seed itself is idempotent (`prisma.user.upsert`), so re-running after
+# editing the constants is safe.
+
+name: Seed pilot (staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type EXACTLY "seed staging" to confirm — writes vendors + riders to the LIVE staging database.'
+        required: true
+        type: string
+
+# Serial — never two seeds at once. If one's running, the next must wait.
+concurrency:
+  group: seed-pilot-staging
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    steps:
+      - name: Guard — require exact confirmation phrase
+        if: ${{ inputs.confirm != 'seed staging' }}
+        run: |
+          echo "::error::Confirmation phrase incorrect. Type exactly: seed staging"
+          echo "Received: '${{ inputs.confirm }}'"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Generate Prisma client
+        # seed-pilot.ts imports types from @prisma/client; the client must
+        # be generated locally for tsc to resolve those imports.
+        run: npx prisma generate
+
+      - name: Compile seed-pilot.ts → seed-pilot.js
+        # Compile to CommonJS so it loads in the staging container's
+        # vanilla `node` runtime without ESM gymnastics. --skipLibCheck
+        # avoids unrelated @types issues blocking a one-off seed.
+        run: |
+          mkdir -p /tmp/seed-build
+          npx tsc \
+            --module commonjs \
+            --target es2020 \
+            --esModuleInterop \
+            --resolveJsonModule \
+            --skipLibCheck \
+            --outDir /tmp/seed-build \
+            prisma/seed-pilot.ts
+          echo "::group::Compiled artifact"
+          ls -la /tmp/seed-build/
+          echo "::endgroup::"
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.STAGING_SSH_KEY }}
+
+      - name: Trust the droplet host key
+        run: ssh-keyscan -H ${{ secrets.STAGING_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Ship + run seed inside chopnow-staging-api
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+          RUN_TAG: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          # 1. SCP the compiled seed to a per-run path on the droplet.
+          scp /tmp/seed-build/seed-pilot.js \
+            "${STAGING_USER}@${STAGING_HOST}:/tmp/seed-pilot-${RUN_TAG}.js"
+
+          # 2. SSH into the droplet, copy into the container, run, clean up.
+          ssh "${STAGING_USER}@${STAGING_HOST}" "
+            set -euo pipefail
+            SRC=/tmp/seed-pilot-${RUN_TAG}.js
+            DST=/app/prisma/seed-pilot-run.js
+            docker cp \$SRC chopnow-staging-api:\$DST
+            echo '── running seed ──────────────────────────'
+            docker exec -w /app chopnow-staging-api node prisma/seed-pilot-run.js
+            echo '── seed finished ─────────────────────────'
+            docker exec chopnow-staging-api rm -f \$DST
+            rm -f \$SRC
+          "
+
+      - name: Verify — catalogue returns pilot vendors
+        run: |
+          set -e
+          # Default pilot zone center per seed-pilot.ts (Bonamoussadi).
+          # Operator should update this if PILOT_ZONE changes.
+          curl -fsSL "https://api-staging.tchopnow.app/api/catalogue?lat=4.0962&lng=9.7385&radiusKm=10" \
+            -o /tmp/cat.json
+          echo "::group::Vendors after seed"
+          jq '.vendors[] | {name, quartier, distanceKm, plan, isOpenNow}' /tmp/cat.json
+          echo "::endgroup::"
+          if grep -q "PLACEHOLDER" /tmp/cat.json; then
+            echo "::warning::Catalogue still contains \"PLACEHOLDER\" names — did you replace the constants in prisma/seed-pilot.ts before merging?"
+          fi
