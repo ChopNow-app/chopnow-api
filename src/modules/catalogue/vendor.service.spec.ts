@@ -21,6 +21,7 @@ describe('VendorService', () => {
 
   const validDto: SubmitVendorDto = {
     name: 'Chez Maman',
+    ownerName: 'Marie Mboué',
     quartier: 'Makepe',
     pointOfReference: 'En face de la pharmacie',
     whatsappPhone: '670000010',

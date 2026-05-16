@@ -69,6 +69,23 @@ export class VendorService {
     const capacityInt = CAPACITY_TO_INT[dto.declaredCapacity];
     const vendorId = randomUUID();
 
+    // Coordinates: prefer client-provided GPS, fall back to Douala center
+    // when the vendor onboards without a GPS-enabled device. Pre-pilot
+    // (before this DTO field shipped) every vendor landed at city center —
+    // captured-from-device coords are a strict improvement.
+    const vendorLat = dto.latitude ?? DOUALA_CENTER_LAT;
+    const vendorLng = dto.longitude ?? DOUALA_CENTER_LNG;
+
+    // Vendor type: defaults to INFORMAL when the form doesn't capture it.
+    // Per the schema comment, the badge tracks the type.
+    const vendorType = dto.type ?? VendorType.INFORMAL;
+    const badgeForType: Record<VendorType, string> = {
+      [VendorType.INFORMAL]: 'Cuisine locale 🍲',
+      [VendorType.SEMI_FORMAL]: 'Maquis 🍽️',
+      [VendorType.RESTAURANT]: 'Restaurant 🍽️',
+    };
+    const badge = badgeForType[vendorType];
+
     await this.prisma.$transaction(async (tx) => {
       // 1) Ensure a User row. New phone → create with VENDOR role. Existing
       // CONSUMER who's becoming a vendor → upgrade role. (Other roles —
@@ -101,23 +118,24 @@ export class VendorService {
       // SQL. Everything else still gets the safety of parameterised binding.
       await tx.$executeRaw`
         INSERT INTO vendors (
-          id, "userId", name, type, status, quartier, "pointOfReference",
+          id, "userId", name, "ownerName", type, status, quartier, "pointOfReference",
           "whatsappPhone", "momoPhone", badge, "declaredCapacity",
           "profilePhotoUrl", location, "submittedAt", "createdAt", "updatedAt"
         ) VALUES (
           ${vendorId},
           ${userId},
           ${dto.name},
-          ${VendorType.INFORMAL}::"VendorType",
+          ${dto.ownerName},
+          ${vendorType}::"VendorType",
           ${VendorStatus.PENDING_REVIEW}::"VendorStatus",
           ${dto.quartier},
           ${dto.pointOfReference ?? null},
           ${whatsappPhone},
           ${momoPhone},
-          ${'Cuisine locale 🍲'},
+          ${badge},
           ${capacityInt},
           ${profileUpload.key},
-          ST_SetSRID(ST_MakePoint(${DOUALA_CENTER_LNG}, ${DOUALA_CENTER_LAT}), 4326)::geography,
+          ST_SetSRID(ST_MakePoint(${vendorLng}, ${vendorLat}), 4326)::geography,
           NOW(), NOW(), NOW()
         )
       `;

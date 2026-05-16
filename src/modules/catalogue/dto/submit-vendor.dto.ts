@@ -1,8 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { VendorType } from '@prisma/client';
 import {
   IsEnum,
   IsInt,
+  IsLatitude,
+  IsLongitude,
   IsOptional,
   IsString,
   Matches,
@@ -42,11 +45,57 @@ export class SubmitVendorDto {
   @MaxLength(80)
   name!: string;
 
+  @ApiProperty({
+    description: 'Nom complet du propriétaire (gérant). Used for KYC + payment receipts.',
+    example: 'Marie Mboué',
+  })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(80)
+  ownerName!: string;
+
+  @ApiProperty({
+    description: 'Type de vendeur — détermine le badge affiché + le tier KYC.',
+    enum: VendorType,
+    example: VendorType.INFORMAL,
+    required: false,
+    default: VendorType.INFORMAL,
+  })
+  @IsOptional()
+  @IsEnum(VendorType)
+  type?: VendorType;
+
   @ApiProperty({ description: 'Quartier de Douala.', example: 'Makepe' })
   @IsString()
   @MinLength(2)
   @MaxLength(80)
   quartier!: string;
+
+  @ApiProperty({
+    description:
+      'Latitude WGS84. Captured via the browser geolocation API from the vendor phone. ' +
+      'Optional — when absent the service falls back to Douala city center (legacy behavior).',
+    example: 4.0826,
+    required: false,
+    minimum: -90,
+    maximum: 90,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsLatitude()
+  latitude?: number;
+
+  @ApiProperty({
+    description: 'Longitude WGS84. Same source/constraints as latitude.',
+    example: 9.7679,
+    required: false,
+    minimum: -180,
+    maximum: 180,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsLongitude()
+  longitude?: number;
 
   @ApiProperty({
     description: 'Point de repère (optionnel).',

@@ -272,6 +272,9 @@ model Vendor {
   userId          String        @unique
   user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   name            String
+  // Owner / gérant — collected at onboarding for KYC and customer-service.
+  // Nullable to preserve existing vendor rows that predate the field.
+  ownerName       String?
   description     String?
   type            VendorType
   status          VendorStatus  @default(PENDING_REVIEW)
