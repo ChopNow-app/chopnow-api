@@ -37,14 +37,31 @@ const PILOT_ZONE = {
   center: { lat: 4.0962, lng: 9.7385 },
 };
 
+// Badge copy must mirror VendorService.submitInformal — same map, kept
+// here so the seed isn't a special case relative to the onboarding form.
+const BADGE_FOR_TYPE: Record<VendorType, string> = {
+  [VendorType.INFORMAL]: 'Cuisine locale 🍲',
+  [VendorType.SEMI_FORMAL]: 'Maquis 🍽️',
+  [VendorType.RESTAURANT]: 'Restaurant 🍽️',
+};
+
 // ─── VENDORS (EDIT ME) ──────────────────────────────────────────────────
 // Replace name + phone (E.164, +237...) + description per restaurant.
 // Phone must be unique across users; pick the owner's real WhatsApp number.
+//
+// `latOffset` / `lngOffset` (degrees from PILOT_ZONE.center) spread the
+// 3 vendors across the micro-zone so PostGIS distance ranking is
+// meaningful for catalogue testing. Each ~0.001° ≈ 110m at the equator.
+// `type` varies across INFORMAL / SEMI_FORMAL / RESTAURANT so the badge
+// + the new /vendre type selector both have realistic test data.
 const VENDORS: Array<{
   ownerPhone: string;
   ownerName: string;
   restaurantName: string;
   description: string;
+  type: VendorType;
+  latOffset: number;
+  lngOffset: number;
   whatsappPhone: string;
   momoPhone: string;
   pointOfReference: string;
@@ -52,12 +69,15 @@ const VENDORS: Array<{
 }> = [
   {
     ownerPhone: '+237670000101',
-    ownerName: 'Restaurant 1 Owner',
-    restaurantName: 'Chez Resto 1 — PLACEHOLDER',
-    description: 'Cuisine camerounaise — TODO: vraie description',
+    ownerName: 'Maman Mboué',
+    restaurantName: 'Chez Maman Mboué — PLACEHOLDER',
+    description: 'Cuisine maison camerounaise — Ndolè, Poulet DG, Soya',
+    type: VendorType.INFORMAL,
+    latOffset: 0,
+    lngOffset: 0,
     whatsappPhone: '670000101',
     momoPhone: '670000101',
-    pointOfReference: 'Bonamoussadi — TODO: point de repère',
+    pointOfReference: 'Bonamoussadi — point de repère placeholder',
     items: [
       { name: 'Poulet DG', description: 'Poulet, plantains', priceXAF: 3000 },
       { name: 'Ndolè', description: 'Feuilles + viande', priceXAF: 2500 },
@@ -66,12 +86,15 @@ const VENDORS: Array<{
   },
   {
     ownerPhone: '+237670000102',
-    ownerName: 'Restaurant 2 Owner',
-    restaurantName: 'Chez Resto 2 — PLACEHOLDER',
-    description: 'Cuisine rapide — TODO: vraie description',
+    ownerName: 'Jean Atangana',
+    restaurantName: 'Maquis du Carrefour — PLACEHOLDER',
+    description: 'Maquis populaire — sandwiches, riz sauté, brochettes',
+    type: VendorType.SEMI_FORMAL,
+    latOffset: 0.0018, // ~200m north
+    lngOffset: 0.001, // ~110m east
     whatsappPhone: '670000102',
     momoPhone: '670000102',
-    pointOfReference: 'Bonamoussadi — TODO',
+    pointOfReference: 'Carrefour Total Bonamoussadi',
     items: [
       { name: 'Sandwich poulet', description: 'Baguette + poulet', priceXAF: 1500 },
       { name: 'Riz sauté', description: 'Riz + légumes + viande', priceXAF: 2000 },
@@ -79,12 +102,15 @@ const VENDORS: Array<{
   },
   {
     ownerPhone: '+237670000103',
-    ownerName: 'Restaurant 3 Owner',
-    restaurantName: 'Chez Resto 3 — PLACEHOLDER',
-    description: 'Plats traditionnels — TODO',
+    ownerName: 'Restaurant Le Repère',
+    restaurantName: 'Restaurant Le Repère — PLACEHOLDER',
+    description: 'Cuisine traditionnelle — Eru, Koki, plats du jour',
+    type: VendorType.RESTAURANT,
+    latOffset: -0.0012, // ~130m south
+    lngOffset: -0.0015, // ~165m west
     whatsappPhone: '670000103',
     momoPhone: '670000103',
-    pointOfReference: 'Bonamoussadi — TODO',
+    pointOfReference: 'Face à la pharmacie de Bonamoussadi',
     items: [
       { name: 'Eru', description: "Feuilles d'eru + waterfufu", priceXAF: 2000 },
       { name: 'Koki', description: 'Pâté de haricots vapeur', priceXAF: 1200 },
@@ -136,41 +162,49 @@ async function main(): Promise<void> {
         create: { phone: v.ownerPhone, role: UserRole.VENDOR, displayName: v.ownerName },
       });
 
+      const vendorLat = PILOT_ZONE.center.lat + v.latOffset;
+      const vendorLng = PILOT_ZONE.center.lng + v.lngOffset;
+      const badge = BADGE_FOR_TYPE[v.type];
+
       const existing = await prisma.vendor.findUnique({ where: { userId: user.id } });
       let vendorId: string;
       if (!existing) {
         const inserted = await prisma.$queryRaw<Array<{ id: string }>>`
           INSERT INTO vendors (
-            id, "userId", name, description, type, status,
-            quartier, "pointOfReference", location,
+            id, "userId", name, "ownerName", description, type, status,
+            quartier, "pointOfReference", location, badge,
             "whatsappPhone", "momoPhone", "isOpen", "declaredCapacity",
             "createdAt", "updatedAt"
           ) VALUES (
-            gen_random_uuid(), ${user.id}, ${v.restaurantName},
+            gen_random_uuid(), ${user.id}, ${v.restaurantName}, ${v.ownerName},
             ${v.description},
-            ${VendorType.INFORMAL}::"VendorType", ${VendorStatus.ACTIVE}::"VendorStatus",
+            ${v.type}::"VendorType", ${VendorStatus.ACTIVE}::"VendorStatus",
             ${PILOT_ZONE.name}, ${v.pointOfReference},
-            ST_SetSRID(ST_MakePoint(${PILOT_ZONE.center.lng}, ${PILOT_ZONE.center.lat}), 4326)::geography,
+            ST_SetSRID(ST_MakePoint(${vendorLng}, ${vendorLat}), 4326)::geography,
+            ${badge},
             ${v.whatsappPhone}, ${v.momoPhone}, TRUE, 30,
             NOW(), NOW()
           )
           RETURNING id
         `;
         vendorId = inserted[0].id;
-        console.log(`  + vendor "${v.restaurantName}" (${vendorId})`);
+        console.log(`  + vendor "${v.restaurantName}" (${vendorId}) [${v.type}]`);
       } else {
         vendorId = existing.id;
         await prisma.$executeRaw`
           UPDATE vendors
           SET name = ${v.restaurantName},
+              "ownerName" = ${v.ownerName},
               description = ${v.description},
+              type = ${v.type}::"VendorType",
+              badge = ${badge},
               "isOpen" = TRUE,
               status = ${VendorStatus.ACTIVE}::"VendorStatus",
               quartier = ${PILOT_ZONE.name},
-              location = ST_SetSRID(ST_MakePoint(${PILOT_ZONE.center.lng}, ${PILOT_ZONE.center.lat}), 4326)::geography
+              location = ST_SetSRID(ST_MakePoint(${vendorLng}, ${vendorLat}), 4326)::geography
           WHERE id = ${vendorId}
         `;
-        console.log(`  ~ vendor "${v.restaurantName}" updated`);
+        console.log(`  ~ vendor "${v.restaurantName}" updated [${v.type}]`);
       }
 
       for (const it of v.items) {
