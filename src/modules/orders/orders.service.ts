@@ -20,6 +20,14 @@ import { RefuseOrderDto } from './dto/vendor-decision.dto';
 // net, near loss). Hard-coded for MVP; surface as an admin config later.
 const MIN_ORDER_XAF = 1200;
 
+// Vendor acceptance SLA — Order.acceptanceDeadlineAt is set to placedAt +
+// this many seconds at order creation. The UI counts down to that absolute
+// deadline (not from-now), so the vendor sees the same remaining time even
+// after a tab reload. 60s is humane vs the prototype's 40s while still
+// keeping consumer wait short. The OrdersExpiryService auto-refuses past
+// this with reason EXPIRED_NO_VENDOR_RESPONSE.
+export const ACCEPTANCE_TTL_SECONDS = 60;
+
 // Status sets — keep transition gates explicit so a bug in one branch can't
 // silently teleport an order past the wrong gate.
 const VENDOR_CAN_DECIDE: ReadonlySet<OrderStatus> = new Set([
@@ -129,6 +137,7 @@ export class OrdersService {
     const code = this.generateOrderCode();
     const pickupCode = this.generate4DigitCode();
     const deliveryCode = this.generate4DigitCode();
+    const acceptanceDeadlineAt = new Date(Date.now() + ACCEPTANCE_TTL_SECONDS * 1000);
     const order = await this.prisma.$transaction(async (tx) => {
       return tx.order.create({
         data: {
@@ -150,6 +159,7 @@ export class OrdersService {
           deliveryPhone: dto.deliveryPhone,
           pickupCode,
           deliveryCode,
+          acceptanceDeadlineAt,
           idempotencyKey: idempotencyKey ?? null,
           items: { createMany: { data: lines } },
         },

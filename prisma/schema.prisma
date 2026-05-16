@@ -434,6 +434,13 @@ model Order {
   deliveredAt DateTime?
   cancelledAt DateTime?
 
+  // Vendor acceptance SLA — set on order creation to placedAt + ACCEPTANCE_TTL_SECONDS.
+  // The OrdersExpiryService cron scans every 10s and auto-flips status to REFUSED
+  // with reason EXPIRED_NO_VENDOR_RESPONSE once this deadline passes (cmd not yet
+  // accepted/refused/cancelled). Stored as a column rather than computed-on-read so
+  // the cron can do a simple indexed WHERE without recomputing per row.
+  acceptanceDeadlineAt DateTime?
+
   // Story 3.14 — client-supplied key so a re-tried POST /orders doesn't
   // create a duplicate. Scoped per user (composite uniqueness below).
   idempotencyKey String?
