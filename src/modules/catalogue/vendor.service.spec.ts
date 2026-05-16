@@ -11,7 +11,7 @@ describe('VendorService', () => {
   let service: VendorService;
   let prisma: {
     user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
-    item: { create: jest.Mock };
+    item: { create: jest.Mock; createMany: jest.Mock };
     vendor: { findUnique: jest.Mock; update: jest.Mock };
     $executeRaw: jest.Mock;
     $transaction: jest.Mock;
@@ -48,7 +48,10 @@ describe('VendorService', () => {
         create: jest.fn().mockResolvedValue({ id: 'user-new', role: UserRole.VENDOR }),
         update: jest.fn().mockResolvedValue({}),
       },
-      item: { create: jest.fn().mockResolvedValue({ id: 'item-1' }) },
+      item: {
+        create: jest.fn().mockResolvedValue({ id: 'item-1' }),
+        createMany: jest.fn().mockResolvedValue({ count: 1 }),
+      },
       vendor: { findUnique: jest.fn(), update: jest.fn() },
       $executeRaw: jest.fn().mockResolvedValue(1),
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
@@ -112,8 +115,9 @@ describe('VendorService', () => {
       expect(rawStrings.join('')).toMatch(/INSERT INTO vendors/);
       expect(rawStrings.join('')).toMatch(/ST_SetSRID\(ST_MakePoint\(/);
 
-      // Item created with the photo key + parsed price
-      const itemArgs = prisma.item.create.mock.calls[0][0].data;
+      // First item created with the photo key + parsed price. The service now
+      // uses createMany so we look at the first element of the data array.
+      const itemArgs = prisma.item.createMany.mock.calls[0][0].data[0];
       expect(itemArgs).toMatchObject({
         name: 'Poulet DG',
         priceXAF: 3000,
