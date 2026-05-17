@@ -457,4 +457,35 @@ describe('VendorService', () => {
       expect(r2.uploadImage).not.toHaveBeenCalled();
     });
   });
+
+  describe('updateOwnCoverPhoto', () => {
+    it('uploads to vendor-cover/ and stores coverPhotoUrl', async () => {
+      prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
+      prisma.vendor.update.mockResolvedValue({
+        id: 'v-1',
+        coverPhotoUrl: 'vendor-cover/test-uuid.webp',
+      });
+
+      const result = await service.updateOwnCoverPhoto('user-1', file('photo'));
+
+      expect(r2.uploadImage).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ keyPrefix: 'vendor-cover' }),
+      );
+      expect(prisma.vendor.update).toHaveBeenCalledWith({
+        where: { id: 'v-1' },
+        data: { coverPhotoUrl: 'vendor-cover/test-uuid.webp' },
+        select: expect.any(Object),
+      });
+      expect(result.coverPhotoUrl).toBe('vendor-cover/test-uuid.webp');
+    });
+
+    it('throws NotFoundException when the caller has no Vendor row', async () => {
+      prisma.vendor.findUnique.mockResolvedValue(null);
+      await expect(service.updateOwnCoverPhoto('user-1', file('photo'))).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(r2.uploadImage).not.toHaveBeenCalled();
+    });
+  });
 });

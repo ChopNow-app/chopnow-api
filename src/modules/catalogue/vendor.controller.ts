@@ -148,6 +148,25 @@ export class VendorController {
     return this.vendors.updateOwnProfilePhoto(user.id, photo);
   }
 
+  @Roles(UserRole.VENDOR)
+  @ApiBearerAuth()
+  @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: MAX_PHOTO_BYTES } }))
+  @Patch('me/cover')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: "Replace own cover photo (hero image on the vendor's catalogue card)",
+    description:
+      'Multipart field `photo`. Same size + MIME guardrails as profile photo. The old ' +
+      'R2 key is left to the lifecycle sweeper — keeps the rollback story simple if a ' +
+      'failed upload need not race a delete.',
+  })
+  async updateMeCover(@Req() req: Request, @UploadedFile() photo: Express.Multer.File) {
+    if (!photo) throw new BadRequestException('photo is required');
+    await imagePipe.transform(photo);
+    const user = req.user as { id: string };
+    return this.vendors.updateOwnCoverPhoto(user.id, photo);
+  }
+
   // Story 2.0 follow-up (#13) — public submission status check. Lets a
   // vendor who submitted via /vendre check their approval status without
   // creating an account first. Throttled at 5/min/IP so a malicious actor
