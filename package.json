@@ -62,7 +62,8 @@
     "rxjs": "^7.8.1",
     "sharp": "^0.33.5",
     "ssrf-req-filter": "^1.1.0",
-    "twilio": "^5.4.0"
+    "twilio": "^5.4.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.18.0",
@@ -77,6 +78,7 @@
     "@types/node": "^22.10.5",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
+    "@types/web-push": "^3.6.4",
     "chokidar": "^5.0.0",
     "eslint": "^9.18.0",
     "eslint-config-prettier": "^9.1.0",

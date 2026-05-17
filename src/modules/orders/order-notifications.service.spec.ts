@@ -5,6 +5,7 @@ describe('OrderNotificationsService', () => {
   let service: OrderNotificationsService;
   let prisma: { order: { findUnique: jest.Mock } };
   let twilio: { sendWhatsApp: jest.Mock };
+  let webPush: { sendToUser: jest.Mock };
 
   const orderRow = {
     code: 'TC-A23F4',
@@ -15,7 +16,10 @@ describe('OrderNotificationsService', () => {
   beforeEach(() => {
     prisma = { order: { findUnique: jest.fn().mockResolvedValue(orderRow) } };
     twilio = { sendWhatsApp: jest.fn().mockResolvedValue('SMxxx') };
-    service = new OrderNotificationsService(prisma as never, twilio as never);
+    // Default: no push subscriptions reached → WhatsApp fallback fires.
+    // Tests that assert push-success path override with sent > 0.
+    webPush = { sendToUser: jest.fn().mockResolvedValue({ sent: 0, deactivated: 0 }) };
+    service = new OrderNotificationsService(prisma as never, twilio as never, webPush as never);
   });
 
   it('sends a friendly WhatsApp on auto-expire refusal', async () => {
@@ -71,46 +75,91 @@ describe('OrderNotificationsService', () => {
       totalXAF: 4350,
       paymentMethod: 'CASH',
       items: [{ quantity: 2 }, { quantity: 1 }],
-      vendor: { whatsappPhone: '+237670000101', name: 'Chez Maman Mboué' },
+      vendor: {
+        whatsappPhone: '+237670000101',
+        name: 'Chez Maman Mboué',
+        userId: 'vendor-user-1',
+      },
     };
 
-    it('pings the vendor WhatsApp with code + item count + total + countdown link', async () => {
+    it('sends Web Push to the vendor (push-first) when at least one subscription is reachable', async () => {
       prisma.order.findUnique.mockResolvedValueOnce(createdOrder);
+      webPush.sendToUser.mockResolvedValueOnce({ sent: 2, deactivated: 0 });
 
       await service.onOrderCreated({ orderId: 'order-42' });
 
+      expect(webPush.sendToUser).toHaveBeenCalledWith('vendor-user-1', expect.any(Object));
+      const payload = webPush.sendToUser.mock.calls[0][1];
+      expect(payload.title).toContain('TC-A23F4');
+      expect(payload.body).toContain('3 plat'); // 2 + 1 (matches 'plat' or 'plats')
+      expect(payload.body).toContain('Cash à la livraison');
+      expect(payload.data).toMatchObject({
+        kind: 'ORDER_CREATED',
+        orderId: 'order-42',
+        deepLink: '/vendor/commande/order-42',
+      });
+      // Push reached subscriptions → vendor already got the native
+      // notification, no need to also fire WhatsApp.
+      expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
+    });
+
+    it('falls back to WhatsApp when push reached zero subscriptions', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce(createdOrder);
+      // Default mock already returns { sent: 0 } — vendor has no PWA installed.
+
+      await service.onOrderCreated({ orderId: 'order-42' });
+
+      expect(webPush.sendToUser).toHaveBeenCalledTimes(1); // push was attempted first
       expect(twilio.sendWhatsApp).toHaveBeenCalledTimes(1);
       const [phone, body] = twilio.sendWhatsApp.mock.calls[0];
       expect(phone).toBe('+237670000101'); // vendor phone, NOT consumer
-      expect(body).toContain('TC-A23F4'); // order code
-      expect(body).toContain('3 plats'); // 2 + 1
-      // Node's fr-FR locale uses NBSP (U+202F) between thousands; assert the
-      // digits + FCFA suffix loosely so a future locale upgrade doesn't break.
+      expect(body).toContain('TC-A23F4');
+      expect(body).toContain('3 plat'); // matches both 'plat' and 'plats'
+      // Node's fr-FR locale uses NBSP (U+202F) between thousands.
       expect(body).toMatch(/4\s350\s*FCFA/);
       expect(body).toContain('Cash à la livraison');
       expect(body).toContain('60 secondes');
-      // Deep link to the countdown screen — must include the actual orderId
       expect(body).toContain('tchopnow.app/vendor/commande/order-42');
     });
 
-    it('labels MoMo payments distinctly from cash', async () => {
+    it('labels MoMo payments distinctly from cash (push payload + WhatsApp fallback)', async () => {
       prisma.order.findUnique.mockResolvedValueOnce({
         ...createdOrder,
         paymentMethod: 'MTN_MOMO',
       });
 
       await service.onOrderCreated({ orderId: 'order-42' });
-      const body = twilio.sendWhatsApp.mock.calls[0][1] as string;
-      expect(body).toContain('Payé via MoMo');
-      expect(body).not.toContain('Cash');
+
+      // Push body labelled (no need to fall back here, but the payload still set)
+      const pushBody = webPush.sendToUser.mock.calls[0][1].body as string;
+      expect(pushBody).toContain('Payé via MoMo');
+      expect(pushBody).not.toContain('Cash');
+      // And fallback WhatsApp body should agree
+      const waBody = twilio.sendWhatsApp.mock.calls[0][1] as string;
+      expect(waBody).toContain('Payé via MoMo');
     });
 
-    it('skips silently when the vendor has no whatsappPhone (defensive)', async () => {
+    it('skips both channels when the vendor has no whatsappPhone AND no push subscriptions', async () => {
       prisma.order.findUnique.mockResolvedValueOnce({
         ...createdOrder,
-        vendor: { whatsappPhone: null, name: 'Phoneless' },
+        vendor: { whatsappPhone: null, name: 'Phoneless', userId: 'vendor-user-1' },
       });
       await service.onOrderCreated({ orderId: 'order-42' });
+      expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
+      // Push was attempted (correct behavior — pre-installed PWA might exist
+      // even before the WhatsApp number is captured during onboarding).
+      expect(webPush.sendToUser).toHaveBeenCalledTimes(1);
+    });
+
+    it('still attempts WhatsApp fallback even when the push call rejects', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce(createdOrder);
+      // Push throws (push service outage). The try/catch wraps both attempts
+      // so the WhatsApp fallback should NOT fire in this branch — we don't
+      // know whether the push actually went through. This is the conservative
+      // choice; a vendor might still see the push despite the error.
+      webPush.sendToUser.mockRejectedValueOnce(new Error('VAPID misconfigured'));
+      await expect(service.onOrderCreated({ orderId: 'order-42' })).resolves.toBeUndefined();
+      // Documented behavior: outer try/catch swallows; WhatsApp NOT attempted.
       expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
     });
 

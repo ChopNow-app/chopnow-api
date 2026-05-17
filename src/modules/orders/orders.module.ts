@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersExpiryService } from './orders-expiry.service';
@@ -18,6 +19,7 @@ import { OrderNotificationsService } from './order-notifications.service';
  * (PaymentStatus.PAID) — single side-effect path from the payments module.
  */
 @Module({
+  imports: [NotificationsModule],
   controllers: [OrdersController],
   providers: [OrdersService, OrdersExpiryService, OrderNotificationsService],
   exports: [OrdersService],
