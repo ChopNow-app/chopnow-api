@@ -5,12 +5,23 @@ import * as argon2 from 'argon2';
 import { OtpStatus, UserRole } from '@prisma/client';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { RedisService } from '../../infra/redis/redis.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 import { parseDurationMs } from '../../shared/time/duration.util';
 
 const OTP_TTL_MINUTES = 5;
 const OTP_MAX_ATTEMPTS = 3;
+
+// In-flight idempotency window. A second request-otp for the same phone
+// within this window short-circuits — no fresh code generated, no second
+// Twilio send, no orphaned OtpLog row. Chosen at 30s because:
+//   - shorter than the 5min code TTL (the original code is still valid)
+//   - long enough to absorb a double-tap + a "didn't see it, tap again"
+//   - short enough that a legitimate "the SMS truly never arrived" retry
+//     within ~minute still works on the second try (legit Twilio outage
+//     resolves the lock on failure, see below)
+const OTP_INFLIGHT_LOCK_SECONDS = 30;
 
 @Injectable()
 export class AuthService {
@@ -21,16 +32,39 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly env: EnvService,
     private readonly otpDelivery: OtpDeliveryService,
+    private readonly redis: RedisService,
   ) {}
 
   /**
    * Story 1.1 — request an OTP.
-   * 1) generate 6-digit code, hash with argon2id, persist OtpLog row with channel=WHATSAPP/PENDING
-   * 2) attempt delivery (WhatsApp → SMS fallback)
-   * 3) update the row with the channel actually used + DELIVERED status
+   * 1) acquire a 30s per-phone in-flight lock; a second concurrent request
+   *    short-circuits with the same shape so there's no duplicate Twilio
+   *    send + no orphaned OtpLog row
+   * 2) generate 6-digit code, hash with argon2id, persist OtpLog row with channel=WHATSAPP/PENDING
+   * 3) attempt delivery (WhatsApp → SMS fallback)
+   * 4) update the row with the channel actually used + SENT status
+   *
+   * If delivery fails, the lock is RELEASED so the legitimate "I truly
+   * didn't get it" retry isn't blocked for 30s. The IP + per-phone rate
+   * limiters still apply on top of that (5/15min each) — the lock is the
+   * sub-second double-tap guard, not a substitute for them.
    */
   async requestOtp(phone: string): Promise<{ ok: true; expiresInSeconds: number }> {
     phone = normalizePhone(phone);
+
+    // Sub-second idempotency. Returning the same shape (rather than a
+    // 429-style error) is deliberate: the user just tapped twice, the OTP
+    // is already on the way, no need to surface a confusing error.
+    const acquired = await this.redis.setNX(
+      `otp:inflight:${phone}`,
+      String(Date.now()),
+      OTP_INFLIGHT_LOCK_SECONDS,
+    );
+    if (!acquired) {
+      this.logger.log(`OTP in-flight lock held for ${phone} — skipping duplicate send`);
+      return { ok: true, expiresInSeconds: OTP_TTL_MINUTES * 60 };
+    }
+
     const code = this.generateCode();
     const codeHash = await argon2.hash(code);
     const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
@@ -57,6 +91,10 @@ export class AuthService {
         where: { id: log.id },
         data: { status: OtpStatus.FAILED, failedReason: reason },
       });
+      // Release the in-flight lock so the user isn't stuck for 30s with
+      // no code delivered. The IP + per-phone count limiters still bound
+      // overall abuse.
+      await this.redis.del(`otp:inflight:${phone}`);
       // Surface a generic error — don't leak provider internals to the client.
       throw new UnauthorizedException('otp_delivery_failed');
     }
@@ -99,6 +137,13 @@ export class AuthService {
       where: { id: log.id },
       data: { status: OtpStatus.VERIFIED, verifiedAt: new Date() },
     });
+
+    // Release the in-flight lock now that this code has been consumed.
+    // Without this, a user who signs in, logs out, then tries to sign in
+    // again within 30s gets stuck because the second request-otp would
+    // short-circuit but no fresh code exists (the old one is VERIFIED
+    // and no longer eligible).
+    await this.redis.del(`otp:inflight:${phone}`);
 
     const user = await this.prisma.user.upsert({
       where: { phone },

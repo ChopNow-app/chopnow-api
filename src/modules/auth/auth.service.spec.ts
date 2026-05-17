@@ -6,6 +6,7 @@ import { OtpStatus, UserRole } from '@prisma/client';
 import { AuthService } from './auth.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { RedisService } from '../../infra/redis/redis.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
 
 describe('AuthService', () => {
@@ -26,6 +27,7 @@ describe('AuthService', () => {
     $transaction: jest.Mock;
   };
   let otpDelivery: { sendOtp: jest.Mock };
+  let redis: { setNX: jest.Mock; del: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -51,6 +53,12 @@ describe('AuthService', () => {
     };
     otpDelivery = {
       sendOtp: jest.fn().mockResolvedValue({ channel: 'WHATSAPP', providerMessageId: 'SMxxx' }),
+    };
+    // Default: lock always acquired (no in-flight collision). Individual
+    // tests override with false to assert the short-circuit branch.
+    redis = {
+      setNX: jest.fn().mockResolvedValue(true),
+      del: jest.fn().mockResolvedValue(1),
     };
 
     const module = await Test.createTestingModule({
@@ -79,6 +87,7 @@ describe('AuthService', () => {
           },
         },
         { provide: OtpDeliveryService, useValue: otpDelivery },
+        { provide: RedisService, useValue: redis },
       ],
     }).compile();
 
@@ -129,7 +138,76 @@ describe('AuthService', () => {
       expect(updateArgs.data.status).toBe(OtpStatus.FAILED);
       expect(updateArgs.data.failedReason).toBe('Authentication Error');
     });
+
+    it('acquires a per-phone in-flight lock keyed by canonical phone with 30s TTL', async () => {
+      await service.requestOtp('670000000');
+      expect(redis.setNX).toHaveBeenCalledWith(
+        'otp:inflight:+237670000000',
+        expect.any(String),
+        30,
+      );
+    });
+
+    it('short-circuits a duplicate concurrent send and does NOT bill Twilio or insert an OtpLog row', async () => {
+      // Simulate the second of two near-simultaneous requests: the first one
+      // grabbed the lock; setNX returns false here.
+      redis.setNX.mockResolvedValueOnce(false);
+
+      const result = await service.requestOtp('670000000');
+
+      // No DB write, no Twilio send — that's the whole point of the lock.
+      expect(prisma.otpLog.create).not.toHaveBeenCalled();
+      expect(otpDelivery.sendOtp).not.toHaveBeenCalled();
+      // Caller still sees a success-shape response. The original code is
+      // already valid for ~5 minutes; we don't want to surface a 429-style
+      // error for what's almost always a double-tap.
+      expect(result).toEqual({ ok: true, expiresInSeconds: OTP_TTL_MINUTES_SECONDS });
+    });
+
+    it('releases the lock when delivery fails so a legitimate retry is not blocked', async () => {
+      otpDelivery.sendOtp.mockRejectedValueOnce(new Error('Twilio 500'));
+
+      await expect(service.requestOtp('670000000')).rejects.toThrow(UnauthorizedException);
+
+      // Lock released on failure path — otherwise a Twilio blip would
+      // strand the user for 30s with no code delivered.
+      expect(redis.del).toHaveBeenCalledWith('otp:inflight:+237670000000');
+    });
+
+    it('does NOT release the lock on the happy path', async () => {
+      await service.requestOtp('670000000');
+      // The lock naturally expires after 30s — keeping it held during the
+      // window is what blocks double-taps.
+      expect(redis.del).not.toHaveBeenCalled();
+    });
   });
+
+  describe('verifyOtp + in-flight lock interaction', () => {
+    it('releases the in-flight lock on successful verify so a fresh sign-in is not blocked', async () => {
+      // Set up a happy-path verify: matching SENT row, code argon2-matches.
+      const realHash = await argon2.hash('123456');
+      prisma.otpLog.findFirst.mockResolvedValueOnce({
+        id: 'log-1',
+        phone: '+237670000000',
+        codeHash: realHash,
+        attempts: 0,
+        status: OtpStatus.SENT,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+
+      await service.verifyOtp('670000000', '123456');
+
+      // The whole point of releasing here: a user who verifies, logs out,
+      // then tries to sign in again within 30s would otherwise be stuck
+      // because the second request-otp would short-circuit but the old code
+      // is already VERIFIED (no longer eligible for re-verify).
+      expect(redis.del).toHaveBeenCalledWith('otp:inflight:+237670000000');
+    });
+  });
+
+  // Top-level const so the assertion above reads cleanly. Mirrors the
+  // OTP_TTL_MINUTES constant in auth.service.ts (5 minutes = 300 seconds).
+  const OTP_TTL_MINUTES_SECONDS = 5 * 60;
 
   describe('verifyOtp', () => {
     it('looks up the OtpLog using the canonical phone form', async () => {
