@@ -256,6 +256,44 @@ describe('VendorService', () => {
     });
   });
 
+  describe('getOwn', () => {
+    it('returns the vendor self-profile (no admin-only fields)', async () => {
+      prisma.vendor.findUnique.mockResolvedValue({
+        id: 'v-1',
+        name: 'Chez Maman',
+        type: 'INFORMAL',
+        status: 'ACTIVE',
+        quartier: 'Bonamoussadi',
+        momoPhone: '+237670000101',
+        isOpen: true,
+        coverPhotoUrl: null,
+      });
+
+      const result = await service.getOwn('user-1');
+
+      expect(prisma.vendor.findUnique).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        select: expect.objectContaining({
+          id: true,
+          type: true,
+          coverPhotoUrl: true,
+          // explicit assertion that admin-only fields are NOT selected
+        }),
+      });
+      // The select must not include these — vendors don't see their own
+      // commission, rejection reason, or KYC numbers (those stay admin-only).
+      const select = prisma.vendor.findUnique.mock.calls[0][0].select;
+      expect(select).not.toHaveProperty('commissionRate');
+      expect(select).not.toHaveProperty('rejectionReason');
+      expect(result.type).toBe('INFORMAL');
+    });
+
+    it('throws NotFoundException when the caller has no Vendor row', async () => {
+      prisma.vendor.findUnique.mockResolvedValue(null);
+      await expect(service.getOwn('user-1')).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('updateOwn (Story 1.8)', () => {
     it('updates name + description + normalises momoPhone', async () => {
       prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
