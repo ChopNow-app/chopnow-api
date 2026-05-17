@@ -53,6 +53,11 @@ export class AdminValidationService {
         declaredCapacity: true,
         profilePhotoUrl: true,
         submittedAt: true,
+        // Restaurant KYC — null on non-RESTAURANT rows; admin uses them
+        // to verify the submission before approving.
+        rccmNumber: true,
+        niuNumber: true,
+        enseignePhotoUrl: true,
       },
     });
   }

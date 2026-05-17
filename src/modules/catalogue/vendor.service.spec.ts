@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { UserRole, VendorStatus } from '@prisma/client';
+import { UserRole, VendorStatus, VendorType } from '@prisma/client';
 import { VendorService } from './vendor.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
@@ -253,6 +253,84 @@ describe('VendorService', () => {
       // Give the microtask a chance to land + assert the call was attempted.
       await new Promise((r) => setImmediate(r));
       expect(twilio.sendWhatsApp).toHaveBeenCalled();
+    });
+
+    it('requires an enseigne photo when type=RESTAURANT', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.submitInformal(
+          {
+            ...validDto,
+            type: VendorType.RESTAURANT,
+            rccmNumber: 'RC/DLA/2024/A/123',
+            niuNumber: 'M091900012345A',
+          },
+          {
+            profilePhoto: file('profilePhoto'),
+            firstItemPhoto: file('firstItemPhoto'),
+            // enseignePhoto deliberately omitted
+          },
+        ),
+      ).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'enseigne_photo_required' }),
+      });
+      // Photos already uploaded to R2 before the throw — they orphan into
+      // the lifecycle sweeper, that's accepted convention.
+    });
+
+    it('uploads enseigne to vendor-kyc/ prefix and persists KYC fields when type=RESTAURANT', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await service.submitInformal(
+        {
+          ...validDto,
+          type: VendorType.RESTAURANT,
+          rccmNumber: 'RC/DLA/2024/A/123',
+          niuNumber: 'M091900012345A',
+        },
+        {
+          profilePhoto: file('profilePhoto'),
+          firstItemPhoto: file('firstItemPhoto'),
+          enseignePhoto: file('enseignePhoto'),
+        },
+      );
+
+      // R2 upload landed under vendor-kyc/
+      expect(r2.uploadImage).toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ keyPrefix: 'vendor-kyc' }),
+      );
+
+      // Raw INSERT carries the KYC values in the parameter array
+      const rawArgs = prisma.$executeRaw.mock.calls[0];
+      // The tagged-template structure: [stringsArray, ...values]. Find our 3 values.
+      const allValues = rawArgs.slice(1);
+      expect(allValues).toContain('RC/DLA/2024/A/123');
+      expect(allValues).toContain('M091900012345A');
+      expect(allValues).toContain('vendor-kyc/test-uuid.webp');
+    });
+
+    it('passes NULL for KYC columns when type=INFORMAL', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await service.submitInformal(validDto, {
+        profilePhoto: file('profilePhoto'),
+        firstItemPhoto: file('firstItemPhoto'),
+      });
+
+      // No vendor-kyc upload happened
+      expect(r2.uploadImage).not.toHaveBeenCalledWith(
+        expect.any(Buffer),
+        expect.objectContaining({ keyPrefix: 'vendor-kyc' }),
+      );
+      // KYC values in the raw INSERT are all null
+      const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
+      // rccmNumber, niuNumber, enseignePhotoUrl positions all null — easier
+      // to assert they aren't truthy KYC strings than to index by position.
+      expect(allValues).not.toContain('RC/DLA/2024/A/123');
+      const nullCount = allValues.filter((v: unknown) => v === null).length;
+      expect(nullCount).toBeGreaterThanOrEqual(3); // pointOfReference + 3 KYC nulls
     });
   });
 

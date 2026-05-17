@@ -12,6 +12,7 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 /**
@@ -185,4 +186,39 @@ export class SubmitVendorDto {
   @IsInt()
   @Min(100)
   extraItem2PriceXAF?: number;
+
+  // ── Restaurant KYC — required ONLY when type=RESTAURANT ─────────
+  //
+  // @ValidateIf evaluates `o.type` per submission; for INFORMAL +
+  // SEMI_FORMAL the validator is skipped entirely and the column lands
+  // NULL. The enseigne photo arrives as a multipart file (handled in the
+  // controller's FileFieldsInterceptor) — only the text fields live here.
+  //
+  // NIU length is intentionally loose (8–20) — the Cameroon DGI spec says
+  // 14 alphanumeric, but in practice format drift happens; admin
+  // validates visually from the certificate scan. Tight client-side
+  // regex would just frustrate legitimate restaurants with edge-case
+  // numbers.
+
+  @ApiProperty({
+    description: 'Numéro RCCM (Registre du Commerce et du Crédit Mobilier). Restaurant uniquement.',
+    required: false,
+    example: 'RC/DLA/2024/A/12345',
+  })
+  @ValidateIf((o: SubmitVendorDto) => o.type === VendorType.RESTAURANT)
+  @IsString()
+  @MinLength(5, { message: 'RCCM trop court (5 caractères min)' })
+  @MaxLength(50)
+  rccmNumber?: string;
+
+  @ApiProperty({
+    description: "NIU (Numéro d'Identifiant Unique). Restaurant uniquement.",
+    required: false,
+    example: 'M091900012345A',
+  })
+  @ValidateIf((o: SubmitVendorDto) => o.type === VendorType.RESTAURANT)
+  @IsString()
+  @MinLength(8, { message: 'NIU trop court (8 caractères min)' })
+  @MaxLength(20)
+  niuNumber?: string;
 }

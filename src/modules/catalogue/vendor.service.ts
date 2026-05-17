@@ -35,10 +35,20 @@ export class VendorService {
 
   async submitInformal(
     dto: SubmitVendorDto,
-    files: { profilePhoto?: Express.Multer.File; firstItemPhoto?: Express.Multer.File },
+    files: {
+      profilePhoto?: Express.Multer.File;
+      firstItemPhoto?: Express.Multer.File;
+      enseignePhoto?: Express.Multer.File;
+    },
   ): Promise<{ vendorId: string; status: VendorStatus; message: string }> {
     if (!files.profilePhoto) throw new BadRequestException('profilePhoto is required');
     if (!files.firstItemPhoto) throw new BadRequestException('firstItemPhoto is required');
+    if (dto.type === VendorType.RESTAURANT && !files.enseignePhoto) {
+      throw new BadRequestException({
+        code: 'enseigne_photo_required',
+        message: 'enseignePhoto is required for restaurant submissions',
+      });
+    }
 
     const whatsappPhone = normalizePhone(dto.whatsappPhone);
     const momoPhone = normalizePhone(dto.momoPhone);
@@ -61,9 +71,20 @@ export class VendorService {
     // DB transaction open. If the transaction subsequently fails, the
     // uploaded objects become orphans — acceptable; an R2 lifecycle rule
     // can sweep stale keys with no DB reference later.
-    const [profileUpload, firstItemUpload] = await Promise.all([
+    //
+    // Restaurant enseigne photo lives under its own `vendor-kyc/` prefix.
+    // Same R2 bucket as everything else (public) — the storefront photo
+    // doesn't carry sensitive info, and the prefix gives us a single
+    // place to flip the privacy lifecycle later if needed without
+    // touching the upload code.
+    const enseigneUploadPromise =
+      dto.type === VendorType.RESTAURANT && files.enseignePhoto
+        ? this.r2.uploadImage(files.enseignePhoto.buffer, { keyPrefix: 'vendor-kyc' })
+        : Promise.resolve(null);
+    const [profileUpload, firstItemUpload, enseigneUpload] = await Promise.all([
       this.r2.uploadImage(files.profilePhoto.buffer, { keyPrefix: 'vendor-profile' }),
       this.r2.uploadImage(files.firstItemPhoto.buffer, { keyPrefix: 'item-photo' }),
+      enseigneUploadPromise,
     ]);
 
     const capacityInt = CAPACITY_TO_INT[dto.declaredCapacity];
@@ -116,11 +137,14 @@ export class VendorService {
       // 2) Insert vendor row. `location` is `geography(Point, 4326) NOT NULL`
       // which Prisma marks `Unsupported` — we have to populate it via raw
       // SQL. Everything else still gets the safety of parameterised binding.
+      // Restaurant KYC columns (rccmNumber, niuNumber, enseignePhotoUrl)
+      // pass NULL for non-restaurant submissions.
       await tx.$executeRaw`
         INSERT INTO vendors (
           id, "userId", name, "ownerName", type, status, quartier, "pointOfReference",
           "whatsappPhone", "momoPhone", badge, "declaredCapacity",
-          "profilePhotoUrl", location, "submittedAt", "createdAt", "updatedAt"
+          "profilePhotoUrl", "rccmNumber", "niuNumber", "enseignePhotoUrl",
+          location, "submittedAt", "createdAt", "updatedAt"
         ) VALUES (
           ${vendorId},
           ${userId},
@@ -135,6 +159,9 @@ export class VendorService {
           ${badge},
           ${capacityInt},
           ${profileUpload.key},
+          ${dto.rccmNumber ?? null},
+          ${dto.niuNumber ?? null},
+          ${enseigneUpload?.key ?? null},
           ST_SetSRID(ST_MakePoint(${vendorLng}, ${vendorLat}), 4326)::geography,
           NOW(), NOW(), NOW()
         )

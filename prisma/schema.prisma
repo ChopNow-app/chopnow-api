@@ -327,6 +327,17 @@ model Vendor {
   // Profile photo + cover photo URLs (Cloudflare R2)
   profilePhotoUrl String?
   coverPhotoUrl   String?
+
+  // Restaurant KYC — required only when type=RESTAURANT (DTO enforces via
+  // @ValidateIf). NULL for INFORMAL + SEMI_FORMAL vendors. Stored as plain
+  // text columns (no FK to a separate table) because they're admin-review
+  // only during pilot; if a future regulatory regime makes them queryable
+  // (e.g. invoice generation needs the RCCM verbatim), the same column is
+  // already addressable. Enseigne photo lives in R2 under `vendor-kyc/`.
+  rccmNumber       String?
+  niuNumber        String?
+  enseignePhotoUrl String?
+
   // Validation lifecycle
   submittedAt     DateTime      @default(now())
   validatedAt     DateTime?
