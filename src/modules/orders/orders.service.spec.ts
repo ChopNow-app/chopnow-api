@@ -11,7 +11,13 @@ import { DomainEvents } from '../../shared/events/domain-events';
 describe('OrdersService', () => {
   let service: OrdersService;
   let prisma: {
-    order: { findUnique: jest.Mock; findMany: jest.Mock; create: jest.Mock; update: jest.Mock };
+    order: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+    };
     item: { findMany: jest.Mock };
     vendor: { findUnique: jest.Mock };
     orderItem: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
@@ -48,6 +54,10 @@ describe('OrdersService', () => {
           items: data.items?.createMany?.data ?? [],
         })),
         update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id, ...data })),
+        // count: 1 = happy path (the conditional updateMany found the row in
+        // the expected state and flipped it). Individual tests override this
+        // to { count: 0 } to simulate losing the race against the cron.
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       item: { findMany: jest.fn() },
       orderItem: {
@@ -260,11 +270,14 @@ describe('OrdersService', () => {
       });
     }
 
-    it('flips CONFIRMED → ACCEPTED + emits order.accepted', async () => {
+    it('flips CONFIRMED → ACCEPTED + emits order.accepted (with status-guarded update)', async () => {
       vendorOrder(OrderStatus.CONFIRMED);
       await service.acceptOrder('order-1', 'user-1');
-      expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'order-1' },
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'order-1',
+          status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+        },
         data: { status: OrderStatus.ACCEPTED, acceptedAt: expect.any(Date) },
       });
       expect(events.emit).toHaveBeenCalledWith(DomainEvents.ORDER_ACCEPTED, expect.any(Object));
@@ -273,7 +286,7 @@ describe('OrdersService', () => {
     it('also accepts PENDING (cash flow) → ACCEPTED', async () => {
       vendorOrder(OrderStatus.PENDING);
       await service.acceptOrder('order-1', 'user-1');
-      expect(prisma.order.update).toHaveBeenCalled();
+      expect(prisma.order.updateMany).toHaveBeenCalled();
     });
 
     it('refuses when order is already in a non-decidable state', async () => {
@@ -294,25 +307,47 @@ describe('OrdersService', () => {
         NotFoundException,
       );
     });
+
+    it('throws order_state_changed when the cron flipped status between read and write', async () => {
+      vendorOrder(OrderStatus.CONFIRMED);
+      // Simulate the sub-100ms race: requireVendorOrder() read PENDING/CONFIRMED,
+      // then between that read and our updateMany the cron transitioned the
+      // row to REFUSED. updateMany matches zero rows.
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.acceptOrder('order-1', 'user-1')).rejects.toMatchObject({
+        response: { code: 'order_state_changed' },
+      });
+      // Critical: no event must fire — the consumer already got the auto-refuse
+      // WhatsApp, we cannot follow it with an ORDER_ACCEPTED event.
+      expect(events.emit).not.toHaveBeenCalled();
+    });
   });
 
   describe('refuseOrder', () => {
-    it('flips CONFIRMED → REFUSED with reason label', async () => {
+    function vendorOrder(status: OrderStatus) {
       prisma.vendor.findUnique.mockResolvedValue({ id: 'v-1' });
       prisma.order.findUnique.mockResolvedValue({
         id: 'order-1',
         vendorId: 'v-1',
-        status: OrderStatus.CONFIRMED,
+        status,
         paymentStatus: PaymentStatus.PAID,
       });
+    }
+
+    it('flips CONFIRMED → REFUSED with reason label (status-guarded update)', async () => {
+      vendorOrder(OrderStatus.CONFIRMED);
 
       await service.refuseOrder('order-1', 'user-1', {
         reason: RefusalReason.POWER_OUTAGE,
         note: 'Pas de courant depuis 30 min',
       });
 
-      expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'order-1' },
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'order-1',
+          status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+        },
         data: {
           status: OrderStatus.REFUSED,
           refusedAt: expect.any(Date),
@@ -323,6 +358,19 @@ describe('OrdersService', () => {
         DomainEvents.ORDER_REFUSED,
         expect.objectContaining({ reason: RefusalReason.POWER_OUTAGE }),
       );
+    });
+
+    it('throws order_state_changed when the cron auto-refused first (race)', async () => {
+      vendorOrder(OrderStatus.CONFIRMED);
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.refuseOrder('order-1', 'user-1', { reason: RefusalReason.CLOSED }),
+      ).rejects.toMatchObject({ response: { code: 'order_state_changed' } });
+      // No second ORDER_REFUSED event — the cron already emitted one with the
+      // EXPIRED reason; we cannot double-fire with the vendor's reason or the
+      // consumer-side timeline reads as two refusals in a row.
+      expect(events.emit).not.toHaveBeenCalled();
     });
   });
 
@@ -563,11 +611,13 @@ describe('OrdersService', () => {
       setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: new Date() }]);
       const result = await service.markOrderReady('order-1', 'user-1');
       expect(result.status).toBe(OrderStatus.READY_PICKUP);
-      expect(prisma.order.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: OrderStatus.READY_PICKUP }),
-        }),
-      );
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'order-1',
+          status: { in: [OrderStatus.ACCEPTED, OrderStatus.IN_PREP] },
+        },
+        data: { status: OrderStatus.READY_PICKUP, preparedAt: expect.any(Date) },
+      });
       expect(events.emit).toHaveBeenCalledWith(
         DomainEvents.ORDER_READY,
         expect.objectContaining({ orderId: 'order-1', vendorId: 'v-1' }),
@@ -587,6 +637,18 @@ describe('OrdersService', () => {
       await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
         response: expect.objectContaining({ code: 'order_not_in_prep_phase' }),
       });
+    });
+
+    it('throws order_state_changed when status flipped between read and update', async () => {
+      setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }]);
+      // The pre-check passed (status was IN_PREP), then something flipped it
+      // — e.g. an admin cancellation. updateMany matches zero rows.
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
+        response: expect.objectContaining({ code: 'order_state_changed' }),
+      });
+      expect(events.emit).not.toHaveBeenCalled();
     });
   });
 });
