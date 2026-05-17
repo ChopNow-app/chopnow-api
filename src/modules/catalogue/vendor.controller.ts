@@ -58,6 +58,10 @@ export class VendorController {
       [
         { name: 'profilePhoto', maxCount: 1 },
         { name: 'firstItemPhoto', maxCount: 1 },
+        // Restaurant-only: enseigne (storefront) photo. The service only
+        // persists it when type=RESTAURANT; non-restaurant submissions
+        // that happen to include the file are silently dropped.
+        { name: 'enseignePhoto', maxCount: 1 },
       ],
       { limits: { fileSize: MAX_PHOTO_BYTES } },
     ),
@@ -77,19 +81,25 @@ export class VendorController {
   async submit(
     @Body() dto: SubmitVendorDto,
     @UploadedFiles()
-    files: { profilePhoto?: Express.Multer.File[]; firstItemPhoto?: Express.Multer.File[] },
+    files: {
+      profilePhoto?: Express.Multer.File[];
+      firstItemPhoto?: Express.Multer.File[];
+      enseignePhoto?: Express.Multer.File[];
+    },
   ) {
     // FileFieldsInterceptor wraps each field in an array (multer convention).
     // We only accept maxCount: 1, so we unwrap before handing to the service.
     const profilePhoto = files.profilePhoto?.[0];
     const firstItemPhoto = files.firstItemPhoto?.[0];
+    const enseignePhoto = files.enseignePhoto?.[0];
 
     // Re-validate each file individually so the ParseFilePipe's MIME + size
     // checks run against the unwrapped file rather than the array.
     if (profilePhoto) await imagePipe.transform(profilePhoto);
     if (firstItemPhoto) await imagePipe.transform(firstItemPhoto);
+    if (enseignePhoto) await imagePipe.transform(enseignePhoto);
 
-    return this.vendors.submitInformal(dto, { profilePhoto, firstItemPhoto });
+    return this.vendors.submitInformal(dto, { profilePhoto, firstItemPhoto, enseignePhoto });
   }
 
   @Roles(UserRole.VENDOR)
