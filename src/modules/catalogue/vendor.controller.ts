@@ -94,6 +94,21 @@ export class VendorController {
 
   @Roles(UserRole.VENDOR)
   @ApiBearerAuth()
+  @Get('me')
+  @ApiOperation({
+    summary: 'Get own vendor profile',
+    description:
+      'Read endpoint backing the /vendor/profile editor and the type-aware menu UI. ' +
+      'Returns the vendor row plus enough metadata for the dashboard to render — ' +
+      'deliberately omits admin-only fields (commissionRate, rejectionReason, KYC numbers).',
+  })
+  getMe(@Req() req: Request) {
+    const user = req.user as { id: string };
+    return this.vendors.getOwn(user.id);
+  }
+
+  @Roles(UserRole.VENDOR)
+  @ApiBearerAuth()
   @Patch('me')
   @ApiOperation({
     summary: 'Update own vendor profile (Story 1.8)',

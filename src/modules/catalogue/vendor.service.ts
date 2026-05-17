@@ -191,6 +191,40 @@ export class VendorService {
   }
 
   /**
+   * Vendor self-read. Backs the /vendor/profile editor and the type-aware
+   * menu UI (which needs `type` to decide between FOOD/DRINK kind tabs and
+   * MenuCategory grouping). Deliberately omits admin-only columns — a
+   * vendor must not see their own commissionRate, rejectionReason, or KYC
+   * numbers (the KYC text fields, when later added, stay admin-visible
+   * because changing them retroactively requires re-validation).
+   */
+  async getOwn(userId: string) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        type: true,
+        status: true,
+        quartier: true,
+        pointOfReference: true,
+        whatsappPhone: true,
+        momoPhone: true,
+        badge: true,
+        isOpen: true,
+        profilePhotoUrl: true,
+        coverPhotoUrl: true,
+        declaredCapacity: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+    return vendor;
+  }
+
+  /**
    * Story 1.8 — vendor self-update.
    *
    * Editable in this slice: name, description, momoPhone, and (separately)
