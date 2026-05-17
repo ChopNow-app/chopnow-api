@@ -21,6 +21,7 @@ import { DispatchModule } from './modules/dispatch/dispatch.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { RidersModule } from './modules/riders/riders.module';
 import { UsersModule } from './modules/users/users.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { VoiceProxyModule } from './modules/voice-proxy/voice-proxy.module';
 import { HealthModule } from './health/health.module';
@@ -75,8 +76,9 @@ import { RolesGuard } from './shared/guards/roles.guard';
     AdminModule,
     PaymentsModule,
     DispatchModule,
+    NotificationsModule,
     VoiceProxyModule,
-    // NotificationsModule, FinanceModule — wired in per-epic
+    // FinanceModule — wired in per-epic
     // --- Cross-cutting ---
     HealthModule,
   ],

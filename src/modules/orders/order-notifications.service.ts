@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
+import { WebPushService } from '../notifications/web-push.service';
 import { DomainEvents } from '../../shared/events/domain-events';
 import { OrdersExpiryService } from './orders-expiry.service';
 
@@ -30,20 +31,27 @@ export class OrderNotificationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly twilio: TwilioService,
+    private readonly webPush: WebPushService,
   ) {}
 
   /**
-   * Pings the vendor's WhatsApp the moment a new order is created.
+   * Pings the vendor the moment a new order is created.
    *
-   * Without this, the vendor's only signal is the dashboard's 10s poll. A
-   * vendor cooking on the line who isn't staring at the phone misses the
-   * 60s acceptance window entirely and the order gets auto-refused by the
-   * cron — a self-inflicted "restaurant didn't reply" experience that
-   * burns trust with the consumer.
+   * Two-channel cascade, push-first:
+   *   1. Web Push to every active subscription (PWA installed, permission granted).
+   *      Wakes the device with an OS notification that deep-links to
+   *      /vendor/commande/<id>. If the dashboard is already foregrounded,
+   *      the SW additionally postMessages focused clients → in-app chime
+   *      + dashboard refresh (no SSE needed; one channel covers both states).
+   *   2. WhatsApp fallback — fires ONLY when push reached zero subscriptions
+   *      (vendor hasn't installed the PWA, denied permission, or all their
+   *      endpoints expired). Mutually exclusive so we never double-ping a
+   *      vendor who's already getting the native notification.
    *
-   * Body is deliberately short + urgent + actionable: code, item count,
-   * total, payment method, deep-link to the countdown screen. Vendor taps
-   * the link in WhatsApp and lands on /vendor/commande/<id>.
+   * Without either, the vendor's only signal is the dashboard's 10s poll
+   * — a vendor cooking on the line misses the 60s acceptance window and
+   * the cron auto-refuses, surfacing as "restaurant didn't reply" to the
+   * consumer.
    */
   @OnEvent(DomainEvents.ORDER_CREATED)
   async onOrderCreated(payload: {
@@ -61,25 +69,42 @@ export class OrderNotificationsService {
           totalXAF: true,
           paymentMethod: true,
           items: { select: { quantity: true } },
-          vendor: { select: { whatsappPhone: true, name: true } },
+          vendor: { select: { whatsappPhone: true, name: true, userId: true } },
         },
       });
-      if (!order?.vendor.whatsappPhone) return;
+      if (!order) return;
 
       const itemCount = order.items.reduce((sum, i) => sum + i.quantity, 0);
       const paymentLabel = order.paymentMethod === 'CASH' ? 'Cash à la livraison' : 'Payé via MoMo';
+      const totalLabel = `${order.totalXAF.toLocaleString('fr-FR')} FCFA`;
+
+      // 1. Web Push first.
+      const pushResult = await this.webPush.sendToUser(order.vendor.userId, {
+        title: `🍲 Nouvelle commande ${order.code}`,
+        body: `${itemCount} plat${itemCount > 1 ? 's' : ''} · ${totalLabel} · ${paymentLabel}`,
+        data: {
+          kind: 'ORDER_CREATED',
+          orderId: payload.orderId,
+          deepLink: `/vendor/commande/${payload.orderId}`,
+        },
+      });
+
+      if (pushResult.sent > 0) return; // vendor got the native notification
+
+      // 2. WhatsApp fallback — only when push had no reachable subscriptions.
+      if (!order.vendor.whatsappPhone) return;
       const body =
         `🍲 Nouvelle commande ${order.code}\n` +
-        `${itemCount} plat${itemCount > 1 ? 's' : ''} · ${order.totalXAF.toLocaleString('fr-FR')} FCFA · ${paymentLabel}\n\n` +
+        `${itemCount} plat${itemCount > 1 ? 's' : ''} · ${totalLabel} · ${paymentLabel}\n\n` +
         `Tu as 60 secondes pour accepter :\n` +
         `tchopnow.app/vendor/commande/${payload.orderId}`;
-
       await this.twilio.sendWhatsApp(order.vendor.whatsappPhone, body);
     } catch (err) {
-      // Best-effort. Twilio outage or stale sandbox window must not feed
-      // back into the order pipeline — the order is already committed.
+      // Best-effort. A push-service outage or stale Twilio sandbox window
+      // must not feed back into the order pipeline — the order is already
+      // committed.
       this.logger.warn(
-        `Order creation WhatsApp failed for ${payload.orderId}: ${(err as Error).message}`,
+        `Order creation notification failed for ${payload.orderId}: ${(err as Error).message}`,
       );
     }
   }
