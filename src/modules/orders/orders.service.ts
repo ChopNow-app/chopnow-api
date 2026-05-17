@@ -309,22 +309,40 @@ export class OrdersService {
   async acceptOrder(orderId: string, userId: string) {
     const order = await this.requireVendorOrder(orderId, userId);
     if (!VENDOR_CAN_DECIDE.has(order.status)) {
+      // Cheap "you already decided" error message for the common case where
+      // the vendor double-taps or revisits a stale URL. The conditional
+      // updateMany below catches the rare sub-100ms race against the
+      // auto-refuse cron.
       throw new ConflictException({
         code: 'order_not_pending',
         message: 'This order is no longer awaiting your decision.',
       });
     }
     const now = new Date();
-    const updated = await this.prisma.order.update({
-      where: { id: order.id },
+    // Status-guarded update mirrors OrdersExpiryService.sweepExpired so the
+    // vendor's Accept cannot silently overwrite a cron-driven REFUSED.
+    // count===0 means the order changed state between requireVendorOrder()
+    // and this update — almost always: the cron got there first.
+    const res = await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+      },
       data: { status: OrderStatus.ACCEPTED, acceptedAt: now },
     });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'order_state_changed',
+        message:
+          "Cette commande vient d'être refusée automatiquement (délai dépassé). Reviens au dashboard.",
+      });
+    }
     this.events.emit(DomainEvents.ORDER_ACCEPTED, {
       orderId: order.id,
       vendorId: order.vendorId,
       acceptedAt: now,
     });
-    return updated;
+    return this.prisma.order.findUnique({ where: { id: order.id } });
   }
 
   async refuseOrder(orderId: string, userId: string, dto: RefuseOrderDto) {
@@ -337,10 +355,22 @@ export class OrdersService {
     }
     const reasonLabel = dto.note ? `${dto.reason}: ${dto.note}` : dto.reason;
     const now = new Date();
-    const updated = await this.prisma.order.update({
-      where: { id: order.id },
+    // Same status guard as acceptOrder — if the cron beat us to REFUSED, we
+    // don't want to emit a second ORDER_REFUSED (would re-send the consumer
+    // WhatsApp) or overwrite the auto-refuse reason with the vendor's pick.
+    const res = await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+      },
       data: { status: OrderStatus.REFUSED, refusedAt: now, refusalReason: reasonLabel },
     });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'order_state_changed',
+        message: "Cette commande a déjà changé d'état. Reviens au dashboard.",
+      });
+    }
     this.events.emit(DomainEvents.ORDER_REFUSED, {
       orderId: order.id,
       vendorId: order.vendorId,
@@ -351,7 +381,7 @@ export class OrdersService {
     if (order.paymentStatus === PaymentStatus.PAID) {
       this.logger.warn(`Order ${order.id} refused by vendor while PAID — refund needed`);
     }
-    return updated;
+    return this.prisma.order.findUnique({ where: { id: order.id } });
   }
 
   // ── vendor preparation path ───────────────────────────────────────
@@ -449,10 +479,22 @@ export class OrdersService {
     }
 
     const now = new Date();
-    await this.prisma.order.update({
-      where: { id: orderId },
+    // Status-guarded update: a vendor who manages to refuse-then-mark-ready
+    // (or whose order somehow went past READY_PICKUP via another path)
+    // shouldn't be able to overwrite the order state. count===0 → 409.
+    const res = await this.prisma.order.updateMany({
+      where: {
+        id: orderId,
+        status: { in: [OrderStatus.ACCEPTED, OrderStatus.IN_PREP] },
+      },
       data: { status: OrderStatus.READY_PICKUP, preparedAt: now },
     });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'order_state_changed',
+        message: "Cette commande a changé d'état pendant la préparation. Reviens au dashboard.",
+      });
+    }
 
     this.events.emit(DomainEvents.ORDER_READY, {
       orderId,

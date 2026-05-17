@@ -6,18 +6,22 @@ import { DomainEvents } from '../../shared/events/domain-events';
 import { OrdersExpiryService } from './orders-expiry.service';
 
 /**
- * Fans out vendor-decision events to the consumer via WhatsApp.
+ * Fans out order-lifecycle events to interested parties via WhatsApp.
+ *
+ * Two listeners today:
+ *   - ORDER_CREATED → pings the VENDOR ("you have a new order, you have 60s")
+ *   - ORDER_REFUSED → pings the CONSUMER ("restaurant couldn't take it")
  *
  * The pilot uses the Twilio WhatsApp sandbox (no Meta template approval yet).
- * That's fine because every consumer authenticates with an OTP before
- * ordering, which opens a 24h sandbox session per phone — well within the
- * window for a vendor-decision notification to actually deliver.
+ * That's fine because both vendor and consumer authenticate via OTP, which
+ * opens a 24h sandbox session per phone. Both audiences re-OTP frequently
+ * enough that the 24h window stays warm.
  *
- * Only REFUSED is wired right now. Accept-side noise hurts more than it
- * helps for the pilot: the consumer is already watching /orders/[id] and
- * sees ACCEPTED → IN_PREP move within seconds. Refuse is the painful case
- * (60s of silence followed by a "didn't reply" timeline entry), so we ping
- * them so they know to try someone else.
+ * Accept-side noise hurts more than it helps for the pilot: the consumer is
+ * already watching /orders/[id] and sees ACCEPTED → IN_PREP move within
+ * seconds. Refuse is the painful case (60s of silence followed by a
+ * "didn't reply" timeline entry), so we ping them so they know to try
+ * someone else.
  */
 @Injectable()
 export class OrderNotificationsService {
@@ -27,6 +31,58 @@ export class OrderNotificationsService {
     private readonly prisma: PrismaService,
     private readonly twilio: TwilioService,
   ) {}
+
+  /**
+   * Pings the vendor's WhatsApp the moment a new order is created.
+   *
+   * Without this, the vendor's only signal is the dashboard's 10s poll. A
+   * vendor cooking on the line who isn't staring at the phone misses the
+   * 60s acceptance window entirely and the order gets auto-refused by the
+   * cron — a self-inflicted "restaurant didn't reply" experience that
+   * burns trust with the consumer.
+   *
+   * Body is deliberately short + urgent + actionable: code, item count,
+   * total, payment method, deep-link to the countdown screen. Vendor taps
+   * the link in WhatsApp and lands on /vendor/commande/<id>.
+   */
+  @OnEvent(DomainEvents.ORDER_CREATED)
+  async onOrderCreated(payload: {
+    orderId: string;
+    code?: string;
+    vendorId?: string;
+    userId?: string;
+    paymentMethod?: string;
+  }): Promise<void> {
+    try {
+      const order = await this.prisma.order.findUnique({
+        where: { id: payload.orderId },
+        select: {
+          code: true,
+          totalXAF: true,
+          paymentMethod: true,
+          items: { select: { quantity: true } },
+          vendor: { select: { whatsappPhone: true, name: true } },
+        },
+      });
+      if (!order?.vendor.whatsappPhone) return;
+
+      const itemCount = order.items.reduce((sum, i) => sum + i.quantity, 0);
+      const paymentLabel = order.paymentMethod === 'CASH' ? 'Cash à la livraison' : 'Payé via MoMo';
+      const body =
+        `🍲 Nouvelle commande ${order.code}\n` +
+        `${itemCount} plat${itemCount > 1 ? 's' : ''} · ${order.totalXAF.toLocaleString('fr-FR')} FCFA · ${paymentLabel}\n\n` +
+        `Tu as 60 secondes pour accepter :\n` +
+        `tchopnow.app/vendor/commande/${payload.orderId}`;
+
+      await this.twilio.sendWhatsApp(order.vendor.whatsappPhone, body);
+    } catch (err) {
+      // Best-effort. Twilio outage or stale sandbox window must not feed
+      // back into the order pipeline — the order is already committed.
+      this.logger.warn(
+        `Order creation WhatsApp failed for ${payload.orderId}: ${(err as Error).message}`,
+      );
+    }
+  }
 
   @OnEvent(DomainEvents.ORDER_REFUSED)
   async onOrderRefused(payload: { orderId: string; reason: string }): Promise<void> {
