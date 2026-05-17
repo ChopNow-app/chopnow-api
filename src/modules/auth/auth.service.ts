@@ -138,6 +138,13 @@ export class AuthService {
       data: { status: OtpStatus.VERIFIED, verifiedAt: new Date() },
     });
 
+    // Release the in-flight lock now that this code has been consumed.
+    // Without this, a user who signs in, logs out, then tries to sign in
+    // again within 30s gets stuck because the second request-otp would
+    // short-circuit but no fresh code exists (the old one is VERIFIED
+    // and no longer eligible).
+    await this.redis.del(`otp:inflight:${phone}`);
+
     const user = await this.prisma.user.upsert({
       where: { phone },
       update: {},

@@ -182,6 +182,29 @@ describe('AuthService', () => {
     });
   });
 
+  describe('verifyOtp + in-flight lock interaction', () => {
+    it('releases the in-flight lock on successful verify so a fresh sign-in is not blocked', async () => {
+      // Set up a happy-path verify: matching SENT row, code argon2-matches.
+      const realHash = await argon2.hash('123456');
+      prisma.otpLog.findFirst.mockResolvedValueOnce({
+        id: 'log-1',
+        phone: '+237670000000',
+        codeHash: realHash,
+        attempts: 0,
+        status: OtpStatus.SENT,
+        expiresAt: new Date(Date.now() + 60_000),
+      });
+
+      await service.verifyOtp('670000000', '123456');
+
+      // The whole point of releasing here: a user who verifies, logs out,
+      // then tries to sign in again within 30s would otherwise be stuck
+      // because the second request-otp would short-circuit but the old code
+      // is already VERIFIED (no longer eligible for re-verify).
+      expect(redis.del).toHaveBeenCalledWith('otp:inflight:+237670000000');
+    });
+  });
+
   // Top-level const so the assertion above reads cleanly. Mirrors the
   // OTP_TTL_MINUTES constant in auth.service.ts (5 minutes = 300 seconds).
   const OTP_TTL_MINUTES_SECONDS = 5 * 60;
