@@ -338,6 +338,29 @@ export class VendorService {
     });
   }
 
+  /**
+   * Replace the vendor cover photo — the hero image at the top of the
+   * vendor detail page on the consumer side. Mirrors updateOwnProfilePhoto
+   * but stores under `vendor-cover/` R2 prefix so a future move to a
+   * higher-resolution pipeline (e.g. maxEdge: 2048) can branch on the
+   * keyPrefix without affecting profile photos.
+   */
+  async updateOwnCoverPhoto(userId: string, file: Express.Multer.File) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+
+    const upload = await this.r2.uploadImage(file.buffer, { keyPrefix: 'vendor-cover' });
+
+    return this.prisma.vendor.update({
+      where: { id: vendor.id },
+      data: { coverPhotoUrl: upload.key },
+      select: { id: true, coverPhotoUrl: true, updatedAt: true },
+    });
+  }
+
   private async sendSubmissionConfirmation(toE164: string, vendorName: string): Promise<void> {
     const body =
       `Bonjour ${vendorName} ! ✅\n` +
