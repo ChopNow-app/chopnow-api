@@ -450,22 +450,10 @@ describe('RidersService', () => {
       });
     });
 
-    it('markDelivered flips PICKED_UP → DELIVERED for CASH and stamps paymentStatus=PAID + paidAt', async () => {
-      riderOrder(OrderStatus.PICKED_UP, {
-        paymentMethod: PaymentMethod.CASH,
-        paymentStatus: PaymentStatus.PENDING,
-      });
-      await service.markDelivered('user-1', 'o-1', '5678');
-      expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'o-1' },
-        data: {
-          status: OrderStatus.DELIVERED,
-          deliveredAt: expect.any(Date),
-          paymentStatus: PaymentStatus.PAID,
-          paidAt: expect.any(Date),
-        },
-      });
-    });
+    // The legacy "markDelivered flips CASH paymentStatus=PAID" path was
+    // removed per issue #177 — pilot is MoMo-only, MoMo orders are already
+    // PAID by the time the rider marks delivery (Campay webhook fired
+    // earlier). The MoMo case above is now the only path.
 
     it('markDelivered rejects wrong delivery code', async () => {
       riderOrder(OrderStatus.PICKED_UP);

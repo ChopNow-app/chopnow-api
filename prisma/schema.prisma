@@ -123,11 +123,15 @@ enum OrderStatus {
 enum PaymentMethod {
   MTN_MOMO
   ORANGE_MONEY
+  // @deprecated 2026-05-18 — pilot is MoMo-only, no COD product. Kept in
+  // the enum to avoid a Postgres enum-removal migration during the
+  // pilot launch window; will be dropped in a follow-up once no row
+  // references it. See chopnow-api issue #177.
   CASH
 }
 
 enum PaymentStatus {
-  PENDING       // not initiated yet (cash, or before /pay call)
+  PENDING       // not initiated yet (before /pay call)
   PROCESSING    // Campay USSD prompt sent, awaiting webhook
   PAID
   FAILED

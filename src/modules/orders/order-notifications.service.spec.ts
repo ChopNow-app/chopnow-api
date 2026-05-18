@@ -73,7 +73,7 @@ describe('OrderNotificationsService', () => {
     const createdOrder = {
       code: 'TC-A23F4',
       totalXAF: 4350,
-      paymentMethod: 'CASH',
+      paymentMethod: 'MTN_MOMO',
       items: [{ quantity: 2 }, { quantity: 1 }],
       vendor: {
         whatsappPhone: '+237670000101',
@@ -92,7 +92,7 @@ describe('OrderNotificationsService', () => {
       const payload = webPush.sendToUser.mock.calls[0][1];
       expect(payload.title).toContain('TC-A23F4');
       expect(payload.body).toContain('3 plat'); // 2 + 1 (matches 'plat' or 'plats')
-      expect(payload.body).toContain('Cash à la livraison');
+      expect(payload.body).toContain('Payé via MTN MoMo');
       expect(payload.data).toMatchObject({
         kind: 'ORDER_CREATED',
         orderId: 'order-42',
@@ -117,26 +117,24 @@ describe('OrderNotificationsService', () => {
       expect(body).toContain('3 plat'); // matches both 'plat' and 'plats'
       // Node's fr-FR locale uses NBSP (U+202F) between thousands.
       expect(body).toMatch(/4\s350\s*FCFA/);
-      expect(body).toContain('Cash à la livraison');
+      expect(body).toContain('Payé via MTN MoMo');
       expect(body).toContain('60 secondes');
       expect(body).toContain('tchopnow.app/vendor/commande/order-42');
     });
 
-    it('labels MoMo payments distinctly from cash (push payload + WhatsApp fallback)', async () => {
+    it('labels Orange Money distinctly from MTN MoMo (push payload + WhatsApp fallback)', async () => {
       prisma.order.findUnique.mockResolvedValueOnce({
         ...createdOrder,
-        paymentMethod: 'MTN_MOMO',
+        paymentMethod: 'ORANGE_MONEY',
       });
 
       await service.onOrderCreated({ orderId: 'order-42' });
 
-      // Push body labelled (no need to fall back here, but the payload still set)
       const pushBody = webPush.sendToUser.mock.calls[0][1].body as string;
-      expect(pushBody).toContain('Payé via MoMo');
-      expect(pushBody).not.toContain('Cash');
-      // And fallback WhatsApp body should agree
+      expect(pushBody).toContain('Payé via Orange Money');
+      expect(pushBody).not.toContain('MTN');
       const waBody = twilio.sendWhatsApp.mock.calls[0][1] as string;
-      expect(waBody).toContain('Payé via MoMo');
+      expect(waBody).toContain('Payé via Orange Money');
     });
 
     it('skips both channels when the vendor has no whatsappPhone AND no push subscriptions', async () => {

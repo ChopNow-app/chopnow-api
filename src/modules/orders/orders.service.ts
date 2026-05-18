@@ -132,13 +132,17 @@ export class OrdersService {
       });
     }
 
-    // 5) Initial status: cash + momo both start PENDING; momo flips to
-    // CONFIRMED once the Campay webhook lands (Story 3.3).
+    // 5) Initial status: every order starts PENDING + paymentStatus=PENDING.
+    // The vendor is NOT notified at this point — the order is invisible to
+    // them until the Campay webhook flips paymentStatus to PAID, at which
+    // point onPaymentSucceeded fires ORDER_CREATED and sets the 60s
+    // acceptance deadline. This is the payment-gated visibility model from
+    // issues #178 / #179 — without it, a consumer who walks away mid-MoMo
+    // would burn a vendor's acceptance countdown for an unpaid order.
     const code = this.generateOrderCode();
     const pickupCode = this.generate4DigitCode();
     const deliveryCode = this.generate4DigitCode();
-    const acceptanceDeadlineAt = new Date(Date.now() + ACCEPTANCE_TTL_SECONDS * 1000);
-    const order = await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       return tx.order.create({
         data: {
           code,
@@ -159,23 +163,15 @@ export class OrdersService {
           deliveryPhone: dto.deliveryPhone,
           pickupCode,
           deliveryCode,
-          acceptanceDeadlineAt,
+          // acceptanceDeadlineAt deliberately left null — it's set by
+          // onPaymentSucceeded so the countdown matches "when the vendor
+          // can act on it," not "when the consumer hit submit."
           idempotencyKey: idempotencyKey ?? null,
           items: { createMany: { data: lines } },
         },
         include: { items: true },
       });
     });
-
-    this.events.emit(DomainEvents.ORDER_CREATED, {
-      orderId: order.id,
-      code: order.code,
-      vendorId: order.vendorId,
-      userId: order.userId,
-      paymentMethod: order.paymentMethod,
-    });
-
-    return order;
   }
 
   // ── consumer read path ────────────────────────────────────────────
@@ -296,7 +292,16 @@ export class OrdersService {
     if (!vendor) throw new NotFoundException('vendor_not_found');
 
     const orders = await this.prisma.order.findMany({
-      where: { vendorId: vendor.id, ...(status ? { status } : {}) },
+      where: {
+        vendorId: vendor.id,
+        // Payment-gated visibility (#178). An order that hasn't been paid
+        // for must never reach the vendor's queue — otherwise they'd see
+        // it briefly, the consumer would abandon the MoMo flow, the cron
+        // would auto-refuse, and the vendor's "no-show rate" metric is
+        // actually consumer cart abandonment.
+        paymentStatus: PaymentStatus.PAID,
+        ...(status ? { status } : {}),
+      },
       orderBy: { placedAt: 'desc' },
       take: 100,
       include: { items: true },
@@ -581,19 +586,51 @@ export class OrdersService {
     payerPhone?: string;
   }) {
     const order = await this.prisma.order.findUnique({ where: { id: payload.orderId } });
-    if (!order || order.paymentStatus === PaymentStatus.PAID) return; // idempotent
+    if (!order || order.paymentStatus === PaymentStatus.PAID) return; // idempotent fast-path
 
-    const updated = await this.prisma.order.update({
-      where: { id: order.id },
+    const now = new Date();
+    // Status-guarded conditional update — closes the Campay double-webhook
+    // race (#172). The Campay client retries until 200, so two
+    // PAYMENT_SUCCEEDED events can arrive within ms. The first one's
+    // updateMany matches (paymentStatus=PENDING) and flips; the second
+    // matches zero rows and bails before emitting any events. Belt + the
+    // suspenders fast-path check above + the Redis lock in PaymentsService.
+    const res = await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        paymentStatus: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+      },
       data: {
         status: OrderStatus.CONFIRMED,
         paymentStatus: PaymentStatus.PAID,
         paymentReference: payload.providerReference,
         payerPhone: payload.payerPhone ?? order.payerPhone,
-        paidAt: new Date(),
+        paidAt: now,
+        // Set the acceptance deadline NOW (not at order creation). Issue #179:
+        // the 60s vendor countdown should match "when the vendor can actually
+        // act on it," not "when the consumer hit submit." Otherwise a slow
+        // MoMo confirm eats the vendor's response window.
+        acceptanceDeadlineAt: new Date(now.getTime() + ACCEPTANCE_TTL_SECONDS * 1000),
       },
     });
-    this.events.emit(DomainEvents.ORDER_PAID, { orderId: updated.id, paidAt: updated.paidAt });
+    if (res.count === 0) return; // lost the race — another concurrent webhook already won
+
+    // ORDER_PAID stays for payment-pipeline observability (no listeners
+    // today, but semantically meaningful for audit).
+    this.events.emit(DomainEvents.ORDER_PAID, { orderId: order.id, paidAt: now });
+
+    // ORDER_CREATED is what triggers vendor notification (push + WhatsApp
+    // fallback via OrderNotificationsService.onOrderCreated). Moved here
+    // from createOrder per issue #178 — the vendor must not see an unpaid
+    // order in their queue, and the push/WhatsApp must not fire before
+    // payment is confirmed.
+    this.events.emit(DomainEvents.ORDER_CREATED, {
+      orderId: order.id,
+      code: order.code,
+      vendorId: order.vendorId,
+      userId: order.userId,
+      paymentMethod: order.paymentMethod,
+    });
   }
 
   // ── helpers ──────────────────────────────────────────────────────
