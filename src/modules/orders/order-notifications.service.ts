@@ -75,7 +75,12 @@ export class OrderNotificationsService {
       if (!order) return;
 
       const itemCount = order.items.reduce((sum, i) => sum + i.quantity, 0);
-      const paymentLabel = order.paymentMethod === 'CASH' ? 'Cash à la livraison' : 'Payé via MoMo';
+      // Pilot is MoMo-only — payment has already confirmed by the time this
+      // event fires (it's emitted from onPaymentSucceeded, not createOrder).
+      // The label distinguishes MTN vs Orange Money so the vendor knows
+      // which provider the consumer used.
+      const paymentLabel =
+        order.paymentMethod === 'ORANGE_MONEY' ? 'Payé via Orange Money' : 'Payé via MTN MoMo';
       const totalLabel = `${order.totalXAF.toLocaleString('fr-FR')} FCFA`;
 
       // 1. Web Push first.

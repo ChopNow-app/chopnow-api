@@ -99,7 +99,7 @@ describe('OrdersService', () => {
       ]);
     }
 
-    it('creates a PENDING order with server-computed totals and emits order.created', async () => {
+    it('creates a PENDING order with server-computed totals — vendor not yet notified', async () => {
       readyHappyPath();
 
       const order = await service.createOrder('user-1', baseDto);
@@ -126,10 +126,16 @@ describe('OrdersService', () => {
         expect.objectContaining({ itemId: 'i-2', quantity: 1, lineXAF: 500 }),
       ]);
 
-      expect(events.emit).toHaveBeenCalledWith(
-        DomainEvents.ORDER_CREATED,
-        expect.objectContaining({ orderId: 'order-new', vendorId: 'v-1' }),
-      );
+      // Payment-gated visibility (#178): vendor is NOT notified at order
+      // creation — ORDER_CREATED fires only after onPaymentSucceeded.
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('does NOT set acceptanceDeadlineAt at creation — set when payment confirms (#179)', async () => {
+      readyHappyPath();
+      await service.createOrder('user-1', baseDto);
+      const createArgs = prisma.order.create.mock.calls[0][0];
+      expect(createArgs.data.acceptanceDeadlineAt).toBeUndefined();
     });
 
     it('rejects below the 1200 FCFA minimum', async () => {
@@ -442,13 +448,20 @@ describe('OrdersService', () => {
   });
 
   describe('onPaymentSucceeded', () => {
-    it('flips PENDING/CONFIRMED → CONFIRMED + PAID and emits order.paid', async () => {
+    function pendingOrder() {
       prisma.order.findUnique.mockResolvedValue({
         id: 'order-1',
+        code: 'TC-ABCDE',
+        vendorId: 'v-1',
+        userId: 'user-1',
+        paymentMethod: PaymentMethod.MTN_MOMO,
         paymentStatus: PaymentStatus.PENDING,
         payerPhone: null,
       });
-      prisma.order.update.mockResolvedValue({ id: 'order-1', paidAt: new Date() });
+    }
+
+    it('flips PENDING → CONFIRMED + PAID with status-guarded updateMany and 60s acceptance deadline', async () => {
+      pendingOrder();
 
       await service.onPaymentSucceeded({
         orderId: 'order-1',
@@ -456,16 +469,29 @@ describe('OrdersService', () => {
         payerPhone: '+237670000000',
       });
 
-      expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'order-1' },
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'order-1',
+          // Race guard (#172): only flip if the row is still in a non-PAID
+          // state. A concurrent Campay-retried webhook matches zero rows.
+          paymentStatus: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+        },
         data: expect.objectContaining({
           status: OrderStatus.CONFIRMED,
           paymentStatus: PaymentStatus.PAID,
           paymentReference: 'campay-123',
           payerPhone: '+237670000000',
+          acceptanceDeadlineAt: expect.any(Date),
         }),
       });
-      expect(events.emit).toHaveBeenCalledWith(DomainEvents.ORDER_PAID, expect.any(Object));
+    });
+
+    it('emits ORDER_PAID + ORDER_CREATED on success — ORDER_CREATED is what triggers vendor push (#178)', async () => {
+      pendingOrder();
+      await service.onPaymentSucceeded({ orderId: 'order-1', providerReference: 'campay-123' });
+      const emitted = events.emit.mock.calls.map((c) => c[0]);
+      expect(emitted).toContain(DomainEvents.ORDER_PAID);
+      expect(emitted).toContain(DomainEvents.ORDER_CREATED);
     });
 
     it('is idempotent — a second call on an already PAID order is a no-op', async () => {
@@ -476,14 +502,28 @@ describe('OrdersService', () => {
 
       await service.onPaymentSucceeded({ orderId: 'order-1', providerReference: 'campay-123' });
 
-      expect(prisma.order.update).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('lost-race short-circuit — updateMany matches zero rows, NO events emitted (#172)', async () => {
+      pendingOrder();
+      // Concurrent Campay-retried webhook already flipped this row PAID
+      // between findUnique and updateMany. Our update matches zero rows.
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await service.onPaymentSucceeded({ orderId: 'order-1', providerReference: 'campay-123' });
+
+      // Critical: NO event must fire — the other webhook already emitted
+      // ORDER_PAID + ORDER_CREATED. Double-emit would double-notify the
+      // vendor (push + WhatsApp twice).
       expect(events.emit).not.toHaveBeenCalled();
     });
   });
 
-  it('does NOT emit order.paid handler synchronously from createOrder', async () => {
-    // Guard against accidental coupling — order.created and order.paid are
-    // separate signals.
+  it('does NOT emit any order event synchronously from createOrder — vendor is unaware until payment confirms', async () => {
+    // Payment-gated visibility (#178): the vendor must not see / be notified
+    // about an unpaid order. createOrder is now a pure insert.
     prisma.vendor.findUnique.mockResolvedValue({
       id: 'v-1',
       status: VendorStatus.ACTIVE,
@@ -494,9 +534,7 @@ describe('OrdersService', () => {
       { id: 'i-2', name: 'Y', priceXAF: 500, isAvailable: true, isInStock: true },
     ]);
     await service.createOrder('user-1', baseDto);
-    const emitted = events.emit.mock.calls.map((c) => c[0]);
-    expect(emitted).toContain(DomainEvents.ORDER_CREATED);
-    expect(emitted).not.toContain(DomainEvents.ORDER_PAID);
+    expect(events.emit).not.toHaveBeenCalled();
   });
 
   describe('getOrderPublic (share-link safe view)', () => {
