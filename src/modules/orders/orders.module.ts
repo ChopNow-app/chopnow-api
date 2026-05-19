@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -20,7 +21,7 @@ import { PreOrderPromotionService } from './pre-order-promotion.service';
  * (PaymentStatus.PAID) — single side-effect path from the payments module.
  */
 @Module({
-  imports: [NotificationsModule],
+  imports: [NotificationsModule, FinanceModule],
   controllers: [OrdersController],
   providers: [
     OrdersService,
