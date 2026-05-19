@@ -116,6 +116,46 @@ describe('AdminValidationService', () => {
       prisma.vendor.findUnique.mockResolvedValue(null);
       await expect(service.approveVendor('v-missing')).rejects.toBeInstanceOf(NotFoundException);
     });
+
+    describe('setVendorPreOrders (#187 follow-up)', () => {
+      function vendorWithFlag(currentValue: boolean, type = 'INFORMAL') {
+        prisma.vendor.findUnique.mockResolvedValue({
+          id: 'v-1',
+          acceptsPreOrders: currentValue,
+          type,
+        });
+      }
+
+      it('flips the flag and writes the DB update', async () => {
+        vendorWithFlag(false);
+        await service.setVendorPreOrders('v-1', true);
+        expect(prisma.vendor.update).toHaveBeenCalledWith({
+          where: { id: 'v-1' },
+          data: { acceptsPreOrders: true },
+          select: { id: true, acceptsPreOrders: true },
+        });
+      });
+
+      it('is idempotent — no DB write when already in the target state', async () => {
+        vendorWithFlag(true);
+        const result = await service.setVendorPreOrders('v-1', true);
+        expect(prisma.vendor.update).not.toHaveBeenCalled();
+        expect(result).toEqual({ id: 'v-1', acceptsPreOrders: true });
+      });
+
+      it('NotFoundException when vendor is missing', async () => {
+        prisma.vendor.findUnique.mockResolvedValue(null);
+        await expect(service.setVendorPreOrders('v-missing', true)).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
+
+      it('works for non-INFORMAL vendors too (admin override scenario)', async () => {
+        vendorWithFlag(false, 'RESTAURANT');
+        await service.setVendorPreOrders('v-1', true);
+        expect(prisma.vendor.update).toHaveBeenCalled();
+      });
+    });
   });
 
   describe('rider lifecycle', () => {

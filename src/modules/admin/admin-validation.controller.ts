@@ -1,9 +1,10 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { AdminValidationService } from './admin-validation.service';
 import { AdminDecisionDto } from './dto/admin-decision.dto';
+import { SetVendorPreOrdersDto } from './dto/set-vendor-pre-orders.dto';
 
 // Story 1.6 — admin routes are gated by @Roles(OPERATOR | ADMIN | SUPER_ADMIN).
 // SUPER_ADMIN bypasses the @Roles() check in RolesGuard automatically.
@@ -72,6 +73,24 @@ export class AdminValidationController {
   @ApiOperation({ summary: 'Lift a vendor suspension — clears the JWT blacklist.' })
   unsuspendVendor(@Param('vendorId', new ParseUUIDPipe()) vendorId: string) {
     return this.validation.unsuspendVendor(vendorId);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Patch('vendors/:vendorId/pre-orders')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Toggle Vendor.acceptsPreOrders (#187 follow-up)',
+    description:
+      'INFORMAL vendors get acceptsPreOrders=true at submission. This endpoint lets admin ' +
+      'override per vendor without code changes — e.g. opting in a willing SEMI_FORMAL, ' +
+      'or opting out an INFORMAL whose kitchen workflow does not support pre-orders. ' +
+      'Idempotent: no DB write or audit log if the value is already what was requested.',
+  })
+  setVendorPreOrders(
+    @Param('vendorId', new ParseUUIDPipe()) vendorId: string,
+    @Body() dto: SetVendorPreOrdersDto,
+  ) {
+    return this.validation.setVendorPreOrders(vendorId, dto.acceptsPreOrders);
   }
 
   // ── riders ─────────────────────────────────────────────────────────
