@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   IsArray,
+  IsDate,
   IsEnum,
   IsInt,
   IsLatitude,
@@ -99,4 +100,17 @@ export class CreateOrderDto {
     message: 'deliveryPhone must be a 9-digit Cameroon number or E.164 international.',
   })
   deliveryPhone!: string;
+
+  // ── Pre-orders (#187 — v1, INFORMAL vendors only) ────────────────────
+  @ApiProperty({
+    required: false,
+    description:
+      'Schedule the order for a future time (vendor must have acceptsPreOrders=true). ' +
+      'Omit / null for immediate delivery. v1 supports same-day pre-orders only.',
+    example: '2026-05-19T12:30:00.000Z',
+  })
+  @IsOptional()
+  @Type(() => Date)
+  @IsDate()
+  scheduledFor?: Date;
 }

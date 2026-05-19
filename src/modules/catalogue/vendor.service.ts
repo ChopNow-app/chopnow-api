@@ -138,11 +138,18 @@ export class VendorService {
       // SQL. Everything else still gets the safety of parameterised binding.
       // Restaurant KYC columns (rccmNumber, niuNumber, enseignePhotoUrl)
       // pass NULL for non-restaurant submissions.
+      // Pre-orders default-on for INFORMAL vendors (#187). Admin can flip
+      // per-vendor; we don't surface the toggle in the consumer-facing
+      // SubmitVendorDto because the vendor doesn't decide this at onboarding,
+      // we do, based on the kitchen workflow their type implies.
+      const acceptsPreOrders = vendorType === VendorType.INFORMAL;
+
       await tx.$executeRaw`
         INSERT INTO vendors (
           id, "userId", name, "ownerName", type, status, quartier, "pointOfReference",
           "whatsappPhone", "momoPhone", badge, "declaredCapacity",
           "profilePhotoUrl", "rccmNumber", "niuNumber", "enseignePhotoUrl",
+          "acceptsPreOrders",
           location, "submittedAt", "createdAt", "updatedAt"
         ) VALUES (
           ${vendorId},
@@ -161,6 +168,7 @@ export class VendorService {
           ${dto.rccmNumber ?? null},
           ${dto.niuNumber ?? null},
           ${enseigneUpload?.key ?? null},
+          ${acceptsPreOrders},
           ST_SetSRID(ST_MakePoint(${vendorLng}, ${vendorLat}), 4326)::geography,
           NOW(), NOW(), NOW()
         )
