@@ -1,7 +1,14 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { OrderStatus, PaymentMethod, PaymentStatus, VendorStatus } from '@prisma/client';
+import {
+  OrderStatus,
+  PaymentMethod,
+  PaymentStatus,
+  Prisma,
+  VendorStatus,
+  VendorType,
+} from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -95,12 +102,16 @@ describe('OrdersService', () => {
   });
 
   describe('createOrder', () => {
-    function readyHappyPath(opts: { acceptsPreOrders?: boolean } = {}) {
+    function readyHappyPath(
+      opts: { acceptsPreOrders?: boolean; commissionRate?: number; type?: VendorType } = {},
+    ) {
       prisma.vendor.findUnique.mockResolvedValue({
         id: 'v-1',
         status: VendorStatus.ACTIVE,
         isOpen: true,
         acceptsPreOrders: opts.acceptsPreOrders ?? false,
+        type: opts.type ?? VendorType.INFORMAL,
+        commissionRate: new Prisma.Decimal(opts.commissionRate ?? 0.06),
       });
       prisma.item.findMany.mockResolvedValue([
         { id: 'i-1', name: 'Ndolé', priceXAF: 2000, isAvailable: true, isInStock: true },
@@ -391,6 +402,22 @@ describe('OrdersService', () => {
         await service.createOrder('user-1', baseDto);
         const data = prisma.order.create.mock.calls[0][0].data;
         expect(data.scheduledFor).toBeNull();
+      });
+    });
+
+    describe('commission snapshot (ADR-0005)', () => {
+      it('snapshots the vendor commissionRate onto the Order at creation', async () => {
+        readyHappyPath({ commissionRate: 0.06 });
+        await service.createOrder('user-1', baseDto);
+        const data = prisma.order.create.mock.calls[0][0].data;
+        expect(Number(data.commissionRate)).toBe(0.06);
+      });
+
+      it('captures whatever rate the vendor has — pilot 17% restaurant', async () => {
+        readyHappyPath({ commissionRate: 0.17, type: VendorType.RESTAURANT });
+        await service.createOrder('user-1', baseDto);
+        const data = prisma.order.create.mock.calls[0][0].data;
+        expect(Number(data.commissionRate)).toBe(0.17);
       });
     });
   });
@@ -788,6 +815,10 @@ describe('OrdersService', () => {
         paymentStatus: PaymentStatus.PENDING,
         payerPhone: null,
         scheduledFor: null,
+        subtotalXAF: 4500,
+        deliveryFeeXAF: 400,
+        totalXAF: 4900,
+        commissionRate: new Prisma.Decimal(0.06),
         ...overrides,
       });
     }
@@ -850,6 +881,49 @@ describe('OrdersService', () => {
       // ORDER_PAID + ORDER_CREATED. Double-emit would double-notify the
       // vendor (push + WhatsApp twice).
       expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    describe('commission snapshots (ADR-0005)', () => {
+      it('computes commissionXAF + riderShareXAF + platformFeeXAF from the snapshotted rate', async () => {
+        pendingOrder(); // subtotal 4500, fee 400, commissionRate 0.06
+
+        await service.onPaymentSucceeded({
+          orderId: 'order-1',
+          providerReference: 'campay-1',
+        });
+
+        const data = prisma.order.updateMany.mock.calls[0][0].data;
+        // 4500 × 0.06 = 270
+        expect(data.commissionXAF).toBe(270);
+        // 400 × 0.65 = 260
+        expect(data.riderShareXAF).toBe(260);
+        // 270 + (400 − 260) = 410 — matches business-model.md §2 blended target
+        expect(data.platformFeeXAF).toBe(410);
+      });
+
+      it('uses the order-snapshotted rate, not the current vendor rate (audit immutability)', async () => {
+        // Order was placed when the vendor's rate was 17%. The vendor's
+        // rate may have changed since; the snapshot still wins.
+        pendingOrder({
+          subtotalXAF: 3500,
+          deliveryFeeXAF: 700,
+          totalXAF: 4200,
+          commissionRate: new Prisma.Decimal(0.17),
+        });
+
+        await service.onPaymentSucceeded({
+          orderId: 'order-1',
+          providerReference: 'campay-2',
+        });
+
+        const data = prisma.order.updateMany.mock.calls[0][0].data;
+        // 3500 × 0.17 = 595
+        expect(data.commissionXAF).toBe(595);
+        // 700 × 0.65 = 455
+        expect(data.riderShareXAF).toBe(455);
+        // 595 + (700 − 455) = 840
+        expect(data.platformFeeXAF).toBe(840);
+      });
     });
 
     describe('pre-orders (#187)', () => {
