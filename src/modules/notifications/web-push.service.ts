@@ -41,8 +41,21 @@ export class WebPushService {
   ) {
     const v = this.env.vapid;
     if (v.publicKey && v.privateKey && v.subject) {
-      webpush.setVapidDetails(v.subject, v.publicKey, v.privateKey);
-      this.configured = true;
+      // web-push validates the key format inside setVapidDetails and throws
+      // synchronously if it can't decode them. We swallow that here so a
+      // misconfigured VAPID (placeholder strings in dev, malformed value in
+      // prod) can't crash the entire API at boot. The service degrades to
+      // "configured=false" and callers fall back to WhatsApp — same outcome
+      // as the missing-env branch below.
+      try {
+        webpush.setVapidDetails(v.subject, v.publicKey, v.privateKey);
+        this.configured = true;
+      } catch (err) {
+        this.logger.warn(
+          { event: 'vapid_invalid', error: (err as Error).message },
+          'VAPID keys present but invalid — Web Push disabled, callers fall back to WhatsApp',
+        );
+      }
     } else {
       this.logger.warn(
         { event: 'vapid_unconfigured' },
