@@ -444,6 +444,18 @@ model Order {
   totalXAF       Int
   noteForVendor  String? @db.VarChar(120)
 
+  // Finance snapshots (ADR-0005). commissionRate is snapshotted at order
+  // creation from Vendor.commissionRate AT THAT MOMENT — never recomputed,
+  // so tier flips don't rewrite history. commissionXAF / riderShareXAF /
+  // platformFeeXAF are computed at payment confirmation and stay on the
+  // row for the lifetime of the order. payoutId is set when the order is
+  // included in a settled VendorPayout (S2+).
+  commissionRate Decimal @db.Decimal(5, 4)
+  commissionXAF  Int?
+  riderShareXAF  Int?
+  platformFeeXAF Int?
+  payoutId       String?
+
   paymentMethod    PaymentMethod
   paymentStatus    PaymentStatus @default(PENDING)
   // Provider transaction reference (Campay txn id). Unique so a webhook

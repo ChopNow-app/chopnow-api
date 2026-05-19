@@ -364,6 +364,45 @@ describe('VendorService', () => {
       const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
       expect(allValues).toContain(false);
     });
+
+    it('applies the 6% commission default for INFORMAL vendors (ADR-0005)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await service.submitInformal(validDto, {
+        profilePhoto: file('profilePhoto'),
+        firstItemPhoto: file('firstItemPhoto'),
+      });
+      const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
+      expect(allValues).toContain(0.06);
+    });
+
+    it('applies the 17% commission default for RESTAURANT vendors (ADR-0005)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await service.submitInformal(
+        {
+          ...validDto,
+          type: VendorType.RESTAURANT,
+          rccmNumber: 'RC/DLA/2024/A/123',
+          niuNumber: 'M091900012345A',
+        },
+        {
+          profilePhoto: file('profilePhoto'),
+          firstItemPhoto: file('firstItemPhoto'),
+          enseignePhoto: file('enseignePhoto'),
+        },
+      );
+      const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
+      expect(allValues).toContain(0.17);
+    });
+
+    it('applies the 10% commission default for SEMI_FORMAL vendors (ADR-0005)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await service.submitInformal(
+        { ...validDto, type: VendorType.SEMI_FORMAL },
+        { profilePhoto: file('profilePhoto'), firstItemPhoto: file('firstItemPhoto') },
+      );
+      const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
+      expect(allValues).toContain(0.1);
+    });
   });
 
   describe('getOwn', () => {

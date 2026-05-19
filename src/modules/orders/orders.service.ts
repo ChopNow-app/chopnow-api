@@ -12,6 +12,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import { DomainEvents } from '../../shared/events/domain-events';
+import { RIDER_DELIVERY_SHARE } from '../finance/commission.constants';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
@@ -85,7 +86,14 @@ export class OrdersService {
     // aren't legal targets.
     const vendor = await this.prisma.vendor.findUnique({
       where: { id: dto.vendorId },
-      select: { id: true, status: true, isOpen: true, acceptsPreOrders: true },
+      select: {
+        id: true,
+        status: true,
+        isOpen: true,
+        acceptsPreOrders: true,
+        type: true,
+        commissionRate: true,
+      },
     });
     if (!vendor || vendor.status !== VendorStatus.ACTIVE) {
       throw new NotFoundException({
@@ -189,7 +197,7 @@ export class OrdersService {
     const pickupCode = this.generate4DigitCode();
     const deliveryCode = this.generate4DigitCode();
     const order = await this.prisma.$transaction(async (tx) => {
-      return tx.order.create({
+      const created = await tx.order.create({
         data: {
           code,
           userId,
@@ -198,6 +206,10 @@ export class OrdersService {
           subtotalXAF,
           deliveryFeeXAF,
           totalXAF,
+          // Snapshot the vendor's effective commission rate AT THIS MOMENT.
+          // Future tier flips or admin overrides do not retroactively change
+          // what this order earned (ADR-0005).
+          commissionRate: vendor.commissionRate,
           noteForVendor: dto.noteForVendor ?? null,
           paymentMethod: dto.paymentMethod,
           paymentStatus: PaymentStatus.PENDING,
@@ -219,6 +231,19 @@ export class OrdersService {
         },
         include: { items: true },
       });
+
+      this.logger.info(
+        {
+          event: 'order_commission_snapshotted',
+          orderId: created.id,
+          vendorId: vendor.id,
+          vendorType: vendor.type,
+          commissionRate: Number(vendor.commissionRate),
+        },
+        'order commission rate snapshotted at creation',
+      );
+
+      return created;
     });
 
     // Telemetry only (#173): catch the rare race where the vendor flipped
@@ -871,12 +896,22 @@ export class OrdersService {
     // Immediate orders keep the existing behaviour: deadline + ORDER_CREATED
     // both land here.
     const isPreOrder = Boolean(order.scheduledFor);
+    // Compute money snapshots from the rate captured at order creation
+    // (never re-read from the vendor — that would erase audit history).
+    const commissionRate = Number(order.commissionRate);
+    const commissionXAF = Math.round(order.subtotalXAF * commissionRate);
+    const riderShareXAF = Math.round(order.deliveryFeeXAF * RIDER_DELIVERY_SHARE);
+    const deliveryMarginXAF = order.deliveryFeeXAF - riderShareXAF;
+    const platformFeeXAF = commissionXAF + deliveryMarginXAF;
     const dataPatch: Prisma.OrderUncheckedUpdateManyInput = {
       status: OrderStatus.CONFIRMED,
       paymentStatus: PaymentStatus.PAID,
       paymentReference: payload.providerReference,
       payerPhone: payload.payerPhone ?? order.payerPhone,
       paidAt: now,
+      commissionXAF,
+      riderShareXAF,
+      platformFeeXAF,
     };
     if (!isPreOrder) {
       // Set the acceptance deadline NOW (not at order creation). Issue #179:

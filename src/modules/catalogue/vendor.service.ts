@@ -13,6 +13,7 @@ import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 import { CAPACITY_TO_INT, SubmitVendorDto } from './dto/submit-vendor.dto';
 import { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
+import { COMMISSION_RATE_BY_TYPE } from '../finance/commission.constants';
 
 // Default pickup point for newly-submitted vendors. Story 2.15 (landmarks)
 // will replace this with the resolved landmark coordinates; for now we plant
@@ -143,11 +144,16 @@ export class VendorService {
       // SubmitVendorDto because the vendor doesn't decide this at onboarding,
       // we do, based on the kitchen workflow their type implies.
       const acceptsPreOrders = vendorType === VendorType.INFORMAL;
+      // Type-aware commission rate per ADR-0005 / business-model.md §6.
+      // Schema default (0.10) is preserved for legacy rows but new vendors
+      // get the rate their type was promised. Admin can still override
+      // post-onboarding via PATCH /admin/vendors/:id.
+      const commissionRate = COMMISSION_RATE_BY_TYPE[vendorType];
 
       await tx.$executeRaw`
         INSERT INTO vendors (
           id, "userId", name, "ownerName", type, status, quartier, "pointOfReference",
-          "whatsappPhone", "momoPhone", badge, "declaredCapacity",
+          "whatsappPhone", "momoPhone", badge, "declaredCapacity", "commissionRate",
           "profilePhotoUrl", "rccmNumber", "niuNumber", "enseignePhotoUrl",
           "acceptsPreOrders",
           location, "submittedAt", "createdAt", "updatedAt"
@@ -164,6 +170,7 @@ export class VendorService {
           ${momoPhone},
           ${badge},
           ${capacityInt},
+          ${commissionRate},
           ${profileUpload.key},
           ${dto.rccmNumber ?? null},
           ${dto.niuNumber ?? null},
@@ -210,6 +217,16 @@ export class VendorService {
         ],
       });
     });
+
+    this.logger.info(
+      {
+        event: 'vendor_commission_default_applied',
+        vendorId,
+        vendorType,
+        commissionRate: COMMISSION_RATE_BY_TYPE[vendorType],
+      },
+      'vendor commission rate applied at submission',
+    );
 
     // Fire-and-forget WhatsApp confirmation. A delivery failure doesn't
     // affect the submission outcome — the vendor sees the on-screen
