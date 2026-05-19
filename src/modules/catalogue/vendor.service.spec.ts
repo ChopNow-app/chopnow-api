@@ -5,6 +5,7 @@ import { VendorService } from './vendor.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 import { DeclaredCapacity, SubmitVendorDto } from './dto/submit-vendor.dto';
 
 describe('VendorService', () => {
@@ -68,6 +69,7 @@ describe('VendorService', () => {
     const module = await Test.createTestingModule({
       providers: [
         VendorService,
+        pinoLoggerProvider(VendorService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: R2Service, useValue: r2 },
         { provide: TwilioService, useValue: twilio },

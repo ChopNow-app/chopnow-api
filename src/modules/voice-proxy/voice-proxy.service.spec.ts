@@ -5,6 +5,7 @@ import { VoiceProxyService } from './voice-proxy.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('VoiceProxyService', () => {
   let service: VoiceProxyService;
@@ -23,6 +24,7 @@ describe('VoiceProxyService', () => {
     const module = await Test.createTestingModule({
       providers: [
         VoiceProxyService,
+        pinoLoggerProvider(VoiceProxyService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: TwilioService, useValue: twilio },
         { provide: EnvService, useValue: env },

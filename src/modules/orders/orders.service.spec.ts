@@ -7,6 +7,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RefusalReason } from './dto/vendor-decision.dto';
 import { DomainEvents } from '../../shared/events/domain-events';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('OrdersService', () => {
   let service: OrdersService;
@@ -79,6 +80,7 @@ describe('OrdersService', () => {
     const module = await Test.createTestingModule({
       providers: [
         OrdersService,
+        pinoLoggerProvider(OrdersService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: events },
       ],
@@ -242,13 +244,20 @@ describe('OrdersService', () => {
 
         await service.createOrder('user-1', baseDto);
 
-        const flippedWarn = warnSpy.mock.calls.find((c) =>
-          String(c[0]).includes('item-availability flip race'),
+        // PinoLogger structured-fields API: warn(fields, message).
+        // Look for the call whose `event` field is the flip-race code.
+        const flippedWarn = warnSpy.mock.calls.find(
+          (c) => (c[0] as { event?: string })?.event === 'order_item_flip_race',
         );
         expect(flippedWarn).toBeDefined();
-        const msg = String(flippedWarn?.[0]);
-        expect(msg).toContain('Ndolé'); // the flipped one
-        expect(msg).not.toContain('Bissap'); // legitimately stale updatedAt — ignored
+        const fields = flippedWarn?.[0] as {
+          flippedItems: Array<{ name: string }>;
+          flippedCount: number;
+        };
+        const names = fields.flippedItems.map((i) => i.name);
+        expect(names).toContain('Ndolé'); // the flipped one
+        expect(names).not.toContain('Bissap'); // legitimately stale updatedAt — ignored
+        expect(fields.flippedCount).toBe(1);
         warnSpy.mockRestore();
       });
 
@@ -267,8 +276,8 @@ describe('OrdersService', () => {
 
         await service.createOrder('user-1', baseDto);
 
-        const flippedWarn = warnSpy.mock.calls.find((c) =>
-          String(c[0]).includes('item-availability flip race'),
+        const flippedWarn = warnSpy.mock.calls.find(
+          (c) => (c[0] as { event?: string })?.event === 'order_item_flip_race',
         );
         expect(flippedWarn).toBeUndefined();
         warnSpy.mockRestore();

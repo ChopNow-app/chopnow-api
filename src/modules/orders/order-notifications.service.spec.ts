@@ -13,13 +13,28 @@ describe('OrderNotificationsService', () => {
     vendor: { name: 'Chez Maman Mboué' },
   };
 
+  // PinoLogger no-op — tests don't assert on log output.
+  const logger = {
+    warn: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    trace: jest.fn(),
+    setContext: jest.fn(),
+  };
+
   beforeEach(() => {
     prisma = { order: { findUnique: jest.fn().mockResolvedValue(orderRow) } };
     twilio = { sendWhatsApp: jest.fn().mockResolvedValue('SMxxx') };
     // Default: no push subscriptions reached → WhatsApp fallback fires.
     // Tests that assert push-success path override with sent > 0.
     webPush = { sendToUser: jest.fn().mockResolvedValue({ sent: 0, deactivated: 0 }) };
-    service = new OrderNotificationsService(prisma as never, twilio as never, webPush as never);
+    service = new OrderNotificationsService(
+      logger as never,
+      prisma as never,
+      twilio as never,
+      webPush as never,
+    );
   });
 
   it('sends a friendly WhatsApp on auto-expire refusal', async () => {

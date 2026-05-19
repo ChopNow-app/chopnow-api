@@ -2,10 +2,10 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { OrderStatus, Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
@@ -37,9 +37,8 @@ const REQUIRES_LICENSE_PLATE: ReadonlySet<RiderVehicleType> = new Set<RiderVehic
 /** Rider KYC onboarding service — Story 1.4. */
 @Injectable()
 export class RidersService {
-  private readonly logger = new Logger(RidersService.name);
-
   constructor(
+    @InjectPinoLogger(RidersService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
     private readonly twilio: TwilioService,
@@ -441,7 +440,10 @@ export class RidersService {
       await this.twilio.sendWhatsApp(toE164, body);
     } catch (err) {
       const msg = (err as Error).message;
-      this.logger.warn(`Rider submission WhatsApp failed for ${toE164}: ${msg}`);
+      this.logger.warn(
+        { event: 'rider_submission_whatsapp_failed', phone: toE164, error: msg },
+        'Rider submission WhatsApp failed',
+      );
     }
   }
 }

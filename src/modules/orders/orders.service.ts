@@ -4,11 +4,11 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentStatus, Prisma, VendorStatus } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import { DomainEvents } from '../../shared/events/domain-events';
@@ -45,9 +45,8 @@ interface DistanceRow {
 
 @Injectable()
 export class OrdersService {
-  private readonly logger = new Logger(OrdersService.name);
-
   constructor(
+    @InjectPinoLogger(OrdersService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
   ) {}
@@ -208,18 +207,26 @@ export class OrdersService {
           Date.now() - i.updatedAt.getTime() < 10_000,
       );
       if (flippedRecently.length === 0) return;
-      const summary = flippedRecently
-        .map((i) => `${i.id}:"${i.name}"(avail=${i.isAvailable},inStock=${i.isInStock})`)
-        .join(', ');
       this.logger.warn(
-        `Order ${orderId} created during item-availability flip race — ${flippedRecently.length} ` +
-          `item(s) became unavailable in the create window: ${summary}. Vendor may refuse on accept screen.`,
+        {
+          event: 'order_item_flip_race',
+          orderId,
+          flippedCount: flippedRecently.length,
+          flippedItems: flippedRecently.map((i) => ({
+            id: i.id,
+            name: i.name,
+            isAvailable: i.isAvailable,
+            isInStock: i.isInStock,
+          })),
+        },
+        'Order created during item-availability flip race — vendor may refuse on accept screen',
       );
     } catch (err) {
       // Telemetry must never break the order pipeline. Order is already
       // committed; if the recheck query fails, log and move on.
       this.logger.warn(
-        `Item availability recheck failed for order ${orderId}: ${(err as Error).message}`,
+        { event: 'order_item_recheck_failed', orderId, error: (err as Error).message },
+        'Item availability recheck failed',
       );
     }
   }
@@ -345,7 +352,12 @@ export class OrdersService {
     // Campay refund calls — log the intent now so admin can replay if needed.
     if (order.paymentStatus === PaymentStatus.PAID) {
       this.logger.warn(
-        `Order ${order.id} cancelled while PAID — refund needed (Story 3.8 pending wiring)`,
+        {
+          event: 'order_cancelled_while_paid',
+          orderId: order.id,
+          paymentMethod: order.paymentMethod,
+        },
+        'Order cancelled while PAID — refund needed (Story 3.8 pending wiring)',
       );
     }
     return this.prisma.order.findUnique({ where: { id: order.id } });
@@ -453,7 +465,14 @@ export class OrdersService {
     });
     // Refund wiring: same TODO as cancelOrder.
     if (order.paymentStatus === PaymentStatus.PAID) {
-      this.logger.warn(`Order ${order.id} refused by vendor while PAID — refund needed`);
+      this.logger.warn(
+        {
+          event: 'order_refused_while_paid',
+          orderId: order.id,
+          paymentMethod: order.paymentMethod,
+        },
+        'Order refused by vendor while PAID — refund needed',
+      );
     }
     return this.prisma.order.findUnique({ where: { id: order.id } });
   }
@@ -640,7 +659,13 @@ export class OrdersService {
     // Story 6.x admin panel.
     if (dto.vendorScore <= 2 || dto.riderScore <= 2) {
       this.logger.warn(
-        `Low rating on order ${order.id}: vendor=${dto.vendorScore} rider=${dto.riderScore}`,
+        {
+          event: 'order_low_rating',
+          orderId: order.id,
+          vendorScore: dto.vendorScore,
+          riderScore: dto.riderScore,
+        },
+        'Low rating posted — admin should review',
       );
     }
     return rating;

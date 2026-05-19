@@ -4,7 +4,6 @@ import {
   ConflictException,
   ExecutionContext,
   Injectable,
-  Logger,
   NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -28,8 +27,6 @@ const DEFAULT_TTL = 24 * 60 * 60; // 24h
  */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  private readonly logger = new Logger(IdempotencyInterceptor.name);
-
   constructor(
     private readonly reflector: Reflector,
     private readonly redis: RedisService,

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import twilio from 'twilio';
 import { EnvService } from '../config/env.service';
 
@@ -11,7 +11,6 @@ import { EnvService } from '../config/env.service';
  */
 @Injectable()
 export class TwilioService {
-  private readonly logger = new Logger(TwilioService.name);
   private _client: twilio.Twilio | null = null;
 
   constructor(private readonly env: EnvService) {}

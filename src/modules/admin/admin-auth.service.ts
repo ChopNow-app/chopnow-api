@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { UserRole } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
@@ -24,9 +25,8 @@ const lockedKey = (userId: string) => `admin:locked:${userId}`;
 
 @Injectable()
 export class AdminAuthService {
-  private readonly logger = new Logger(AdminAuthService.name);
-
   constructor(
+    @InjectPinoLogger(AdminAuthService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
     private readonly jwt: JwtService,
@@ -67,7 +67,10 @@ export class AdminAuthService {
       if (attempts >= LOCKOUT_THRESHOLD) {
         // Lock with no TTL — only a super-admin unlock clears this key.
         await this.redis.client.set(lockedKey(user.id), '1');
-        this.logger.warn(`Admin account locked after ${attempts} attempts: ${user.id}`);
+        this.logger.warn(
+          { event: 'admin_account_locked', userId: user.id, email: normalized, attempts },
+          'Admin account locked after too many failed attempts',
+        );
         throw new UnauthorizedException({
           code: 'account_locked',
           message:

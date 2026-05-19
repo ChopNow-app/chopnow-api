@@ -3,10 +3,10 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { UserRole, VendorStatus, VendorType } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
@@ -25,9 +25,8 @@ const DOUALA_CENTER_LAT = 4.0511;
 /** Vendor onboarding domain service — Story 2.0 (informal vendor flow). */
 @Injectable()
 export class VendorService {
-  private readonly logger = new Logger(VendorService.name);
-
   constructor(
+    @InjectPinoLogger(VendorService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
     private readonly twilio: TwilioService,
@@ -372,7 +371,10 @@ export class VendorService {
       // Don't surface to caller — the submission already succeeded. Log so
       // ops can replay if needed.
       const msg = (err as Error).message;
-      this.logger.warn(`Vendor submission WhatsApp failed for ${toE164}: ${msg}`);
+      this.logger.warn(
+        { event: 'vendor_submission_whatsapp_failed', phone: toE164, error: msg },
+        'Vendor submission WhatsApp failed',
+      );
     }
   }
 }

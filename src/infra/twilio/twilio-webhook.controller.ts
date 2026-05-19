@@ -1,7 +1,8 @@
-import { Body, Controller, ForbiddenException, HttpCode, Logger, Post, Req } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, HttpCode, Post, Req } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { OtpStatus } from '@prisma/client';
 import type { Request } from 'express';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { validateRequest } from 'twilio';
 import { Public } from '../../shared/decorators/public.decorator';
 import { EnvService } from '../config/env.service';
@@ -22,9 +23,8 @@ import { PrismaService } from '../prisma/prisma.service';
 @ApiExcludeController()
 @Controller('twilio')
 export class TwilioWebhookController {
-  private readonly logger = new Logger(TwilioWebhookController.name);
-
   constructor(
+    @InjectPinoLogger(TwilioWebhookController.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly env: EnvService,
   ) {}
@@ -38,7 +38,10 @@ export class TwilioWebhookController {
     const sid = body.MessageSid;
     const status = body.MessageStatus;
     if (!sid || !status) {
-      this.logger.warn('twilio status callback missing MessageSid or MessageStatus');
+      this.logger.warn(
+        { event: 'twilio_status_callback_malformed' },
+        'Twilio status callback missing MessageSid or MessageStatus',
+      );
       return;
     }
 
@@ -46,7 +49,10 @@ export class TwilioWebhookController {
     if (!log) {
       // Could be a non-OTP Twilio message (e.g. if we later route other messages through
       // the same callback URL). Drop silently.
-      this.logger.debug(`twilio status for unknown SID ${sid} (status=${status})`);
+      this.logger.debug(
+        { event: 'twilio_status_unknown_sid', sid, status },
+        'Twilio status callback for unknown SID',
+      );
       return;
     }
 

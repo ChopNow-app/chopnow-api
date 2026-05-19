@@ -9,7 +9,6 @@ import { resolve } from 'path';
 import { AppModule } from './app.module';
 import { APP_VERSION } from './app.version';
 import { EnvService } from './infra/config/env.service';
-import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -41,7 +40,8 @@ async function bootstrap() {
     }),
   );
 
-  app.useGlobalFilters(new AllExceptionsFilter());
+  // AllExceptionsFilter is registered via APP_FILTER in AppModule so it can
+  // inject PinoLogger for structured 5xx logs.
 
   app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
 

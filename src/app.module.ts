@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 
 import { envSchema } from './infra/config/env.validation';
@@ -26,6 +26,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { VoiceProxyModule } from './modules/voice-proxy/voice-proxy.module';
 import { HealthModule } from './health/health.module';
 
+import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
 import { RolesGuard } from './shared/guards/roles.guard';
 
@@ -89,6 +90,9 @@ import { RolesGuard } from './shared/guards/roles.guard';
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // Global RBAC — only triggers when a route has @Roles(...)
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Structured 5xx logging via PinoLogger — must be DI-registered (not `new
+    // AllExceptionsFilter()` in main.ts) so InjectPinoLogger resolves.
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
 export class AppModule {}

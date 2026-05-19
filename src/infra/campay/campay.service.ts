@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../config/env.service';
 
 /**
@@ -37,12 +38,14 @@ export interface CampayWebhookPayload {
 
 @Injectable()
 export class CampayService {
-  private readonly logger = new Logger(CampayService.name);
   private token: string | null = null;
   // Refresh ~5min before declared expiry — Campay tokens typically run 1h.
   private tokenExpiresAt = 0;
 
-  constructor(private readonly env: EnvService) {}
+  constructor(
+    @InjectPinoLogger(CampayService.name) private readonly logger: PinoLogger,
+    private readonly env: EnvService,
+  ) {}
 
   async initiateCollect(req: CollectRequest): Promise<CollectResponse> {
     const cfg = this.env.requireCampay();
@@ -64,7 +67,15 @@ export class CampayService {
 
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok || data.status === 'FAILED') {
-      this.logger.error(`Campay collect failed (${res.status}): ${JSON.stringify(data)}`);
+      this.logger.error(
+        {
+          event: 'campay_collect_failed',
+          httpStatus: res.status,
+          externalReference: req.externalReference,
+          response: data,
+        },
+        'Campay collect call failed',
+      );
       throw new Error(
         typeof data.message === 'string' ? data.message : `campay_http_${res.status}`,
       );
@@ -72,7 +83,14 @@ export class CampayService {
 
     const reference = data.reference as string | undefined;
     if (!reference) {
-      this.logger.error(`Campay collect missing reference: ${JSON.stringify(data)}`);
+      this.logger.error(
+        {
+          event: 'campay_collect_missing_reference',
+          externalReference: req.externalReference,
+          response: data,
+        },
+        'Campay collect response missing reference field',
+      );
       throw new Error('campay_missing_reference');
     }
     return { reference, status: (data.status as string | undefined) ?? 'PENDING' };
