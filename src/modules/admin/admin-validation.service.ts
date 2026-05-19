@@ -57,6 +57,9 @@ export class AdminValidationService {
         rccmNumber: true,
         niuNumber: true,
         enseignePhotoUrl: true,
+        // Pre-orders flag (#187 follow-up) — exposed so admin can flip it
+        // before/after approval via PATCH /admin/vendors/:id/pre-orders.
+        acceptsPreOrders: true,
       },
     });
   }
@@ -134,6 +137,39 @@ export class AdminValidationService {
       data: { status: VendorStatus.ACTIVE, rejectionReason: null },
     });
     await this.revocation.reactivateUser(vendor.userId);
+    return updated;
+  }
+
+  /**
+   * #187 follow-up — admin sets the per-vendor pre-order opt-in flag. INFORMAL
+   * vendors get it set to true automatically at submission; this lets admin
+   * override per vendor without code changes (e.g. opt in a willing
+   * SEMI_FORMAL, opt out an INFORMAL whose kitchen doesn't suit pre-orders).
+   */
+  async setVendorPreOrders(vendorId: string, acceptsPreOrders: boolean) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { id: vendorId },
+      select: { id: true, acceptsPreOrders: true, type: true },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+    if (vendor.acceptsPreOrders === acceptsPreOrders) {
+      // Idempotent — already in the requested state, no write, no log.
+      return { id: vendor.id, acceptsPreOrders };
+    }
+    const updated = await this.prisma.vendor.update({
+      where: { id: vendorId },
+      data: { acceptsPreOrders },
+      select: { id: true, acceptsPreOrders: true },
+    });
+    this.logger.info(
+      {
+        event: 'admin_vendor_preorders_toggled',
+        vendorId,
+        vendorType: vendor.type,
+        acceptsPreOrders,
+      },
+      'Admin toggled Vendor.acceptsPreOrders',
+    );
     return updated;
   }
 
