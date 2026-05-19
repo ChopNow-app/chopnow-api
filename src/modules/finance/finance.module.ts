@@ -1,14 +1,20 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from '../../infra/prisma/prisma.module';
+import { LedgerService } from './ledger.service';
 
 /**
  * Epic 7 — Finance & Cashout.
- * Vendor daily payouts, rider settlement, KYC, monthly statements,
- * Campay balance management, refund flow.
+ * Vendor weekly payouts (formal), on-demand payouts (informal), rider
+ * daily settlement, append-only ledger, refund flow. See ADR-0005.
+ *
+ * S1 (this milestone): ledger foundation only — no callers yet.
+ * S2: admin financial dashboard + payout crons will wire LedgerService
+ * into onPaymentSucceeded, refund flow, payout crons.
  */
 @Module({
-  imports: [],
+  imports: [PrismaModule],
   controllers: [],
-  providers: [],
-  exports: [],
+  providers: [LedgerService],
+  exports: [LedgerService],
 })
 export class FinanceModule {}
