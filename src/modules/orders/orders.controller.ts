@@ -19,6 +19,7 @@ import { CreateOrderDto } from './dto/create-order.dto';
 import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
 import { SetItemPreparedDto } from './dto/set-item-prepared.dto';
+import { VendorCancelPreOrderDto } from './dto/vendor-cancel-pre-order.dto';
 import { OrdersService } from './orders.service';
 
 @ApiTags('orders')
@@ -107,13 +108,24 @@ export class OrdersController {
   @Roles(UserRole.VENDOR)
   @Get('vendor/me')
   @ApiOperation({
-    summary: 'Vendor inbox — list own orders (Story 3.7)',
+    summary: 'Vendor inbox — list own orders (Story 3.7, pre-orders #187)',
     description:
-      'Optional `status` query filters to a single state — pass `CONFIRMED` for "awaiting decision".',
+      'Optional `status` query filters to a single state — pass `CONFIRMED` for "awaiting decision". ' +
+      'Optional `type` query splits immediate orders (default — scheduledFor=null, sorted placedAt DESC) ' +
+      'from pre-orders (type=preorder — scheduledFor!=null, sorted scheduledFor ASC).',
   })
   @ApiQuery({ name: 'status', required: false, enum: OrderStatus })
-  vendorList(@Req() req: Request, @Query('status') status?: OrderStatus) {
-    return this.orders.listVendorOrders((req.user as { id: string }).id, status);
+  @ApiQuery({ name: 'type', required: false, enum: ['immediate', 'preorder'] })
+  vendorList(
+    @Req() req: Request,
+    @Query('status') status?: OrderStatus,
+    @Query('type') type?: 'immediate' | 'preorder',
+  ) {
+    return this.orders.listVendorOrders(
+      (req.user as { id: string }).id,
+      status,
+      type === 'preorder' ? 'preorder' : 'immediate',
+    );
   }
 
   @Roles(UserRole.VENDOR)
@@ -164,5 +176,23 @@ export class OrdersController {
   })
   markReady(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
     return this.orders.markOrderReady(orderId, (req.user as { id: string }).id);
+  }
+
+  @Roles(UserRole.VENDOR)
+  @Patch(':orderId/vendor-cancel-preorder')
+  @ApiOperation({
+    summary:
+      'Vendor cancels a pre-order they already accepted (#187). Triggers consumer refund + VendorPenalty.',
+    description:
+      'Only valid for pre-orders (scheduledFor != null) currently in ACCEPTED or IN_PREP. ' +
+      'Pre-acceptance cancellations should use the regular refuse endpoint (no penalty). ' +
+      'Returns the cancelled status + the penalty amount in FCFA.',
+  })
+  vendorCancelPreOrder(
+    @Req() req: Request,
+    @Param('orderId', new ParseUUIDPipe()) orderId: string,
+    @Body() dto: VendorCancelPreOrderDto,
+  ) {
+    return this.orders.vendorCancelPreOrder(orderId, (req.user as { id: string }).id, dto.note);
   }
 }

@@ -4,6 +4,7 @@ import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
 import { OrdersExpiryService } from './orders-expiry.service';
 import { OrderNotificationsService } from './order-notifications.service';
+import { PreOrderPromotionService } from './pre-order-promotion.service';
 
 /**
  * Epic 3 — Commande & Paiement.
@@ -21,7 +22,12 @@ import { OrderNotificationsService } from './order-notifications.service';
 @Module({
   imports: [NotificationsModule],
   controllers: [OrdersController],
-  providers: [OrdersService, OrdersExpiryService, OrderNotificationsService],
+  providers: [
+    OrdersService,
+    OrdersExpiryService,
+    OrderNotificationsService,
+    PreOrderPromotionService,
+  ],
   exports: [OrdersService],
 })
 export class OrdersModule {}

@@ -334,6 +334,36 @@ describe('VendorService', () => {
       const nullCount = allValues.filter((v: unknown) => v === null).length;
       expect(nullCount).toBeGreaterThanOrEqual(3); // pointOfReference + 3 KYC nulls
     });
+
+    it('sets acceptsPreOrders=true for INFORMAL vendors (#187 default)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await service.submitInformal(validDto, {
+        profilePhoto: file('profilePhoto'),
+        firstItemPhoto: file('firstItemPhoto'),
+      });
+      const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
+      // Boolean binding — has to be exactly `true`.
+      expect(allValues).toContain(true);
+    });
+
+    it('sets acceptsPreOrders=false for RESTAURANT vendors (#187 default — admin can flip later)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      await service.submitInformal(
+        {
+          ...validDto,
+          type: VendorType.RESTAURANT,
+          rccmNumber: 'RC/DLA/2024/A/123',
+          niuNumber: 'M091900012345A',
+        },
+        {
+          profilePhoto: file('profilePhoto'),
+          firstItemPhoto: file('firstItemPhoto'),
+          enseignePhoto: file('enseignePhoto'),
+        },
+      );
+      const allValues = prisma.$executeRaw.mock.calls[0].slice(1);
+      expect(allValues).toContain(false);
+    });
   });
 
   describe('getOwn', () => {

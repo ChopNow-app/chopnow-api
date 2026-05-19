@@ -131,10 +131,11 @@ enum PaymentMethod {
 }
 
 enum PaymentStatus {
-  PENDING       // not initiated yet (before /pay call)
-  PROCESSING    // Campay USSD prompt sent, awaiting webhook
+  PENDING        // not initiated yet (before /pay call)
+  PROCESSING     // Campay USSD prompt sent, awaiting webhook
   PAID
   FAILED
+  REFUND_PENDING // refund queued (vendor pre-order cancel-after-accept) — Story 3.8 sweeps
   REFUNDED
 }
 
@@ -342,6 +343,13 @@ model Vendor {
   niuNumber        String?
   enseignePhotoUrl String?
 
+  // Pre-orders (#187 — v1, INFORMAL-only by default).
+  // True = consumer cart shows "Plus tard" picker; createOrder accepts scheduledFor.
+  // Default false; flipped true automatically when type=INFORMAL at submission.
+  // Admin can toggle per-vendor — gate is per-row, NOT per-type, so future
+  // semi-formal / restaurant opt-in is one row change with no code edit.
+  acceptsPreOrders Boolean       @default(false)
+
   // Validation lifecycle
   submittedAt     DateTime      @default(now())
   validatedAt     DateTime?
@@ -354,6 +362,7 @@ model Vendor {
   items      Item[]
   orders     Order[]
   ratings    OrderRating[]
+  penalties  VendorPenalty[]
 
   @@index([status])
   @@index([type])
@@ -480,19 +489,27 @@ model Order {
   deliveredAt DateTime?
   cancelledAt DateTime?
 
-  // Vendor acceptance SLA — set on order creation to placedAt + ACCEPTANCE_TTL_SECONDS.
-  // The OrdersExpiryService cron scans every 10s and auto-flips status to REFUSED
-  // with reason EXPIRED_NO_VENDOR_RESPONSE once this deadline passes (cmd not yet
-  // accepted/refused/cancelled). Stored as a column rather than computed-on-read so
-  // the cron can do a simple indexed WHERE without recomputing per row.
+  // Vendor acceptance SLA — set on order creation to placedAt + ACCEPTANCE_TTL_SECONDS
+  // for immediate orders. For pre-orders this column stays NULL at create time and
+  // is set by PreOrderPromotionService when scheduledFor - PRE_ORDER_NOTIFICATION_LEAD
+  // arrives (so the vendor's 60s countdown matches "when they can act on it").
+  // The OrdersExpiryService cron's `acceptanceDeadlineAt < now` filter naturally
+  // skips rows with NULL (Postgres NULL < anything is false).
   acceptanceDeadlineAt DateTime?
+
+  // Pre-orders (#187 — v1, INFORMAL-only by default).
+  // NULL = immediate delivery (today's flow). Set = pre-order; vendor isn't
+  // notified until scheduledFor - PRE_ORDER_NOTIFICATION_LEAD via the
+  // PreOrderPromotionService cron. Dispatch is deferred similarly.
+  scheduledFor DateTime?
 
   // Story 3.14 — client-supplied key so a re-tried POST /orders doesn't
   // create a duplicate. Scoped per user (composite uniqueness below).
   idempotencyKey String?
 
-  items  OrderItem[]
-  rating OrderRating?
+  items     OrderItem[]
+  rating    OrderRating?
+  penalty   VendorPenalty?
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -500,7 +517,41 @@ model Order {
   @@index([riderId])
   @@index([status])
   @@index([placedAt])
+  // Pre-order promotion cron sweep: WHERE scheduledFor != NULL AND scheduledFor <= now
+  // is the hot path; partial index keeps it tight when the table grows.
+  @@index([scheduledFor])
+  @@index([vendorId, scheduledFor])
   @@map("orders")
+}
+
+// =====================================================================
+// Pre-order vendor penalty ledger (Story 3.x — feature #187)
+// =====================================================================
+// Created when a vendor cancels a pre-order AFTER accepting it (cancellation
+// before acceptance is free). Bookkeeping row only at this stage — Story 7.x
+// (Finance & Cashout) will read unsettled rows and net them against the
+// vendor's next MoMo payout. Admin reviews via the validation queue in v1.
+
+enum VendorPenaltyReason {
+  PRE_ORDER_VENDOR_CANCEL_AFTER_ACCEPT
+}
+
+model VendorPenalty {
+  id        String              @id @default(uuid())
+  vendorId  String
+  vendor    Vendor              @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  // One penalty per order — re-cancellation isn't possible (status guard) so
+  // this constraint also enforces no double-charge on the same incident.
+  orderId   String              @unique
+  order     Order               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  reason    VendorPenaltyReason
+  amountXAF Int
+  createdAt DateTime            @default(now())
+  // NULL until the Finance module deducts this from a payout (Story 7.x).
+  settledAt DateTime?
+
+  @@index([vendorId, settledAt])
+  @@map("vendor_penalties")
 }
 
 // Story 3.9 — post-delivery rating. One per order (unique on orderId).

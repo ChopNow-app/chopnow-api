@@ -28,6 +28,19 @@ const MIN_ORDER_XAF = 1200;
 // this with reason EXPIRED_NO_VENDOR_RESPONSE.
 export const ACCEPTANCE_TTL_SECONDS = 60;
 
+// Pre-orders (#187 — v1, INFORMAL vendors only).
+// Minimum lead time between order placement and scheduledFor. Set conservatively
+// to the same value as the default cancellation cutoff — a pre-order placed
+// inside that window wouldn't give the vendor enough room to prep.
+export const PRE_ORDER_MIN_LEAD_HOURS = 4;
+// How early before scheduledFor the promotion cron flips the order to "vendor
+// must decide" — sets acceptanceDeadlineAt and emits ORDER_CREATED.
+export const PRE_ORDER_NOTIFICATION_LEAD_MINUTES = 60;
+// Vendor penalty for cancel-after-accept: 10% of totalXAF rounded down to the
+// nearest 50 FCFA (currency tick on the Cameroon market).
+export const PRE_ORDER_PENALTY_RATE = 0.1;
+export const PRE_ORDER_PENALTY_ROUND_TO_XAF = 50;
+
 // Status sets — keep transition gates explicit so a bug in one branch can't
 // silently teleport an order past the wrong gate.
 const VENDOR_CAN_DECIDE: ReadonlySet<OrderStatus> = new Set([
@@ -67,7 +80,7 @@ export class OrdersService {
     // aren't legal targets.
     const vendor = await this.prisma.vendor.findUnique({
       where: { id: dto.vendorId },
-      select: { id: true, status: true, isOpen: true },
+      select: { id: true, status: true, isOpen: true, acceptsPreOrders: true },
     });
     if (!vendor || vendor.status !== VendorStatus.ACTIVE) {
       throw new NotFoundException({
@@ -131,6 +144,40 @@ export class OrdersService {
       });
     }
 
+    // 4.5) Pre-order validation (#187 — v1 same-day only, INFORMAL vendors).
+    // scheduledFor stays null when the consumer wants immediate delivery
+    // (today's flow, identical behaviour). When set, the vendor must accept
+    // pre-orders, the time must be at least PRE_ORDER_MIN_LEAD_HOURS in the
+    // future, and v1 caps the window to end-of-day local (Africa/Douala = UTC+1).
+    if (dto.scheduledFor) {
+      if (!vendor.acceptsPreOrders) {
+        throw new BadRequestException({
+          code: 'pre_orders_not_accepted_by_this_vendor',
+          message: "Ce vendeur n'accepte pas les commandes à l'avance.",
+        });
+      }
+      const scheduledMs = dto.scheduledFor.getTime();
+      const minLeadMs = Date.now() + PRE_ORDER_MIN_LEAD_HOURS * 3600_000;
+      if (scheduledMs < minLeadMs) {
+        throw new BadRequestException({
+          code: 'pre_order_too_soon',
+          message: `Une pré-commande doit être planifiée au moins ${PRE_ORDER_MIN_LEAD_HOURS}h à l'avance.`,
+        });
+      }
+      // v1: same-day cap — until the consumer flow + vendor dashboard handle
+      // multi-day pre-orders, reject anything past the end of today (in the
+      // Douala timezone, which is UTC+1 with no DST). Computing end-of-day
+      // in UTC: today's 23:00 UTC == tomorrow 00:00 local.
+      const endOfTodayLocal = new Date();
+      endOfTodayLocal.setUTCHours(22, 59, 59, 999); // 23:59:59 Douala
+      if (scheduledMs > endOfTodayLocal.getTime()) {
+        throw new BadRequestException({
+          code: 'pre_order_too_far_in_future',
+          message: 'En v1 seules les pré-commandes du jour sont acceptées.',
+        });
+      }
+    }
+
     // 5) Initial status: every order starts PENDING + paymentStatus=PENDING.
     // The vendor is NOT notified at this point — the order is invisible to
     // them until the Campay webhook flips paymentStatus to PAID, at which
@@ -163,8 +210,10 @@ export class OrdersService {
           pickupCode,
           deliveryCode,
           // acceptanceDeadlineAt deliberately left null — it's set by
-          // onPaymentSucceeded so the countdown matches "when the vendor
-          // can act on it," not "when the consumer hit submit."
+          // onPaymentSucceeded (immediate) or PreOrderPromotionService
+          // (pre-orders) so the countdown matches "when the vendor can act
+          // on it," not "when the consumer hit submit."
+          scheduledFor: dto.scheduledFor ?? null,
           idempotencyKey: idempotencyKey ?? null,
           items: { createMany: { data: lines } },
         },
@@ -311,6 +360,18 @@ export class OrdersService {
     const order = await this.prisma.order.findUnique({ where: { id: orderId } });
     if (!order || order.userId !== userId) throw new NotFoundException('order_not_found');
 
+    // Pre-orders (#187): consumer cannot cancel a paid pre-order. The whole
+    // point of a pre-order is the vendor commits prep ahead of time; allowing
+    // free consumer cancel up to pickup would let consumers waste vendor
+    // ingredients with impunity. Only the vendor can cancel a pre-order
+    // (with a penalty if they've already accepted — see vendorCancelPreOrder).
+    if (order.scheduledFor) {
+      throw new ConflictException({
+        code: 'pre_order_consumer_cannot_cancel',
+        message: 'Une pré-commande ne peut pas être annulée par le client. Contactez le support.',
+      });
+    }
+
     if (!CONSUMER_CAN_CANCEL.has(order.status)) {
       throw new ConflictException({
         code: 'order_not_cancellable',
@@ -365,12 +426,23 @@ export class OrdersService {
 
   // ── vendor decision path ──────────────────────────────────────────
 
-  async listVendorOrders(userId: string, status?: OrderStatus) {
+  async listVendorOrders(
+    userId: string,
+    status?: OrderStatus,
+    type: 'immediate' | 'preorder' = 'immediate',
+  ) {
     const vendor = await this.prisma.vendor.findUnique({
       where: { userId },
       select: { id: true },
     });
     if (!vendor) throw new NotFoundException('vendor_not_found');
+
+    // Pre-order / immediate split (#187). `type=immediate` keeps today's
+    // behaviour — orders with scheduledFor=null. `type=preorder` returns
+    // only orders with scheduledFor set, ordered by scheduledFor ASC so
+    // the vendor sees the soonest pickup at the top.
+    const scheduledFilter =
+      type === 'preorder' ? { scheduledFor: { not: null } } : { scheduledFor: null };
 
     const orders = await this.prisma.order.findMany({
       where: {
@@ -381,9 +453,10 @@ export class OrdersService {
         // would auto-refuse, and the vendor's "no-show rate" metric is
         // actually consumer cart abandonment.
         paymentStatus: PaymentStatus.PAID,
+        ...scheduledFilter,
         ...(status ? { status } : {}),
       },
-      orderBy: { placedAt: 'desc' },
+      orderBy: type === 'preorder' ? { scheduledFor: 'asc' } : { placedAt: 'desc' },
       take: 100,
       include: { items: true },
     });
@@ -598,6 +671,115 @@ export class OrdersService {
     return { status: OrderStatus.READY_PICKUP, preparedAt: now };
   }
 
+  // ── pre-order vendor cancel (post-acceptance) ─────────────────────
+
+  /**
+   * #187 — vendor cancels a pre-order they previously accepted. This is the
+   * costly path: vendor commits at acceptance time, breaking the commitment
+   * later (kitchen disaster, ran out of an ingredient, etc.) means refunding
+   * the consumer AND incurring a penalty.
+   *
+   * Pre-acceptance refusal (refuseOrder, or the auto-refuse cron) is free —
+   * a vendor who hasn't said yes yet hasn't committed. Hence why this method
+   * gates on `status ∈ {ACCEPTED, IN_PREP}` and not on PENDING/CONFIRMED.
+   *
+   * Effects in one transaction:
+   *   1. Order.status → CANCELLED, cancelledAt = now
+   *   2. paymentStatus → REFUND_PENDING (Story 3.8 sweeps to REFUNDED via Campay)
+   *   3. VendorPenalty row created, amount = 10% of totalXAF (rounded down to 50)
+   *
+   * Emits ORDER_CANCELLED with `cancelledBy='vendor_preorder'` so downstream
+   * notifications can humanize the message ("le vendeur a dû annuler ta
+   * pré-commande, un remboursement est en cours").
+   */
+  async vendorCancelPreOrder(
+    orderId: string,
+    userId: string,
+    note?: string,
+  ): Promise<{ status: OrderStatus; penaltyXAF: number }> {
+    const order = await this.requireVendorOrder(orderId, userId);
+    if (!order.scheduledFor) {
+      throw new ConflictException({
+        code: 'not_a_pre_order',
+        message: 'This method is only valid for pre-orders.',
+      });
+    }
+    if (order.status !== OrderStatus.ACCEPTED && order.status !== OrderStatus.IN_PREP) {
+      throw new ConflictException({
+        code: 'pre_order_not_in_cancellable_state',
+        message: 'A pre-order can only be vendor-cancelled after acceptance and before pickup.',
+      });
+    }
+
+    const now = new Date();
+    const penaltyXAF =
+      Math.floor((order.totalXAF * PRE_ORDER_PENALTY_RATE) / PRE_ORDER_PENALTY_ROUND_TO_XAF) *
+      PRE_ORDER_PENALTY_ROUND_TO_XAF;
+
+    // All three writes atomic: order flip + payment flip + penalty row.
+    // Status-guarded updateMany on the order flip so a concurrent rider-side
+    // status change (pickup scan landing at the same instant) can't be
+    // overwritten. count===0 → race lost, no penalty written, throw 409.
+    await this.prisma.$transaction(async (tx) => {
+      const res = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          status: { in: [OrderStatus.ACCEPTED, OrderStatus.IN_PREP] },
+        },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancelledAt: now,
+          refusalReason: note ? `VENDOR_PREORDER_CANCEL: ${note}` : 'VENDOR_PREORDER_CANCEL',
+          paymentStatus: PaymentStatus.REFUND_PENDING,
+        },
+      });
+      if (res.count === 0) {
+        throw new ConflictException({
+          code: 'order_state_changed',
+          message: "Cette commande a changé d'état pendant l'annulation. Reviens au dashboard.",
+        });
+      }
+      await tx.vendorPenalty.create({
+        data: {
+          vendorId: order.vendorId,
+          orderId: order.id,
+          reason: 'PRE_ORDER_VENDOR_CANCEL_AFTER_ACCEPT',
+          amountXAF: penaltyXAF,
+        },
+      });
+    });
+
+    this.events.emit(DomainEvents.ORDER_CANCELLED, {
+      orderId: order.id,
+      paymentStatus: PaymentStatus.REFUND_PENDING,
+      cancelledBy: 'vendor_preorder',
+    });
+
+    this.logger.warn(
+      {
+        event: 'pre_order_vendor_cancelled_after_accept',
+        orderId: order.id,
+        vendorId: order.vendorId,
+        userId: order.userId,
+        totalXAF: order.totalXAF,
+        penaltyXAF,
+        scheduledFor: order.scheduledFor,
+      },
+      'Vendor cancelled pre-order after acceptance — refund pending + penalty recorded',
+    );
+    this.logger.warn(
+      {
+        event: 'pre_order_refund_required',
+        orderId: order.id,
+        amountXAF: order.totalXAF,
+        paymentMethod: order.paymentMethod,
+      },
+      'Pre-order vendor-cancel — Campay refund needed (Story 3.8 pending wiring)',
+    );
+
+    return { status: OrderStatus.CANCELLED, penaltyXAF };
+  }
+
   // ── consumer rating ───────────────────────────────────────────────
 
   /**
@@ -683,6 +865,26 @@ export class OrdersService {
     if (!order || order.paymentStatus === PaymentStatus.PAID) return; // idempotent fast-path
 
     const now = new Date();
+    // Pre-order (#187) vs immediate flow split: a pre-order's vendor
+    // notification + 60s countdown shouldn't fire on payment — they fire
+    // at scheduledFor - PRE_ORDER_NOTIFICATION_LEAD via PreOrderPromotionService.
+    // Immediate orders keep the existing behaviour: deadline + ORDER_CREATED
+    // both land here.
+    const isPreOrder = Boolean(order.scheduledFor);
+    const dataPatch: Prisma.OrderUncheckedUpdateManyInput = {
+      status: OrderStatus.CONFIRMED,
+      paymentStatus: PaymentStatus.PAID,
+      paymentReference: payload.providerReference,
+      payerPhone: payload.payerPhone ?? order.payerPhone,
+      paidAt: now,
+    };
+    if (!isPreOrder) {
+      // Set the acceptance deadline NOW (not at order creation). Issue #179:
+      // the 60s vendor countdown should match "when the vendor can actually
+      // act on it," not "when the consumer hit submit." Otherwise a slow
+      // MoMo confirm eats the vendor's response window.
+      dataPatch.acceptanceDeadlineAt = new Date(now.getTime() + ACCEPTANCE_TTL_SECONDS * 1000);
+    }
     // Status-guarded conditional update — closes the Campay double-webhook
     // race (#172). The Campay client retries until 200, so two
     // PAYMENT_SUCCEEDED events can arrive within ms. The first one's
@@ -694,26 +896,30 @@ export class OrdersService {
         id: order.id,
         paymentStatus: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
       },
-      data: {
-        status: OrderStatus.CONFIRMED,
-        paymentStatus: PaymentStatus.PAID,
-        paymentReference: payload.providerReference,
-        payerPhone: payload.payerPhone ?? order.payerPhone,
-        paidAt: now,
-        // Set the acceptance deadline NOW (not at order creation). Issue #179:
-        // the 60s vendor countdown should match "when the vendor can actually
-        // act on it," not "when the consumer hit submit." Otherwise a slow
-        // MoMo confirm eats the vendor's response window.
-        acceptanceDeadlineAt: new Date(now.getTime() + ACCEPTANCE_TTL_SECONDS * 1000),
-      },
+      data: dataPatch,
     });
     if (res.count === 0) return; // lost the race — another concurrent webhook already won
 
     // ORDER_PAID stays for payment-pipeline observability (no listeners
-    // today, but semantically meaningful for audit).
+    // today, but semantically meaningful for audit). Fires for both flows.
     this.events.emit(DomainEvents.ORDER_PAID, { orderId: order.id, paidAt: now });
 
-    // ORDER_CREATED is what triggers vendor notification (push + WhatsApp
+    if (isPreOrder) {
+      // Pre-order: vendor isn't notified until PreOrderPromotionService runs.
+      // The order sits CONFIRMED+PAID in the DB; listVendorOrders('preorder')
+      // shows it in the vendor's upcoming queue.
+      this.logger.info(
+        {
+          event: 'pre_order_paid_awaiting_promotion',
+          orderId: order.id,
+          scheduledFor: order.scheduledFor,
+        },
+        'Pre-order paid — promotion deferred until scheduledFor - lead window',
+      );
+      return;
+    }
+
+    // Immediate flow: ORDER_CREATED triggers vendor notification (push + WhatsApp
     // fallback via OrderNotificationsService.onOrderCreated). Moved here
     // from createOrder per issue #178 — the vendor must not see an unpaid
     // order in their queue, and the push/WhatsApp must not fire before
