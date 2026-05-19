@@ -412,5 +412,99 @@ describe('AuthService', () => {
       expect(where.userId).toBe(userId);
       expect(where.expiresAt).toEqual({ gt: expect.any(Date) });
     });
+
+    describe('in-flight lock (#175 — sub-second concurrent rotation race)', () => {
+      it('acquires a Redis lock keyed on a SHA-256 fingerprint of the raw token (NOT the raw token)', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: userId,
+          isActive: true,
+          isDeleted: false,
+        });
+        prisma.refreshToken.findMany.mockResolvedValue([await row()]);
+
+        await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+
+        expect(redis.setNX).toHaveBeenCalledWith(
+          expect.stringMatching(/^refresh:inflight:[a-f0-9]{32}$/),
+          '1',
+          5,
+        );
+        // Sanity: the raw token must NEVER appear in Redis keys (log/ops
+        // surface). Hash-only.
+        const calls = redis.setNX.mock.calls.map((c) => c[0] as string);
+        for (const key of calls) {
+          expect(key).not.toContain(incomingToken);
+        }
+      });
+
+      it('losing the race throws refresh_in_flight (NOT refresh_reuse_detected) and DOES NOT revoke the family', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: userId,
+          isActive: true,
+          isDeleted: false,
+        });
+        // Simulate the winning concurrent request already holding the lock.
+        redis.setNX.mockResolvedValueOnce(false);
+
+        await expect(
+          service.refresh(userId, UserRole.CONSUMER, incomingToken),
+        ).rejects.toMatchObject({ response: { code: 'refresh_in_flight' } });
+
+        // Critical: no DB side-effects. The whole point of the lock is to
+        // skip the candidates query (which is what would trip the false
+        // reuse-detected branch) and to skip the family-revoke write.
+        expect(prisma.refreshToken.findMany).not.toHaveBeenCalled();
+        expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
+        expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+      });
+
+      it('releases the lock on success so a subsequent legitimate rotation can proceed', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: userId,
+          isActive: true,
+          isDeleted: false,
+        });
+        prisma.refreshToken.findMany.mockResolvedValue([await row()]);
+
+        await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+
+        expect(redis.del).toHaveBeenCalledWith(
+          expect.stringMatching(/^refresh:inflight:[a-f0-9]{32}$/),
+        );
+      });
+
+      it('releases the lock on actual reuse-detection (so a follow-up replay still trips the family wipe legitimately)', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: userId,
+          isActive: true,
+          isDeleted: false,
+        });
+        prisma.refreshToken.findMany.mockResolvedValue([
+          await row({ revokedAt: new Date(Date.now() - 60_000) }), // genuinely-old revoke
+        ]);
+
+        await expect(
+          service.refresh(userId, UserRole.CONSUMER, incomingToken),
+        ).rejects.toMatchObject({ response: { code: 'refresh_reuse_detected' } });
+
+        expect(redis.del).toHaveBeenCalled();
+      });
+
+      it('does NOT acquire a lock when the user is suspended (rejected before reaching the rotation path)', async () => {
+        prisma.user.findUnique.mockResolvedValue({
+          id: userId,
+          isActive: false,
+          isDeleted: false,
+        });
+
+        await expect(
+          service.refresh(userId, UserRole.CONSUMER, incomingToken),
+        ).rejects.toMatchObject({ response: { code: 'user_suspended' } });
+
+        // No lock work when we never reach the rotation path.
+        expect(redis.setNX).not.toHaveBeenCalled();
+        expect(redis.del).not.toHaveBeenCalled();
+      });
+    });
   });
 });
