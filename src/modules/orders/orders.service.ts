@@ -142,7 +142,7 @@ export class OrdersService {
     const code = this.generateOrderCode();
     const pickupCode = this.generate4DigitCode();
     const deliveryCode = this.generate4DigitCode();
-    return this.prisma.$transaction(async (tx) => {
+    const order = await this.prisma.$transaction(async (tx) => {
       return tx.order.create({
         data: {
           code,
@@ -172,6 +172,56 @@ export class OrdersService {
         include: { items: true },
       });
     });
+
+    // Telemetry only (#173): catch the rare race where the vendor flipped
+    // an item to isAvailable=false (or isInStock=false) AFTER our findMany
+    // saw it as available but BEFORE order.create committed. At pilot
+    // volume this should fire ~never; if it does, we want to know without
+    // having paid the perf cost of SERIALIZABLE isolation on every order.
+    // Awaited (not fire-and-forget) so the log is guaranteed to land
+    // before the response goes out — the extra ~5ms is negligible.
+    await this.checkPostCreateItemAvailability(order.id, itemIds);
+
+    return order;
+  }
+
+  /**
+   * Issue #173 telemetry: log a structured warning when a freshly-created
+   * order references items whose `isAvailable` / `isInStock` flag flipped
+   * to false during the create window. Indicators that the rare
+   * vendor-toggles-during-submit race actually fired in production.
+   *
+   * Defensive narrowing: only items updated within the last 10 seconds
+   * count — older "always was off" rows would imply a different bug
+   * (item.findMany filter failed) and we report those separately.
+   */
+  private async checkPostCreateItemAvailability(orderId: string, itemIds: string[]): Promise<void> {
+    try {
+      const rechecked = await this.prisma.item.findMany({
+        where: { id: { in: itemIds } },
+        select: { id: true, name: true, isAvailable: true, isInStock: true, updatedAt: true },
+      });
+      const flippedRecently = rechecked.filter(
+        (i) =>
+          (!i.isAvailable || !i.isInStock) &&
+          i.updatedAt instanceof Date &&
+          Date.now() - i.updatedAt.getTime() < 10_000,
+      );
+      if (flippedRecently.length === 0) return;
+      const summary = flippedRecently
+        .map((i) => `${i.id}:"${i.name}"(avail=${i.isAvailable},inStock=${i.isInStock})`)
+        .join(', ');
+      this.logger.warn(
+        `Order ${orderId} created during item-availability flip race — ${flippedRecently.length} ` +
+          `item(s) became unavailable in the create window: ${summary}. Vendor may refuse on accept screen.`,
+      );
+    } catch (err) {
+      // Telemetry must never break the order pipeline. Order is already
+      // committed; if the recheck query fails, log and move on.
+      this.logger.warn(
+        `Item availability recheck failed for order ${orderId}: ${(err as Error).message}`,
+      );
+    }
   }
 
   // ── consumer read path ────────────────────────────────────────────

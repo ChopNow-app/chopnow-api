@@ -218,6 +218,75 @@ describe('OrdersService', () => {
       expect(prisma.vendor.findUnique).not.toHaveBeenCalled();
       expect(prisma.order.create).not.toHaveBeenCalled();
     });
+
+    describe('item-availability flip telemetry (#173)', () => {
+      it('logs a structured warning when an item flipped to isAvailable=false during the create window', async () => {
+        readyHappyPath();
+        // After order.create commits, the recheck sees one item now flipped
+        // off with a fresh updatedAt — the race actually fired.
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', priceXAF: 2000, isAvailable: true, isInStock: true },
+          { id: 'i-2', name: 'Bissap', priceXAF: 500, isAvailable: true, isInStock: true },
+        ]);
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', isAvailable: false, isInStock: true, updatedAt: new Date() },
+          {
+            id: 'i-2',
+            name: 'Bissap',
+            isAvailable: true,
+            isInStock: true,
+            updatedAt: new Date(Date.now() - 60_000),
+          },
+        ]);
+        const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+
+        await service.createOrder('user-1', baseDto);
+
+        const flippedWarn = warnSpy.mock.calls.find((c) =>
+          String(c[0]).includes('item-availability flip race'),
+        );
+        expect(flippedWarn).toBeDefined();
+        const msg = String(flippedWarn?.[0]);
+        expect(msg).toContain('Ndolé'); // the flipped one
+        expect(msg).not.toContain('Bissap'); // legitimately stale updatedAt — ignored
+        warnSpy.mockRestore();
+      });
+
+      it('does NOT log when items remain available after the order commits (happy path)', async () => {
+        readyHappyPath();
+        // Recheck sees everything still on.
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', priceXAF: 2000, isAvailable: true, isInStock: true },
+          { id: 'i-2', name: 'Bissap', priceXAF: 500, isAvailable: true, isInStock: true },
+        ]);
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', isAvailable: true, isInStock: true, updatedAt: new Date() },
+          { id: 'i-2', name: 'Bissap', isAvailable: true, isInStock: true, updatedAt: new Date() },
+        ]);
+        const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+
+        await service.createOrder('user-1', baseDto);
+
+        const flippedWarn = warnSpy.mock.calls.find((c) =>
+          String(c[0]).includes('item-availability flip race'),
+        );
+        expect(flippedWarn).toBeUndefined();
+        warnSpy.mockRestore();
+      });
+
+      it('telemetry failure does NOT propagate to the order pipeline (order already committed)', async () => {
+        readyHappyPath();
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', priceXAF: 2000, isAvailable: true, isInStock: true },
+          { id: 'i-2', name: 'Bissap', priceXAF: 500, isAvailable: true, isInStock: true },
+        ]);
+        // Second call (the recheck) throws. The order has already been
+        // committed; the throw must not propagate.
+        prisma.item.findMany.mockRejectedValueOnce(new Error('DB connection lost'));
+
+        await expect(service.createOrder('user-1', baseDto)).resolves.toBeDefined();
+      });
+    });
   });
 
   describe('cancelOrder', () => {
