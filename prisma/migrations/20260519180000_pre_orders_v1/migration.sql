@@ -8,8 +8,13 @@
 ALTER TYPE "PaymentStatus" ADD VALUE 'REFUND_PENDING' BEFORE 'REFUNDED';
 
 -- 2. Vendor.acceptsPreOrders — per-vendor gate. Default false; VendorService.submit
---    sets it to true for type=INFORMAL. Admin can flip per-vendor without code.
+--    sets it to true for new type=INFORMAL submissions. Admin can flip per-vendor.
 ALTER TABLE "vendors" ADD COLUMN "acceptsPreOrders" BOOLEAN NOT NULL DEFAULT false;
+
+-- 2a. One-shot backfill: existing INFORMAL vendors already in the DB get the
+--     same default the new-submission code path applies. Without this, vendors
+--     onboarded before this migration would silently stay opted out.
+UPDATE "vendors" SET "acceptsPreOrders" = true WHERE "type" = 'INFORMAL';
 
 -- 3. Order.scheduledFor — null = immediate (today's flow). Set = pre-order;
 --    PreOrderPromotionService promotes at scheduledFor - 60min.
