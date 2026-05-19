@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { FinanceModule } from '../finance/finance.module';
 import { RidersController } from './riders.controller';
 import { RidersService } from './riders.service';
 
@@ -9,6 +10,7 @@ import { RidersService } from './riders.service';
  * is never granted to these objects).
  */
 @Module({
+  imports: [FinanceModule],
   controllers: [RidersController],
   providers: [RidersService],
   exports: [RidersService],

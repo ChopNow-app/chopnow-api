@@ -915,7 +915,7 @@ describe('OrdersService', () => {
       expect(events.emit).not.toHaveBeenCalled();
     });
 
-    it('lost-race short-circuit — updateMany matches zero rows, NO events emitted (#172)', async () => {
+    it('lost-race short-circuit — updateMany matches zero rows, NO events emitted, NO ledger written (#172, 7.1a)', async () => {
       pendingOrder();
       // Concurrent Campay-retried webhook already flipped this row PAID
       // between findUnique and updateMany. Our update matches zero rows.
@@ -925,13 +925,15 @@ describe('OrdersService', () => {
 
       // Critical: NO event must fire — the other webhook already emitted
       // ORDER_PAID + ORDER_CREATED. Double-emit would double-notify the
-      // vendor (push + WhatsApp twice).
+      // vendor (push + WhatsApp twice). Same for the ledger: only the
+      // winning webhook writes PAYMENT_RECEIVED entries.
       expect(events.emit).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
     });
 
     describe('commission snapshots (ADR-0005)', () => {
-      it('computes commissionXAF + riderShareXAF + platformFeeXAF from the snapshotted rate', async () => {
-        pendingOrder(); // subtotal 4500, fee 400, commissionRate 0.06
+      it('computes commissionXAF + riderShareXAF + platformFeeXAF from the snapshotted rate AND writes PAYMENT_RECEIVED ledger entries (7.1a)', async () => {
+        pendingOrder(); // subtotal 4500, fee 400, commissionRate 0.06, total 4900
 
         await service.onPaymentSucceeded({
           orderId: 'order-1',
@@ -939,12 +941,28 @@ describe('OrdersService', () => {
         });
 
         const data = prisma.order.updateMany.mock.calls[0][0].data;
-        // 4500 × 0.06 = 270
         expect(data.commissionXAF).toBe(270);
-        // 400 × 0.65 = 260
         expect(data.riderShareXAF).toBe(260);
-        // 270 + (400 − 260) = 410 — matches business-model.md §2 blended target
         expect(data.platformFeeXAF).toBe(410);
+
+        // 7.1a ledger entries: CAMPAY_FLOAT +4900 / CUSTOMER_ESCROW -4900
+        expect(ledger.recordTransaction).toHaveBeenCalledTimes(1);
+        const [input, tx] = ledger.recordTransaction.mock.calls[0];
+        expect(input.eventId).toBe('payment:order-1');
+        expect(input.eventType).toBe('PAYMENT_RECEIVED');
+        expect(input.entries).toEqual([
+          expect.objectContaining({
+            account: 'CAMPAY_FLOAT',
+            amountXAF: 4900,
+            orderId: 'order-1',
+          }),
+          expect.objectContaining({
+            account: 'CUSTOMER_ESCROW',
+            amountXAF: -4900,
+            orderId: 'order-1',
+          }),
+        ]);
+        expect(tx).toBe(prisma);
       });
 
       it('uses the order-snapshotted rate, not the current vendor rate (audit immutability)', async () => {
