@@ -8,6 +8,7 @@ import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
 import { DomainEvents } from '../../shared/events/domain-events';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('PaymentsService', () => {
   let service: PaymentsService;
@@ -40,6 +41,7 @@ describe('PaymentsService', () => {
     const module = await Test.createTestingModule({
       providers: [
         PaymentsService,
+        pinoLoggerProvider(PaymentsService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: CampayService, useValue: campay },
         { provide: RedisService, useValue: redis },

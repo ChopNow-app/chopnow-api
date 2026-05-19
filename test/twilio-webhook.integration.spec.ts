@@ -9,6 +9,7 @@ import express from 'express';
 // major bump, the test will fail loudly — fix here, no production impact.
 import { getExpectedTwilioSignature } from 'twilio/lib/webhooks/webhooks';
 import { TwilioWebhookController } from '../src/infra/twilio/twilio-webhook.controller';
+import { pinoLoggerProvider } from '../src/shared/testing/pino-mock';
 import { PrismaService } from '../src/infra/prisma/prisma.service';
 import { EnvService } from '../src/infra/config/env.service';
 
@@ -44,6 +45,7 @@ describe('POST /twilio/status (integration)', () => {
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [TwilioWebhookController],
       providers: [
+        pinoLoggerProvider(TwilioWebhookController.name),
         { provide: PrismaService, useValue: prisma },
         {
           provide: EnvService,

@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { JwtRevocationService } from './jwt-revocation.service';
 import { RedisService } from '../../infra/redis/redis.service';
 import { EnvService } from '../../infra/config/env.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('JwtRevocationService', () => {
   let service: JwtRevocationService;
@@ -16,6 +17,7 @@ describe('JwtRevocationService', () => {
     const module = await Test.createTestingModule({
       providers: [
         JwtRevocationService,
+        pinoLoggerProvider(JwtRevocationService.name),
         { provide: RedisService, useValue: redis },
         { provide: EnvService, useValue: { jwtRefreshTtl: '30d' } },
       ],
@@ -56,6 +58,7 @@ describe('JwtRevocationService', () => {
     const module = await Test.createTestingModule({
       providers: [
         JwtRevocationService,
+        pinoLoggerProvider(JwtRevocationService.name),
         { provide: RedisService, useValue: redis },
         { provide: EnvService, useValue: { jwtRefreshTtl: refreshTtl } },
       ],

@@ -31,8 +31,20 @@ describe('WebPushService', () => {
     env = configuredEnv;
   });
 
+  // PinoLogger noop mock — every call is silenced; tests don't assert on log
+  // output, only on side-effects. setContext is a no-op too since nestjs-pino
+  // resolves the context at injection time.
+  const logger = {
+    warn: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    trace: jest.fn(),
+    setContext: jest.fn(),
+  };
+
   function makeService() {
-    return new WebPushService(env as never, subs as never);
+    return new WebPushService(logger as never, env as never, subs as never);
   }
 
   it('configures VAPID once on construction', () => {

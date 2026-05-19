@@ -5,6 +5,7 @@ import { AdminValidationService } from './admin-validation.service';
 import { JwtRevocationService } from '../auth/jwt-revocation.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('AdminValidationService', () => {
   let service: AdminValidationService;
@@ -37,6 +38,7 @@ describe('AdminValidationService', () => {
     const module = await Test.createTestingModule({
       providers: [
         AdminValidationService,
+        pinoLoggerProvider(AdminValidationService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: TwilioService, useValue: twilio },
         { provide: JwtRevocationService, useValue: revocation },

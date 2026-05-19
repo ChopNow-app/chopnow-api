@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentStatus } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
 
@@ -19,10 +20,10 @@ import { DomainEvents } from '../../shared/events/domain-events';
  */
 @Injectable()
 export class OrdersExpiryService {
-  private readonly logger = new Logger(OrdersExpiryService.name);
   static readonly EXPIRED_REASON = 'EXPIRED_NO_VENDOR_RESPONSE';
 
   constructor(
+    @InjectPinoLogger(OrdersExpiryService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
   ) {}
@@ -64,12 +65,21 @@ export class OrdersExpiryService {
           refusedAt: now,
         });
         if (order.paymentStatus === PaymentStatus.PAID) {
-          this.logger.warn(`Order ${order.id} auto-expired while PAID — refund needed`);
+          this.logger.warn(
+            { event: 'order_auto_expired_while_paid', orderId: order.id, vendorId: order.vendorId },
+            'Order auto-expired while PAID — refund needed',
+          );
         } else {
-          this.logger.log(`Order ${order.id} auto-refused (vendor did not respond within TTL)`);
+          this.logger.info(
+            { event: 'order_auto_refused', orderId: order.id, vendorId: order.vendorId },
+            'Order auto-refused (vendor did not respond within TTL)',
+          );
         }
       } catch (err) {
-        this.logger.error(`Auto-refuse failed for order ${order.id}: ${(err as Error).message}`);
+        this.logger.error(
+          { event: 'order_auto_refuse_failed', orderId: order.id, error: (err as Error).message },
+          'Auto-refuse failed',
+        );
       }
     }
   }

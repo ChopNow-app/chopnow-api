@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { WebPushService } from '../notifications/web-push.service';
@@ -26,9 +27,8 @@ import { OrdersExpiryService } from './orders-expiry.service';
  */
 @Injectable()
 export class OrderNotificationsService {
-  private readonly logger = new Logger(OrderNotificationsService.name);
-
   constructor(
+    @InjectPinoLogger(OrderNotificationsService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly twilio: TwilioService,
     private readonly webPush: WebPushService,
@@ -109,7 +109,12 @@ export class OrderNotificationsService {
       // must not feed back into the order pipeline — the order is already
       // committed.
       this.logger.warn(
-        `Order creation notification failed for ${payload.orderId}: ${(err as Error).message}`,
+        {
+          event: 'order_created_notification_failed',
+          orderId: payload.orderId,
+          error: (err as Error).message,
+        },
+        'Order creation notification failed (push + WhatsApp)',
       );
     }
   }
@@ -139,7 +144,12 @@ export class OrderNotificationsService {
       // into the order pipeline. Log so ops can investigate if delivery
       // becomes systematically broken.
       this.logger.warn(
-        `Order refusal WhatsApp failed for ${payload.orderId}: ${(err as Error).message}`,
+        {
+          event: 'order_refusal_whatsapp_failed',
+          orderId: payload.orderId,
+          error: (err as Error).message,
+        },
+        'Order refusal WhatsApp failed',
       );
     }
   }

@@ -8,6 +8,7 @@ import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -64,6 +65,7 @@ describe('AuthService', () => {
     const module = await Test.createTestingModule({
       providers: [
         AuthService,
+        pinoLoggerProvider(AuthService.name),
         { provide: PrismaService, useValue: prisma },
         {
           provide: JwtService,

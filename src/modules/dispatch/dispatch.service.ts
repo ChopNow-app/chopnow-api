@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentStatus, RiderStatus, RiderVehicleType } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
 
@@ -39,8 +40,6 @@ interface CandidateRow {
 
 @Injectable()
 export class DispatchService {
-  private readonly logger = new Logger(DispatchService.name);
-
   /**
    * In-process retry timers, keyed by orderId. Lives on a single API node —
    * fine for MVP since we run one instance. When we scale horizontally,
@@ -49,6 +48,7 @@ export class DispatchService {
   private readonly retryTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
+    @InjectPinoLogger(DispatchService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
   ) {}
@@ -95,8 +95,16 @@ export class DispatchService {
 
     // No rider this round.
     if (attempt < MAX_RETRIES - 1) {
-      this.logger.log(
-        `dispatch: order=${orderId} retry ${attempt + 1}/${MAX_RETRIES} scheduled in ${RETRY_INTERVAL_MS / 1000}s`,
+      this.logger.info(
+        {
+          event: 'dispatch_retry_scheduled',
+          orderId,
+          vendorId,
+          attempt: attempt + 1,
+          maxAttempts: MAX_RETRIES,
+          retryInSeconds: RETRY_INTERVAL_MS / 1000,
+        },
+        'Dispatch retry scheduled — no rider this round',
       );
       const timer = setTimeout(() => {
         void this.tryDispatch(orderId, vendorId, attempt + 1);
@@ -160,8 +168,15 @@ export class DispatchService {
     });
 
     this.logger.warn(
-      `dispatch: order=${orderId} EXPIRED — no rider available after ${MAX_RETRIES} attempts. ` +
-        `paymentStatus=${isPaid ? 'REFUNDED (was PAID)' : order.paymentStatus}`,
+      {
+        event: 'dispatch_expired_no_rider',
+        orderId,
+        userId: order.userId,
+        attempts: MAX_RETRIES,
+        paymentStatus: isPaid ? 'REFUNDED' : order.paymentStatus,
+        wasPaid: isPaid,
+      },
+      'Order EXPIRED — no rider available after all retries',
     );
 
     this.events.emit(DomainEvents.ORDER_CANCELLED, {
@@ -221,7 +236,10 @@ export class DispatchService {
     `;
 
     if (candidates.length === 0) {
-      this.logger.warn(`dispatch: no online rider for order=${orderId} vendor=${vendorId}`);
+      this.logger.warn(
+        { event: 'dispatch_no_online_rider', orderId, vendorId },
+        'No online rider in range for vendor — will retry',
+      );
       return null;
     }
 
@@ -235,12 +253,22 @@ export class DispatchService {
       data: { riderId: chosen.rider_id, assignedAt: new Date() },
     });
     if (result.count === 0) {
-      this.logger.warn(`dispatch: order=${orderId} was already assigned by a concurrent dispatch`);
+      this.logger.warn(
+        { event: 'dispatch_already_assigned', orderId },
+        'Order was already assigned by a concurrent dispatch (race short-circuit)',
+      );
       return null;
     }
 
-    this.logger.log(
-      `dispatch: order=${orderId} → rider=${chosen.rider_id} (${(chosen.distance_m / 1000).toFixed(2)}km, ${chosen.vehicle_type})`,
+    this.logger.info(
+      {
+        event: 'dispatch_rider_assigned',
+        orderId,
+        riderId: chosen.rider_id,
+        distanceKm: Number((chosen.distance_m / 1000).toFixed(2)),
+        vehicleType: chosen.vehicle_type,
+      },
+      'Rider assigned to order',
     );
     return { riderId: chosen.rider_id };
   }

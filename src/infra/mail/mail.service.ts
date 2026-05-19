@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Resend } from 'resend';
 import { EnvService } from '../config/env.service';
 
@@ -13,10 +14,12 @@ import { EnvService } from '../config/env.service';
  */
 @Injectable()
 export class MailService {
-  private readonly logger = new Logger(MailService.name);
   private _client: Resend | null = null;
 
-  constructor(private readonly env: EnvService) {}
+  constructor(
+    @InjectPinoLogger(MailService.name) private readonly logger: PinoLogger,
+    private readonly env: EnvService,
+  ) {}
 
   private get client(): Resend {
     if (this._client) return this._client;
@@ -33,7 +36,8 @@ export class MailService {
   }): Promise<{ id: string }> {
     if (!this.env.mail.resendApiKey) {
       this.logger.warn(
-        `[DEV] RESEND_API_KEY not set — would send to ${opts.to}: "${opts.subject}"`,
+        { event: 'mail_dev_stub', to: opts.to, subject: opts.subject },
+        '[DEV] RESEND_API_KEY not set — mail not sent',
       );
       return { id: 'dev-' + Date.now() };
     }

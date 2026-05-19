@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { RedisService } from '../../infra/redis/redis.service';
 import { parseDurationMs } from '../../shared/time/duration.util';
 import { EnvService } from '../../infra/config/env.service';
@@ -23,9 +24,8 @@ const revokedKey = (userId: string) => `user:revoked:${userId}`;
 
 @Injectable()
 export class JwtRevocationService {
-  private readonly logger = new Logger(JwtRevocationService.name);
-
   constructor(
+    @InjectPinoLogger(JwtRevocationService.name) private readonly logger: PinoLogger,
     private readonly redis: RedisService,
     private readonly env: EnvService,
   ) {}
@@ -36,12 +36,15 @@ export class JwtRevocationService {
     // Redis memory after natural expiry.
     const ttlSeconds = Math.ceil(parseDurationMs(this.env.jwtRefreshTtl) / 1000);
     await this.redis.setWithTTL(revokedKey(userId), '1', ttlSeconds);
-    this.logger.warn(`Revoked all JWTs for user ${userId} (TTL ${ttlSeconds}s)`);
+    this.logger.warn(
+      { event: 'jwt_user_revoked', userId, ttlSeconds },
+      'All JWTs for user revoked',
+    );
   }
 
   async reactivateUser(userId: string): Promise<void> {
     await this.redis.del(revokedKey(userId));
-    this.logger.log(`Cleared JWT revocation for user ${userId}`);
+    this.logger.info({ event: 'jwt_user_reactivated', userId }, 'Cleared JWT revocation for user');
   }
 
   async isRevoked(userId: string): Promise<boolean> {

@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import * as webpush from 'web-push';
 import { EnvService } from '../../infra/config/env.service';
 import { PushSubscriptionsService } from './push-subscriptions.service';
@@ -31,10 +32,10 @@ export interface SendResult {
  */
 @Injectable()
 export class WebPushService {
-  private readonly logger = new Logger(WebPushService.name);
   private configured = false;
 
   constructor(
+    @InjectPinoLogger(WebPushService.name) private readonly logger: PinoLogger,
     private readonly env: EnvService,
     private readonly subs: PushSubscriptionsService,
   ) {
@@ -44,6 +45,7 @@ export class WebPushService {
       this.configured = true;
     } else {
       this.logger.warn(
+        { event: 'vapid_unconfigured' },
         'VAPID env vars missing — Web Push disabled, callers will fall back to WhatsApp',
       );
     }
@@ -82,7 +84,14 @@ export class WebPushService {
         deactivated += 1;
       } else {
         this.logger.warn(
-          `Push to ${subscriptions[i].endpoint.slice(0, 60)} failed: ${err?.statusCode ?? '?'} ${err?.message ?? ''}`,
+          {
+            event: 'web_push_transient_failure',
+            subscriptionId: subscriptions[i].id,
+            endpointPrefix: subscriptions[i].endpoint.slice(0, 60),
+            statusCode: err?.statusCode,
+            error: err?.message,
+          },
+          'Web Push delivery failed transiently — subscription kept',
         );
       }
     }

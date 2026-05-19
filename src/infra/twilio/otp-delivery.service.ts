@@ -1,5 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { OtpChannel } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../config/env.service';
 import { TwilioService } from './twilio.service';
 
@@ -17,9 +18,8 @@ export interface OtpDeliveryResult {
  */
 @Injectable()
 export class OtpDeliveryService {
-  private readonly logger = new Logger(OtpDeliveryService.name);
-
   constructor(
+    @InjectPinoLogger(OtpDeliveryService.name) private readonly logger: PinoLogger,
     private readonly twilio: TwilioService,
     private readonly env: EnvService,
   ) {}
@@ -35,8 +35,11 @@ export class OtpDeliveryService {
     // you don't own (e.g. seeded vendor/rider) — the alternative is editing
     // .env to remove real Twilio creds and accidentally losing them.
     if (!this.isTwilioConfigured() || process.env.OTP_DEV_BYPASS === 'true') {
-      const reason = !this.isTwilioConfigured() ? 'Twilio not configured' : 'OTP_DEV_BYPASS=true';
-      this.logger.warn(`[DEV] ${reason} — OTP for ${e164} is "${code}"`);
+      const reason = !this.isTwilioConfigured() ? 'twilio_not_configured' : 'otp_dev_bypass';
+      this.logger.warn(
+        { event: 'otp_dev_stub', phone: e164, reason, code },
+        '[DEV] OTP printed to logs instead of sent',
+      );
       return { channel: OtpChannel.WHATSAPP, providerMessageId: 'dev-' + Date.now() };
     }
 
@@ -46,7 +49,12 @@ export class OtpDeliveryService {
       return { channel: OtpChannel.WHATSAPP, providerMessageId: sid };
     } catch (err) {
       this.logger.warn(
-        `WhatsApp delivery failed for ${e164}: ${(err as Error).message}. Falling back to SMS.`,
+        {
+          event: 'otp_whatsapp_failed_fallback_to_sms',
+          phone: e164,
+          error: (err as Error).message,
+        },
+        'WhatsApp OTP delivery failed — falling back to SMS',
       );
     }
 

@@ -2,10 +2,10 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { RiderStatus, VendorStatus } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { JwtRevocationService } from '../auth/jwt-revocation.service';
@@ -29,9 +29,8 @@ const SUSPEND_MSG_RIDER = (name: string, reason: string) =>
 
 @Injectable()
 export class AdminValidationService {
-  private readonly logger = new Logger(AdminValidationService.name);
-
   constructor(
+    @InjectPinoLogger(AdminValidationService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly twilio: TwilioService,
     private readonly revocation: JwtRevocationService,
@@ -262,7 +261,10 @@ export class AdminValidationService {
     try {
       await this.twilio.sendWhatsApp(toE164, body);
     } catch (err) {
-      this.logger.warn(`admin notification failed for ${toE164}: ${(err as Error).message}`);
+      this.logger.warn(
+        { event: 'admin_notification_failed', phone: toE164, error: (err as Error).message },
+        'Admin WhatsApp notification failed (approval/reject/suspend)',
+      );
     }
   }
 }

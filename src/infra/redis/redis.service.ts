@@ -1,5 +1,6 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import Redis from 'ioredis';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../config/env.service';
 
 /**
@@ -14,10 +15,12 @@ import { EnvService } from '../config/env.service';
  */
 @Injectable()
 export class RedisService implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(RedisService.name);
   readonly client: Redis;
 
-  constructor(env: EnvService) {
+  constructor(
+    env: EnvService,
+    @InjectPinoLogger(RedisService.name) private readonly logger: PinoLogger,
+  ) {
     this.client = new Redis({
       host: env.redisHost,
       port: env.redisPort,
@@ -30,7 +33,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     await this.client.connect();
-    this.logger.log(`Redis connected (${this.client.options.host}:${this.client.options.port})`);
+    this.logger.info(
+      { event: 'redis_connected', host: this.client.options.host, port: this.client.options.port },
+      'Redis connected',
+    );
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -2,11 +2,11 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { CampayService, CampayWebhookPayload } from '../../infra/campay/campay.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -32,9 +32,8 @@ const MOMO_METHODS: ReadonlySet<PaymentMethod> = new Set([
 
 @Injectable()
 export class PaymentsService {
-  private readonly logger = new Logger(PaymentsService.name);
-
   constructor(
+    @InjectPinoLogger(PaymentsService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly campay: CampayService,
     private readonly redis: RedisService,
@@ -136,7 +135,10 @@ export class PaymentsService {
   async handleWebhook(payload: CampayWebhookPayload): Promise<{ received: true }> {
     const reference = payload.reference ?? payload.external_reference;
     if (!reference) {
-      this.logger.warn(`Campay webhook missing reference: ${JSON.stringify(payload)}`);
+      this.logger.warn(
+        { event: 'campay_webhook_missing_reference', payload },
+        'Campay webhook missing reference field',
+      );
       return { received: true };
     }
 
@@ -147,7 +149,10 @@ export class PaymentsService {
       WEBHOOK_LOCK_TTL_SECONDS,
     );
     if (!lockAcquired) {
-      this.logger.warn(`duplicate_webhook_ignored: ${reference}`);
+      this.logger.warn(
+        { event: 'campay_webhook_duplicate_ignored', reference },
+        'Duplicate Campay webhook ignored (lock held)',
+      );
       return { received: true };
     }
 
@@ -156,7 +161,10 @@ export class PaymentsService {
       where: { OR: [{ code: reference }, { paymentReference: reference }] },
     });
     if (!order) {
-      this.logger.warn(`Campay webhook for unknown reference: ${reference}`);
+      this.logger.warn(
+        { event: 'campay_webhook_unknown_reference', reference },
+        'Campay webhook for unknown reference (no matching order)',
+      );
       return { received: true };
     }
 

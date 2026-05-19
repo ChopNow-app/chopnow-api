@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { OtpStatus, UserRole } from '@prisma/client';
+import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
@@ -38,9 +39,8 @@ const REFRESH_INFLIGHT_LOCK_SECONDS = 5;
 
 @Injectable()
 export class AuthService {
-  private readonly logger = new Logger(AuthService.name);
-
   constructor(
+    @InjectPinoLogger(AuthService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly env: EnvService,
@@ -74,7 +74,10 @@ export class AuthService {
       OTP_INFLIGHT_LOCK_SECONDS,
     );
     if (!acquired) {
-      this.logger.log(`OTP in-flight lock held for ${phone} — skipping duplicate send`);
+      this.logger.info(
+        { event: 'otp_inflight_lock_held', phone },
+        'OTP in-flight lock held — skipping duplicate send',
+      );
       return { ok: true, expiresInSeconds: OTP_TTL_MINUTES * 60 };
     }
 
@@ -99,7 +102,10 @@ export class AuthService {
       });
     } catch (err) {
       const reason = (err as Error).message;
-      this.logger.error(`OTP delivery failed for ${phone}: ${reason}`);
+      this.logger.error(
+        { event: 'otp_delivery_failed', phone, otpLogId: log.id, error: reason },
+        'OTP delivery failed',
+      );
       await this.prisma.otpLog.update({
         where: { id: log.id },
         data: { status: OtpStatus.FAILED, failedReason: reason },
@@ -251,7 +257,10 @@ export class AuthService {
           where: { userId, revokedAt: null },
           data: { revokedAt: new Date() },
         });
-        this.logger.warn(`Refresh token reuse detected for user ${userId} — family revoked`);
+        this.logger.warn(
+          { event: 'refresh_reuse_detected', userId, role },
+          'Refresh token reuse detected — token family revoked',
+        );
         throw new UnauthorizedException({
           code: 'refresh_reuse_detected',
           message: 'Session compromised. Please sign in again.',

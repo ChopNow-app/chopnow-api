@@ -7,6 +7,7 @@ import { AdminAuthService } from './admin-auth.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('AdminAuthService', () => {
   let service: AdminAuthService;
@@ -39,6 +40,7 @@ describe('AdminAuthService', () => {
     const module = await Test.createTestingModule({
       providers: [
         AdminAuthService,
+        pinoLoggerProvider(AdminAuthService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: RedisService, useValue: redis },
         { provide: JwtService, useValue: jwt },

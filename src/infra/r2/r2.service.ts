@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   S3Client,
   PutObjectCommand,
@@ -25,7 +25,6 @@ export interface UploadResult {
  */
 @Injectable()
 export class R2Service {
-  private readonly logger = new Logger(R2Service.name);
   private _client: S3Client | null = null;
 
   constructor(private readonly env: EnvService) {}

@@ -13,6 +13,7 @@ import { RidersService } from './riders.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
 
 describe('RidersService', () => {
@@ -86,6 +87,7 @@ describe('RidersService', () => {
     const module = await Test.createTestingModule({
       providers: [
         RidersService,
+        pinoLoggerProvider(RidersService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: R2Service, useValue: r2 },
         { provide: TwilioService, useValue: twilio },

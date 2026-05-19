@@ -3,6 +3,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { RiderVehicleType } from '@prisma/client';
 import { DispatchService } from './dispatch.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('DispatchService', () => {
   let service: DispatchService;
@@ -27,6 +28,7 @@ describe('DispatchService', () => {
     const module = await Test.createTestingModule({
       providers: [
         DispatchService,
+        pinoLoggerProvider(DispatchService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: events },
       ],

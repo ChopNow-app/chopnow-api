@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
 /**
@@ -12,8 +12,6 @@ import { ConfigService } from '@nestjs/config';
  */
 @Injectable()
 export class EnvService {
-  private readonly logger = new Logger(EnvService.name);
-
   constructor(private readonly raw: ConfigService) {}
 
   // --- App ---
