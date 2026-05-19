@@ -261,10 +261,29 @@ export class OrdersService {
       });
     }
 
-    const updated = await this.prisma.order.update({
-      where: { id: order.id },
-      data: { status: OrderStatus.CANCELLED, cancelledAt: new Date() },
+    // Status-guarded conditional update (#174). The pre-check above gives a
+    // clean error message for the common case where the consumer revisits a
+    // stale URL. The race we close here is the sub-100ms window between
+    // findUnique() and the write where the vendor's acceptOrder lands first:
+    // both pre-checks pass, both writes succeed, last write wins, and either
+    // the consumer thinks they cancelled an order that's being prepared or
+    // the vendor thinks they accepted an order the consumer was told was
+    // cancelled. updateMany matches zero rows and we 409 — same pattern as
+    // PR #169 (the symmetric guard on acceptOrder / refuseOrder).
+    const now = new Date();
+    const res = await this.prisma.order.updateMany({
+      where: {
+        id: order.id,
+        status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+      },
+      data: { status: OrderStatus.CANCELLED, cancelledAt: now },
     });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'order_state_changed',
+        message: 'The vendor has already accepted this order. Please contact support to cancel.',
+      });
+    }
 
     this.events.emit(DomainEvents.ORDER_CANCELLED, {
       orderId: order.id,
@@ -279,7 +298,7 @@ export class OrdersService {
         `Order ${order.id} cancelled while PAID — refund needed (Story 3.8 pending wiring)`,
       );
     }
-    return updated;
+    return this.prisma.order.findUnique({ where: { id: order.id } });
   }
 
   // ── vendor decision path ──────────────────────────────────────────

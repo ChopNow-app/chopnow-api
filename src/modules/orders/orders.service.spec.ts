@@ -221,7 +221,7 @@ describe('OrdersService', () => {
   });
 
   describe('cancelOrder', () => {
-    it('cancels a PENDING order and emits order.cancelled', async () => {
+    it('cancels a PENDING order via status-guarded update and emits order.cancelled', async () => {
       prisma.order.findUnique.mockResolvedValue({
         id: 'order-1',
         userId: 'user-1',
@@ -231,8 +231,11 @@ describe('OrdersService', () => {
 
       await service.cancelOrder('order-1', 'user-1');
 
-      expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'order-1' },
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'order-1',
+          status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED] },
+        },
         data: { status: OrderStatus.CANCELLED, cancelledAt: expect.any(Date) },
       });
       expect(events.emit).toHaveBeenCalledWith(
@@ -241,7 +244,7 @@ describe('OrdersService', () => {
       );
     });
 
-    it('refuses to cancel after vendor accepted', async () => {
+    it('refuses to cancel after vendor accepted (clean error for stale URL revisit)', async () => {
       prisma.order.findUnique.mockResolvedValue({
         id: 'order-1',
         userId: 'user-1',
@@ -251,6 +254,27 @@ describe('OrdersService', () => {
       await expect(service.cancelOrder('order-1', 'user-1')).rejects.toMatchObject({
         response: { code: 'order_not_cancellable' },
       });
+    });
+
+    it('throws order_state_changed when the vendor accepted between read and write (#174)', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        id: 'order-1',
+        userId: 'user-1',
+        status: OrderStatus.PENDING,
+        paymentStatus: PaymentStatus.PAID,
+      });
+      // Simulate the sub-100ms race: pre-check saw PENDING, then vendor's
+      // acceptOrder flipped the row to ACCEPTED before our updateMany lands.
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(service.cancelOrder('order-1', 'user-1')).rejects.toMatchObject({
+        response: { code: 'order_state_changed' },
+      });
+      // Critical: no ORDER_CANCELLED event — the vendor's ORDER_ACCEPTED
+      // already fired (dispatch may have started); a follow-up cancelled
+      // event would tell the consumer their order was cancelled while a
+      // rider is en route.
+      expect(events.emit).not.toHaveBeenCalled();
     });
 
     it('returns 404 when order belongs to a different user', async () => {
