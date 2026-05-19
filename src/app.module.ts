@@ -24,6 +24,7 @@ import { UsersModule } from './modules/users/users.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { VoiceProxyModule } from './modules/voice-proxy/voice-proxy.module';
+import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './health/health.module';
 
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
@@ -79,7 +80,7 @@ import { RolesGuard } from './shared/guards/roles.guard';
     DispatchModule,
     NotificationsModule,
     VoiceProxyModule,
-    // FinanceModule — wired in per-epic
+    FinanceModule,
     // --- Cross-cutting ---
     HealthModule,
   ],

@@ -131,8 +131,8 @@ enum PaymentMethod {
 }
 
 enum PaymentStatus {
-  PENDING        // not initiated yet (before /pay call)
-  PROCESSING     // Campay USSD prompt sent, awaiting webhook
+  PENDING // not initiated yet (before /pay call)
+  PROCESSING // Campay USSD prompt sent, awaiting webhook
   PAID
   FAILED
   REFUND_PENDING // refund queued (vendor pre-order cancel-after-accept) — Story 3.8 sweeps
@@ -248,15 +248,15 @@ model PushSubscription {
 // Story 2.15: Landmark = quartier + named point of reference (Carrefour, Mosquée, etc.).
 // Drives the address picker and dispatcher rough-zone matching.
 model Landmark {
-  id           String   @id @default(uuid())
-  quartier     String
-  name         String
+  id        String                                @id @default(uuid())
+  quartier  String
+  name      String
   // PostGIS POINT — managed via raw SQL in migrations; Prisma sees it as Unsupported.
   // For type-safe access, services use $queryRaw with ST_AsGeoJSON.
-  location     Unsupported("geography(Point, 4326)")
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  location  Unsupported("geography(Point, 4326)")
+  isActive  Boolean                               @default(true)
+  createdAt DateTime                              @default(now())
+  updatedAt DateTime                              @updatedAt
 
   addresses Address[]
 
@@ -268,21 +268,21 @@ model Landmark {
 // Story 3.2: Consumer / vendor / rider addresses.
 // landmarkId is optional — a saved address can be a free-form description + GPS point.
 model Address {
-  id           String   @id @default(uuid())
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  label        String? // e.g. "Maison", "Bureau"
-  description  String? // free-form, e.g. "Maison rouge à côté de la pharmacie"
-  quartier     String?
-  landmarkId   String?
-  landmark     Landmark? @relation(fields: [landmarkId], references: [id])
-  location     Unsupported("geography(Point, 4326)")
+  id          String                                @id @default(uuid())
+  userId      String
+  user        User                                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label       String? // e.g. "Maison", "Bureau"
+  description String? // free-form, e.g. "Maison rouge à côté de la pharmacie"
+  quartier    String?
+  landmarkId  String?
+  landmark    Landmark?                             @relation(fields: [landmarkId], references: [id])
+  location    Unsupported("geography(Point, 4326)")
   // Phone the rider will call if lost. Saved separately from the user's main
   // phone so a client can deliver to e.g. a partner's home with their phone.
-  phone        String?
-  isDefault    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  phone       String?
+  isDefault   Boolean                               @default(false)
+  createdAt   DateTime                              @default(now())
+  updatedAt   DateTime                              @updatedAt
 
   @@index([userId])
   @@index([landmarkId])
@@ -294,44 +294,44 @@ model Address {
 // =====================================================================
 
 model Vendor {
-  id              String        @id @default(uuid())
-  userId          String        @unique
-  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name            String
+  id               String                                @id @default(uuid())
+  userId           String                                @unique
+  user             User                                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
   // Owner / gérant — collected at onboarding for KYC and customer-service.
   // Nullable to preserve existing vendor rows that predate the field.
-  ownerName       String?
-  description     String?
-  type            VendorType
-  status          VendorStatus  @default(PENDING_REVIEW)
-  quartier        String
+  ownerName        String?
+  description      String?
+  type             VendorType
+  status           VendorStatus                          @default(PENDING_REVIEW)
+  quartier         String
   pointOfReference String?
   // Optional landmark for fast geo joins; free-form quartier kept for legacy informal vendors.
-  landmarkId      String?
+  landmarkId       String?
   // PostGIS POINT — vendor pickup location.
-  location        Unsupported("geography(Point, 4326)")
-  whatsappPhone   String
-  momoPhone       String
+  location         Unsupported("geography(Point, 4326)")
+  whatsappPhone    String
+  momoPhone        String
   // Display badge: "Cuisine locale 🍲" / "Maquis 🍽️" / "Restaurant 🍽️"
-  badge           String?
+  badge            String?
   // Story 2.4 — vendor open/closed flag. Toggled in 1 tap from the dashboard
   // (informal) or via cron based on `hours` (restaurant, cron landing later).
   // Catalogue browse (Story 2.5) hides vendors with isOpen=false from Plan 1/2
   // and shows them only on explicit "all vendors" view.
-  isOpen          Boolean  @default(false)
+  isOpen           Boolean                               @default(false)
   // Story 2.4 — per-day opening hours (RESTAURANT only; INFORMAL relies on
   // the isOpen toggle). Shape: { mon: { open: "07:30", close: "21:00" }, ... }
   // Days that are absent or null = closed that day. JSON keeps the schema
   // simple at the cost of cross-row queryability — fine for MVP, the cron
   // only reads vendor-by-vendor.
-  hours           Json?
+  hours            Json?
   // Daily order capacity declared at onboarding ( <10 / 10-30 / >30 → 8 / 30 / 50 )
   declaredCapacity Int?
   // Commission rate as a fraction — overridable per vendor by admin
-  commissionRate  Decimal       @default(0.10) @db.Decimal(5, 4)
+  commissionRate   Decimal                               @default(0.10) @db.Decimal(5, 4)
   // Profile photo + cover photo URLs (Cloudflare R2)
-  profilePhotoUrl String?
-  coverPhotoUrl   String?
+  profilePhotoUrl  String?
+  coverPhotoUrl    String?
 
   // Restaurant KYC — required only when type=RESTAURANT (DTO enforces via
   // @ValidateIf). NULL for INFORMAL + SEMI_FORMAL vendors. Stored as plain
@@ -348,21 +348,22 @@ model Vendor {
   // Default false; flipped true automatically when type=INFORMAL at submission.
   // Admin can toggle per-vendor — gate is per-row, NOT per-type, so future
   // semi-formal / restaurant opt-in is one row change with no code edit.
-  acceptsPreOrders Boolean       @default(false)
+  acceptsPreOrders Boolean @default(false)
 
   // Validation lifecycle
-  submittedAt     DateTime      @default(now())
+  submittedAt     DateTime  @default(now())
   validatedAt     DateTime?
   rejectedAt      DateTime?
   rejectionReason String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
   categories MenuCategory[]
   items      Item[]
   orders     Order[]
   ratings    OrderRating[]
   penalties  VendorPenalty[]
+  payouts    VendorPayout[]
 
   @@index([status])
   @@index([type])
@@ -371,12 +372,12 @@ model Vendor {
 }
 
 model MenuCategory {
-  id       String  @id @default(uuid())
-  vendorId String
-  vendor   Vendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  name     String
-  sortOrder Int    @default(0)
-  isActive Boolean @default(true)
+  id        String   @id @default(uuid())
+  vendorId  String
+  vendor    Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -388,34 +389,34 @@ model MenuCategory {
 }
 
 model Item {
-  id           String        @id @default(uuid())
-  orderItems   OrderItem[]
-  vendorId     String
-  vendor       Vendor        @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  categoryId   String?
-  category     MenuCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  name         String
-  description  String?
+  id                 String        @id @default(uuid())
+  orderItems         OrderItem[]
+  vendorId           String
+  vendor             Vendor        @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  categoryId         String?
+  category           MenuCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  name               String
+  description        String?
   // Price in XAF (FCFA) — integer, no decimals (smallest unit on Cameroon market is 5 FCFA)
-  priceXAF     Int
-  photoUrl     String?
-  isAvailable  Boolean       @default(true)
+  priceXAF           Int
+  photoUrl           String?
+  isAvailable        Boolean       @default(true)
   // Story 2.10: rupture stock toggle — derived from stockLevel for legacy
   // catalogue paths; keep in sync via Prisma updates on stockLevel changes.
-  isInStock    Boolean       @default(true)
+  isInStock          Boolean       @default(true)
   // Three-tier source of truth for stock (Story 2.10 follow-up — menu screen).
   // OUT_OF_STOCK is identical to isInStock=false; LOW_STOCK is the new
   // intermediate state that surfaces a "stock faible" warning on the
   // consumer side without hiding the item.
-  stockLevel   StockLevel    @default(IN_STOCK)
+  stockLevel         StockLevel    @default(IN_STOCK)
   // FOOD by default; vendor toggles per-item in the menu editor. Powers
   // the /vendor/menu category tabs (Tout / Plats / Boissons) and the
   // consumer-side category filter on the vendor detail page later.
-  kind         ItemKind      @default(FOOD)
-  preparationMinutes Int?    // average prep time, used by dispatch ETA
-  sortOrder    Int           @default(0)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  kind               ItemKind      @default(FOOD)
+  preparationMinutes Int? // average prep time, used by dispatch ETA
+  sortOrder          Int           @default(0)
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   @@index([vendorId])
   @@index([categoryId])
@@ -427,14 +428,14 @@ model Item {
 // =====================================================================
 
 model Order {
-  id        String      @id @default(uuid())
+  id       String      @id @default(uuid())
   // Short human-readable code (e.g. "TC-A23F4") — shown to client + vendor.
-  code      String      @unique
-  userId    String
-  user      User        @relation(fields: [userId], references: [id], onDelete: Restrict)
-  vendorId  String
-  vendor    Vendor      @relation(fields: [vendorId], references: [id], onDelete: Restrict)
-  status    OrderStatus @default(PENDING)
+  code     String      @unique
+  userId   String
+  user     User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  vendorId String
+  vendor   Vendor      @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  status   OrderStatus @default(PENDING)
 
   // Money — all in XAF integer (no decimals; XAF smallest unit is 5 but we
   // round to whole FCFA for orders).
@@ -475,8 +476,8 @@ model Order {
   // Story 4.1 — assigned rider. Null until dispatch picks one and the
   // rider claims the order. CASCADE on rider delete would be wrong (we
   // want to keep audit), so the FK uses SET NULL.
-  riderId  String?
-  rider    Rider?  @relation(fields: [riderId], references: [id], onDelete: SetNull)
+  riderId String?
+  rider   Rider?  @relation(fields: [riderId], references: [id], onDelete: SetNull)
 
   // Lifecycle timestamps — null until the corresponding transition fires.
   placedAt    DateTime  @default(now())
@@ -507,9 +508,9 @@ model Order {
   // create a duplicate. Scoped per user (composite uniqueness below).
   idempotencyKey String?
 
-  items     OrderItem[]
-  rating    OrderRating?
-  penalty   VendorPenalty?
+  items   OrderItem[]
+  rating  OrderRating?
+  penalty VendorPenalty?
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -558,17 +559,17 @@ model VendorPenalty {
 // Both scores are required when the consumer submits; we don't show partial
 // ratings publicly.
 model OrderRating {
-  id           String   @id @default(uuid())
-  orderId      String   @unique
-  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  userId       String
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vendorId     String
-  vendor       Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  vendorScore  Int      // 1..5
-  riderScore   Int      // 1..5 (null-ish for ON_FOOT-only orders is future)
-  comment      String?  @db.VarChar(200)
-  createdAt    DateTime @default(now())
+  id          String   @id @default(uuid())
+  orderId     String   @unique
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vendorId    String
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorScore Int // 1..5
+  riderScore  Int // 1..5 (null-ish for ON_FOOT-only orders is future)
+  comment     String?  @db.VarChar(200)
+  createdAt   DateTime @default(now())
 
   @@index([vendorId])
   @@index([userId])
@@ -606,37 +607,164 @@ model OrderItem {
 // =====================================================================
 
 model Rider {
-  id              String           @id @default(uuid())
-  userId          String           @unique
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  vehicleType     RiderVehicleType
-  preferredZone   String?
-  status          RiderStatus      @default(PENDING_REVIEW)
+  id               String                                 @id @default(uuid())
+  userId           String                                 @unique
+  user             User                                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vehicleType      RiderVehicleType
+  preferredZone    String?
+  status           RiderStatus                            @default(PENDING_REVIEW)
   // KYC photo URLs (Cloudflare R2 private bucket)
-  idCardPhotoUrl  String?
-  selfiePhotoUrl  String?
-  vehiclePhotoUrl String?
-  licensePlate    String?          @unique
-  momoPhone       String
+  idCardPhotoUrl   String?
+  selfiePhotoUrl   String?
+  vehiclePhotoUrl  String?
+  licensePlate     String?                                @unique
+  momoPhone        String
   // Reliability score, 0..100. Bumped/decreased by Story 4.6 logic.
-  reliabilityScore Int             @default(80)
+  reliabilityScore Int                                    @default(80)
   // Story 4.1 — online flag (rider has tapped "Je commence" in the app).
   // Story 4.4 — last GPS ping; `stale` if lastSeenAt > 60s old.
-  isOnline        Boolean          @default(false)
-  lastLocation    Unsupported("geography(Point, 4326)")?
-  lastSeenAt      DateTime?
+  isOnline         Boolean                                @default(false)
+  lastLocation     Unsupported("geography(Point, 4326)")?
+  lastSeenAt       DateTime?
   // Validation lifecycle
-  submittedAt     DateTime         @default(now())
-  validatedAt     DateTime?
-  rejectedAt      DateTime?
-  rejectionReason String?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  submittedAt      DateTime                               @default(now())
+  validatedAt      DateTime?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  createdAt        DateTime                               @default(now())
+  updatedAt        DateTime                               @updatedAt
 
-  orders Order[]
+  orders  Order[]
+  payouts RiderPayout[]
 
   @@index([status])
   @@index([vehicleType])
   @@index([isOnline])
   @@map("riders")
+}
+
+// =====================================================================
+// Finance — ledger + payouts (Epic 7 — ADR-0005)
+// =====================================================================
+// Append-only double-entry ledger. Every money movement writes paired
+// entries (debit + credit) that sum to zero by `eventId`. Service-layer
+// invariant — never write a single entry; always call
+// LedgerService.recordTransaction(eventId, entries[]).
+//
+// Sign convention: amountXAF is signed. Negative = credit to the account,
+// positive = debit. Reporting layer flips the sign for liability accounts
+// at read time so balances read intuitively.
+
+enum LedgerAccount {
+  CUSTOMER_ESCROW // liability — customer paid, platform holds until delivery
+  VENDOR_PAYABLE // liability — owed to vendor for delivered orders
+  RIDER_PAYABLE // liability — owed to rider for completed deliveries
+  PLATFORM_REVENUE // income — commission + delivery margin earned
+  PLATFORM_RESERVE // asset — kept on platform for refunds/disputes/penalties
+  CAMPAY_FLOAT // asset — funds Campay holds on our behalf
+  REFUND_PAYABLE // liability — refund owed back to a customer
+}
+
+enum LedgerEventType {
+  PAYMENT_RECEIVED
+  ORDER_DELIVERED
+  REFUND_ISSUED
+  VENDOR_PAYOUT
+  RIDER_PAYOUT
+  PENALTY_APPLIED
+  ADJUSTMENT // admin manual entry — description is required
+}
+
+enum PayoutStatus {
+  PENDING // computed, not yet sent to Campay
+  IN_FLIGHT // Campay transfer initiated, awaiting webhook
+  PAID // confirmed paid by Campay
+  FAILED // Campay rejected; ops escalation
+  CANCELLED // admin reversed before in-flight
+}
+
+model LedgerEntry {
+  id          String          @id @default(uuid())
+  // Groups legs of a single transaction. All entries with the same
+  // eventId must sum to zero (enforced by LedgerService.recordTransaction).
+  eventId     String
+  eventType   LedgerEventType
+  account     LedgerAccount
+  // Signed XAF — never zero. Sum-to-zero invariant is checked at write.
+  amountXAF   Int
+  // At least one of the FK fields is required at the service layer.
+  orderId     String?
+  vendorId    String?
+  riderId     String?
+  payoutId    String?
+  refundId    String?
+  // Human-readable description, shown in the admin financial dashboard.
+  // Required when eventType = ADJUSTMENT.
+  description String?
+  createdAt   DateTime        @default(now())
+
+  @@index([eventId])
+  @@index([account, createdAt])
+  @@index([vendorId, createdAt])
+  @@index([riderId, createdAt])
+  @@index([orderId])
+  @@map("ledger_entries")
+}
+
+model VendorPayout {
+  id             String       @id @default(uuid())
+  vendorId       String
+  vendor         Vendor       @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  // Period covered. For weekly: Sun-prev 02:00 → Sat-this 23:59. For
+  // on-demand: periodStart = earliest un-paid order's paidAt, periodEnd
+  // = request time.
+  periodStart    DateTime
+  periodEnd      DateTime
+  // Money breakdown — all XAF integers.
+  grossXAF       Int // sum of order subtotals in period
+  commissionXAF  Int // platform commission deducted
+  penaltyXAF     Int          @default(0) // sum of VendorPenalty rows applied
+  adjustmentsXAF Int          @default(0) // admin manual adjustments (signed)
+  netXAF         Int // grossXAF - commissionXAF - penaltyXAF + adjustmentsXAF
+  momoPhone      String
+  campayRef      String?      @unique
+  status         PayoutStatus @default(PENDING)
+  failureReason  String?
+  scheduledFor   DateTime // when the cron picked it up OR request time
+  sentAt         DateTime?
+  paidAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  // One payout per (vendor, period). Re-running the cron is idempotent.
+  @@unique([vendorId, periodStart])
+  @@index([status, scheduledFor])
+  @@index([vendorId, periodStart])
+  @@map("vendor_payouts")
+}
+
+model RiderPayout {
+  id             String       @id @default(uuid())
+  riderId        String
+  rider          Rider        @relation(fields: [riderId], references: [id], onDelete: Restrict)
+  // Period for a daily batch: previous day 00:00 → 23:59 Africa/Douala.
+  periodStart    DateTime
+  periodEnd      DateTime
+  grossXAF       Int // sum of rider shares for completed deliveries
+  adjustmentsXAF Int          @default(0)
+  netXAF         Int // grossXAF + adjustmentsXAF (no commission — rider earns share directly)
+  momoPhone      String
+  campayRef      String?      @unique
+  status         PayoutStatus @default(PENDING)
+  failureReason  String?
+  scheduledFor   DateTime
+  sentAt         DateTime?
+  paidAt         DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([riderId, periodStart])
+  @@index([status, scheduledFor])
+  @@index([riderId, periodStart])
+  @@map("rider_payouts")
 }
