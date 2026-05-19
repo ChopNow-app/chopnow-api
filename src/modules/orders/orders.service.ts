@@ -28,11 +28,16 @@ const MIN_ORDER_XAF = 1200;
 // this with reason EXPIRED_NO_VENDOR_RESPONSE.
 export const ACCEPTANCE_TTL_SECONDS = 60;
 
-// Pre-orders (#187 — v1, INFORMAL vendors only).
+// Pre-orders (#187 — INFORMAL vendors only).
 // Minimum lead time between order placement and scheduledFor. Set conservatively
 // to the same value as the default cancellation cutoff — a pre-order placed
 // inside that window wouldn't give the vendor enough room to prep.
 export const PRE_ORDER_MIN_LEAD_HOURS = 4;
+// Maximum lead time: 24h ahead of `now` (v1.1 day-ahead). The frontend day
+// toggle exposes "Aujourd'hui / Demain" within this window. Multi-day (T+N)
+// is v2 — bumping this to e.g. 7 * 24 would technically work but the UX
+// changes substantially.
+export const PRE_ORDER_MAX_LEAD_HOURS = 24;
 // How early before scheduledFor the promotion cron flips the order to "vendor
 // must decide" — sets acceptanceDeadlineAt and emits ORDER_CREATED.
 export const PRE_ORDER_NOTIFICATION_LEAD_MINUTES = 60;
@@ -144,11 +149,10 @@ export class OrdersService {
       });
     }
 
-    // 4.5) Pre-order validation (#187 — v1 same-day only, INFORMAL vendors).
+    // 4.5) Pre-order validation (#187 — INFORMAL vendors only).
     // scheduledFor stays null when the consumer wants immediate delivery
     // (today's flow, identical behaviour). When set, the vendor must accept
-    // pre-orders, the time must be at least PRE_ORDER_MIN_LEAD_HOURS in the
-    // future, and v1 caps the window to end-of-day local (Africa/Douala = UTC+1).
+    // pre-orders and the time must fall within [now + MIN_LEAD, now + MAX_LEAD].
     if (dto.scheduledFor) {
       if (!vendor.acceptsPreOrders) {
         throw new BadRequestException({
@@ -157,23 +161,19 @@ export class OrdersService {
         });
       }
       const scheduledMs = dto.scheduledFor.getTime();
-      const minLeadMs = Date.now() + PRE_ORDER_MIN_LEAD_HOURS * 3600_000;
+      const nowMs = Date.now();
+      const minLeadMs = nowMs + PRE_ORDER_MIN_LEAD_HOURS * 3600_000;
+      const maxLeadMs = nowMs + PRE_ORDER_MAX_LEAD_HOURS * 3600_000;
       if (scheduledMs < minLeadMs) {
         throw new BadRequestException({
           code: 'pre_order_too_soon',
           message: `Une pré-commande doit être planifiée au moins ${PRE_ORDER_MIN_LEAD_HOURS}h à l'avance.`,
         });
       }
-      // v1: same-day cap — until the consumer flow + vendor dashboard handle
-      // multi-day pre-orders, reject anything past the end of today (in the
-      // Douala timezone, which is UTC+1 with no DST). Computing end-of-day
-      // in UTC: today's 23:00 UTC == tomorrow 00:00 local.
-      const endOfTodayLocal = new Date();
-      endOfTodayLocal.setUTCHours(22, 59, 59, 999); // 23:59:59 Douala
-      if (scheduledMs > endOfTodayLocal.getTime()) {
+      if (scheduledMs > maxLeadMs) {
         throw new BadRequestException({
           code: 'pre_order_too_far_in_future',
-          message: 'En v1 seules les pré-commandes du jour sont acceptées.',
+          message: `Une pré-commande ne peut être planifiée plus de ${PRE_ORDER_MAX_LEAD_HOURS}h à l'avance.`,
         });
       }
     }

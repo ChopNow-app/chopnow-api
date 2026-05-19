@@ -317,8 +317,9 @@ describe('OrdersService', () => {
       });
 
       const farInThePast = new Date('2026-06-15T09:00:00.000Z'); // 1h ago
-      const inFiveHours = new Date('2026-06-15T15:00:00.000Z'); // valid (today, > 4h)
-      const dayAfterTomorrow = new Date('2026-06-16T22:00:00.000Z'); // > 22:59 today UTC
+      const inFiveHours = new Date('2026-06-15T15:00:00.000Z'); // valid (>4h, <24h)
+      const tomorrowSameTime = new Date('2026-06-16T08:00:00.000Z'); // exactly 22h ahead (valid v1.1)
+      const farInTheFuture = new Date('2026-06-16T11:00:00.000Z'); // 25h ahead — too far
 
       it('rejects when scheduledFor is set but vendor does not accept pre-orders', async () => {
         readyHappyPath({ acceptsPreOrders: false });
@@ -347,11 +348,26 @@ describe('OrdersService', () => {
         ).rejects.toMatchObject({ response: { code: 'pre_order_too_soon' } });
       });
 
-      it('rejects when scheduledFor is past end-of-today (v1 same-day cap)', async () => {
+      it('rejects when scheduledFor is more than 24h away (v1.1 day-ahead cap)', async () => {
         readyHappyPath({ acceptsPreOrders: true });
         await expect(
-          service.createOrder('user-1', { ...baseDto, scheduledFor: dayAfterTomorrow }),
+          service.createOrder('user-1', { ...baseDto, scheduledFor: farInTheFuture }),
         ).rejects.toMatchObject({ response: { code: 'pre_order_too_far_in_future' } });
+      });
+
+      it('accepts a day-ahead pre-order (v1.1) — tomorrow same time, within 24h cap', async () => {
+        readyHappyPath({ acceptsPreOrders: true });
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', priceXAF: 2000, isAvailable: true, isInStock: true },
+          { id: 'i-2', name: 'Bissap', priceXAF: 500, isAvailable: true, isInStock: true },
+        ]);
+        prisma.item.findMany.mockResolvedValueOnce([
+          { id: 'i-1', name: 'Ndolé', isAvailable: true, isInStock: true, updatedAt: new Date() },
+          { id: 'i-2', name: 'Bissap', isAvailable: true, isInStock: true, updatedAt: new Date() },
+        ]);
+        await service.createOrder('user-1', { ...baseDto, scheduledFor: tomorrowSameTime });
+        const data = prisma.order.create.mock.calls[0][0].data;
+        expect(data.scheduledFor).toEqual(tomorrowSameTime);
       });
 
       it('persists scheduledFor when valid pre-order accepted by the vendor', async () => {
