@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -22,6 +22,19 @@ const OTP_MAX_ATTEMPTS = 3;
 //     within ~minute still works on the second try (legit Twilio outage
 //     resolves the lock on failure, see below)
 const OTP_INFLIGHT_LOCK_SECONDS = 30;
+
+// Per-token in-flight lock for refresh-token rotation (#175). Two
+// concurrent /auth/refresh calls carrying the same raw token race on the
+// revokedAt write: the first request's transaction revokes the row, the
+// second request's candidates query sees revokedAt != null and trips
+// reuse detection — which then revokes the entire family and logs the
+// legitimate user out of every device. The lock serialises these so only
+// one rotation proceeds; the loser bails benignly without triggering
+// reuse detection.
+// 5s is more than enough for a single rotation (argon2 hashes + a small
+// transaction); short enough that a hard-killed pod can't strand a token
+// for long.
+const REFRESH_INFLIGHT_LOCK_SECONDS = 5;
 
 @Injectable()
 export class AuthService {
@@ -182,45 +195,78 @@ export class AuthService {
       });
     }
 
-    // Load unexpired rows INCLUDING revoked ones — reuse detection depends on
-    // matching the presented token to an already-rotated row. Filtering
-    // revokedAt: null here would silently turn a replay into a generic
-    // "not found" and lose the signal.
-    const candidates = await this.prisma.refreshToken.findMany({
-      where: { userId, expiresAt: { gt: new Date() } },
-      orderBy: { createdAt: 'desc' },
-    });
+    // Per-token in-flight lock (#175). Stops two concurrent refreshes of the
+    // same token from race-tripping reuse detection. We hash the raw token
+    // for the Redis key so the actual secret never appears in Redis logs,
+    // keyspace dumps, or ops queries. The lock is scoped per-token (not
+    // per-user) so a user refreshing on two different devices in parallel
+    // each get their own slot.
+    const tokenFp = createHash('sha256').update(rawRefreshToken).digest('hex').slice(0, 32);
+    const lockKey = `refresh:inflight:${tokenFp}`;
+    const acquired = await this.redis.setNX(lockKey, '1', REFRESH_INFLIGHT_LOCK_SECONDS);
+    if (!acquired) {
+      // Another /auth/refresh with this exact token is rotating right now.
+      // Bail with a benign code — DO NOT fall through to the reuse-detection
+      // branch below, which would falsely revoke the entire token family
+      // and log the user out of every device. The client retries once the
+      // winner finishes; the winner returns the freshly-rotated pair.
+      throw new UnauthorizedException({
+        code: 'refresh_in_flight',
+        message: 'Session refresh in progress, please retry.',
+      });
+    }
 
-    let matched: (typeof candidates)[number] | null = null;
-    for (const row of candidates) {
-      if (await argon2.verify(row.tokenHash, rawRefreshToken)) {
-        matched = row;
-        break;
+    try {
+      // Load unexpired rows INCLUDING revoked ones — reuse detection depends on
+      // matching the presented token to an already-rotated row. Filtering
+      // revokedAt: null here would silently turn a replay into a generic
+      // "not found" and lose the signal.
+      const candidates = await this.prisma.refreshToken.findMany({
+        where: { userId, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let matched: (typeof candidates)[number] | null = null;
+      for (const row of candidates) {
+        if (await argon2.verify(row.tokenHash, rawRefreshToken)) {
+          matched = row;
+          break;
+        }
       }
-    }
-    if (!matched) {
-      throw new UnauthorizedException({
-        code: 'refresh_invalid_or_expired',
-        message: 'Session expired. Please sign in again.',
-      });
-    }
+      if (!matched) {
+        throw new UnauthorizedException({
+          code: 'refresh_invalid_or_expired',
+          message: 'Session expired. Please sign in again.',
+        });
+      }
 
-    if (matched.revokedAt) {
-      // REUSE DETECTED — an already-rotated token was presented again. Either
-      // the user's device cloned state or an attacker captured an old token.
-      // Revoke every active token in the family to force a clean re-auth.
-      await this.prisma.refreshToken.updateMany({
-        where: { userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      this.logger.warn(`Refresh token reuse detected for user ${userId} — family revoked`);
-      throw new UnauthorizedException({
-        code: 'refresh_reuse_detected',
-        message: 'Session compromised. Please sign in again.',
-      });
-    }
+      if (matched.revokedAt) {
+        // REUSE DETECTED — an already-rotated token was presented again. Either
+        // the user's device cloned state or an attacker captured an old token.
+        // Revoke every active token in the family to force a clean re-auth.
+        // (Note: with the in-flight lock above, this can no longer be triggered
+        // by a benign sub-second race; reaching here means the token was
+        // genuinely revoked > 5s ago.)
+        await this.prisma.refreshToken.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        this.logger.warn(`Refresh token reuse detected for user ${userId} — family revoked`);
+        throw new UnauthorizedException({
+          code: 'refresh_reuse_detected',
+          message: 'Session compromised. Please sign in again.',
+        });
+      }
 
-    return this.signTokens(userId, role, matched.id);
+      return await this.signTokens(userId, role, matched.id);
+    } finally {
+      // Release on every exit — success, refresh_invalid_or_expired, or
+      // refresh_reuse_detected. The natural 5s TTL is the safety net for
+      // a hard kill mid-rotation. Holding the lock past success buys
+      // nothing: the row is now revokedAt != null, so a true replay > 5s
+      // later still trips reuse detection legitimately.
+      await this.redis.del(lockKey);
+    }
   }
 
   private async signTokens(userId: string, role: UserRole, replacesTokenId?: string) {
