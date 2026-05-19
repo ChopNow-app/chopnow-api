@@ -10,6 +10,7 @@ import {
   VendorType,
 } from '@prisma/client';
 import { OrdersService } from './orders.service';
+import { LedgerService } from '../finance/ledger.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RefusalReason } from './dto/vendor-decision.dto';
@@ -35,6 +36,7 @@ describe('OrdersService', () => {
     $transaction: jest.Mock;
   };
   let events: { emit: jest.Mock };
+  let ledger: { recordTransaction: jest.Mock };
 
   const baseDto: CreateOrderDto = {
     vendorId: 'v-1',
@@ -89,6 +91,7 @@ describe('OrdersService', () => {
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
     events = { emit: jest.fn() };
+    ledger = { recordTransaction: jest.fn().mockResolvedValue(undefined) };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -96,6 +99,7 @@ describe('OrdersService', () => {
         pinoLoggerProvider(OrdersService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: events },
+        { provide: LedgerService, useValue: ledger },
       ],
     }).compile();
     service = module.get(OrdersService);
@@ -599,6 +603,48 @@ describe('OrdersService', () => {
         response: { code: 'order_state_changed' },
       });
       expect(prisma.vendorPenalty.create).not.toHaveBeenCalled();
+      expect(events.emit).not.toHaveBeenCalled();
+    });
+
+    it('writes paired ledger entries (VENDOR_PAYABLE debit + PLATFORM_REVENUE credit) using penalty.id as eventId (ADR-0005 / #194)', async () => {
+      preOrderInState(OrderStatus.ACCEPTED);
+
+      await service.vendorCancelPreOrder('order-1', 'user-vendor');
+
+      expect(ledger.recordTransaction).toHaveBeenCalledTimes(1);
+      const [input, tx] = ledger.recordTransaction.mock.calls[0];
+      // eventId matches the VendorPenalty row id so the two systems stay traceable.
+      expect(input.eventId).toBe('penalty-1');
+      expect(input.eventType).toBe('PENALTY_APPLIED');
+      // Paired entries must sum to zero. Penalty is 450 (10% of 4900, floor to 50).
+      expect(input.entries).toEqual([
+        expect.objectContaining({
+          account: 'VENDOR_PAYABLE',
+          amountXAF: 450,
+          vendorId: 'v-1',
+          orderId: 'order-1',
+        }),
+        expect.objectContaining({
+          account: 'PLATFORM_REVENUE',
+          amountXAF: -450,
+          vendorId: 'v-1',
+          orderId: 'order-1',
+        }),
+      ]);
+      // Recorded inside the prisma transaction — not on the standalone client.
+      expect(tx).toBe(prisma);
+    });
+
+    it('rolls back the entire cancellation if the ledger write fails — no penalty row, no events', async () => {
+      preOrderInState(OrderStatus.ACCEPTED);
+      ledger.recordTransaction.mockRejectedValueOnce(new Error('ledger boom'));
+
+      await expect(service.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toThrow(
+        'ledger boom',
+      );
+      // The ORDER_CANCELLED event must NOT have fired — the transaction
+      // rolled back, so the order is still ACCEPTED and no consumer
+      // refund-pending message should be sent.
       expect(events.emit).not.toHaveBeenCalled();
     });
 

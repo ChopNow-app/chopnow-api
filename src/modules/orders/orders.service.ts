@@ -7,12 +7,20 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import { OrderStatus, PaymentStatus, Prisma, VendorStatus } from '@prisma/client';
+import {
+  LedgerAccount,
+  LedgerEventType,
+  OrderStatus,
+  PaymentStatus,
+  Prisma,
+  VendorStatus,
+} from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import { DomainEvents } from '../../shared/events/domain-events';
 import { RIDER_DELIVERY_SHARE } from '../finance/commission.constants';
+import { LedgerService } from '../finance/ledger.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
@@ -68,6 +76,7 @@ export class OrdersService {
     @InjectPinoLogger(OrdersService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    private readonly ledger: LedgerService,
   ) {}
 
   // ── consumer write path ────────────────────────────────────────────
@@ -741,11 +750,14 @@ export class OrdersService {
       Math.floor((order.totalXAF * PRE_ORDER_PENALTY_RATE) / PRE_ORDER_PENALTY_ROUND_TO_XAF) *
       PRE_ORDER_PENALTY_ROUND_TO_XAF;
 
-    // All three writes atomic: order flip + payment flip + penalty row.
-    // Status-guarded updateMany on the order flip so a concurrent rider-side
-    // status change (pickup scan landing at the same instant) can't be
-    // overwritten. count===0 → race lost, no penalty written, throw 409.
-    await this.prisma.$transaction(async (tx) => {
+    // All four writes atomic: order flip + payment flip + penalty row +
+    // paired ledger entries. Status-guarded updateMany on the order flip so
+    // a concurrent rider-side status change (pickup scan landing at the
+    // same instant) can't be overwritten. count===0 → race lost, no penalty
+    // written, throw 409. If the ledger write fails the entire transaction
+    // rolls back — the VendorPenalty row and the ledger entries are kept
+    // in lock-step (ADR-0005).
+    const ledgerEventId = await this.prisma.$transaction(async (tx) => {
       const res = await tx.order.updateMany({
         where: {
           id: order.id,
@@ -764,7 +776,7 @@ export class OrdersService {
           message: "Cette commande a changé d'état pendant l'annulation. Reviens au dashboard.",
         });
       }
-      await tx.vendorPenalty.create({
+      const penalty = await tx.vendorPenalty.create({
         data: {
           vendorId: order.vendorId,
           orderId: order.id,
@@ -772,6 +784,36 @@ export class OrdersService {
           amountXAF: penaltyXAF,
         },
       });
+      // ADR-0005 ledger bridge. Sign convention (positive = debit):
+      //  - VENDOR_PAYABLE +penalty   → debit (reduces what we owe them)
+      //  - PLATFORM_REVENUE −penalty → credit (recognises the penalty as income)
+      // Sum = 0. The penalty.id is the ledger eventId so the two systems
+      // stay traceable. Future refund leg (Story 3.8) will write its own
+      // event with a different eventId.
+      await this.ledger.recordTransaction(
+        {
+          eventId: penalty.id,
+          eventType: LedgerEventType.PENALTY_APPLIED,
+          entries: [
+            {
+              account: LedgerAccount.VENDOR_PAYABLE,
+              amountXAF: penaltyXAF,
+              vendorId: order.vendorId,
+              orderId: order.id,
+              description: `Pre-order cancellation penalty (10% of ${order.totalXAF} FCFA, rounded down to 50)`,
+            },
+            {
+              account: LedgerAccount.PLATFORM_REVENUE,
+              amountXAF: -penaltyXAF,
+              vendorId: order.vendorId,
+              orderId: order.id,
+              description: 'Pre-order cancellation penalty — platform revenue',
+            },
+          ],
+        },
+        tx,
+      );
+      return penalty.id;
     });
 
     this.events.emit(DomainEvents.ORDER_CANCELLED, {
@@ -789,6 +831,7 @@ export class OrdersService {
         totalXAF: order.totalXAF,
         penaltyXAF,
         scheduledFor: order.scheduledFor,
+        ledgerEventId,
       },
       'Vendor cancelled pre-order after acceptance — refund pending + penalty recorded',
     );
