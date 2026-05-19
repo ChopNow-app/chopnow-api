@@ -963,20 +963,47 @@ export class OrdersService {
       // MoMo confirm eats the vendor's response window.
       dataPatch.acceptanceDeadlineAt = new Date(now.getTime() + ACCEPTANCE_TTL_SECONDS * 1000);
     }
-    // Status-guarded conditional update — closes the Campay double-webhook
-    // race (#172). The Campay client retries until 200, so two
-    // PAYMENT_SUCCEEDED events can arrive within ms. The first one's
-    // updateMany matches (paymentStatus=PENDING) and flips; the second
-    // matches zero rows and bails before emitting any events. Belt + the
-    // suspenders fast-path check above + the Redis lock in PaymentsService.
-    const res = await this.prisma.order.updateMany({
-      where: {
-        id: order.id,
-        paymentStatus: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
-      },
-      data: dataPatch,
+    // Status-guarded conditional update + paired ledger entries, atomic.
+    // Closes the Campay double-webhook race (#172) — the first webhook's
+    // updateMany matches and writes ledger; the second matches zero rows
+    // and the ledger write is skipped entirely (no transaction commits).
+    // Per ADR-0005, PAYMENT_RECEIVED moves money from Campay's float into
+    // the customer escrow we hold until delivery:
+    //   CAMPAY_FLOAT    : +totalXAF   (debit — money landed)
+    //   CUSTOMER_ESCROW : -totalXAF   (credit — we owe it back until delivered)
+    const won = await this.prisma.$transaction(async (tx) => {
+      const res = await tx.order.updateMany({
+        where: {
+          id: order.id,
+          paymentStatus: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+        },
+        data: dataPatch,
+      });
+      if (res.count === 0) return false;
+      await this.ledger.recordTransaction(
+        {
+          eventId: `payment:${order.id}`,
+          eventType: LedgerEventType.PAYMENT_RECEIVED,
+          entries: [
+            {
+              account: LedgerAccount.CAMPAY_FLOAT,
+              amountXAF: order.totalXAF,
+              orderId: order.id,
+              description: `Campay payment for order ${order.code ?? order.id}`,
+            },
+            {
+              account: LedgerAccount.CUSTOMER_ESCROW,
+              amountXAF: -order.totalXAF,
+              orderId: order.id,
+              description: 'Customer escrow held until delivery',
+            },
+          ],
+        },
+        tx,
+      );
+      return true;
     });
-    if (res.count === 0) return; // lost the race — another concurrent webhook already won
+    if (!won) return; // lost the race — another concurrent webhook already won
 
     // ORDER_PAID stays for payment-pipeline observability (no listeners
     // today, but semantically meaningful for audit). Fires for both flows.

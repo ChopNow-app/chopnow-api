@@ -13,6 +13,7 @@ import { RidersService } from './riders.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
+import { LedgerService } from '../finance/ledger.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
 
@@ -21,12 +22,18 @@ describe('RidersService', () => {
   let prisma: {
     user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
     rider: { upsert: jest.Mock; findUnique: jest.Mock; update: jest.Mock };
-    order: { findUnique: jest.Mock; findMany: jest.Mock; update: jest.Mock };
+    order: {
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+    };
     $executeRaw: jest.Mock;
     $transaction: jest.Mock;
   };
   let r2: { uploadImage: jest.Mock };
   let twilio: { sendWhatsApp: jest.Mock };
+  let ledger: { recordTransaction: jest.Mock };
 
   const baseDto: SubmitRiderDto = {
     name: 'Jean Mboué',
@@ -71,6 +78,7 @@ describe('RidersService', () => {
         findUnique: jest.fn(),
         findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id, ...data })),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       $executeRaw: jest.fn().mockResolvedValue(1),
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
@@ -83,6 +91,7 @@ describe('RidersService', () => {
         ),
     };
     twilio = { sendWhatsApp: jest.fn().mockResolvedValue('SMxxx') };
+    ledger = { recordTransaction: jest.fn().mockResolvedValue(undefined) };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -91,6 +100,7 @@ describe('RidersService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: R2Service, useValue: r2 },
         { provide: TwilioService, useValue: twilio },
+        { provide: LedgerService, useValue: ledger },
       ],
     }).compile();
 
@@ -405,12 +415,23 @@ describe('RidersService', () => {
       prisma.rider.findUnique.mockResolvedValue({ id: 'r-1' });
       prisma.order.findUnique.mockResolvedValue({
         id: 'o-1',
+        code: 'TC-ABCDE',
+        vendorId: 'v-1',
         riderId: 'r-1',
         status,
         pickupCode: '1234',
         deliveryCode: '5678',
         paymentMethod: opts.paymentMethod ?? PaymentMethod.MTN_MOMO,
         paymentStatus: opts.paymentStatus ?? PaymentStatus.PAID,
+        // Finance snapshots — populated by onPaymentSucceeded (7.0b)
+        // before any order can reach PICKED_UP. Required by markDelivered's
+        // ledger write path (7.1a).
+        subtotalXAF: 4500,
+        deliveryFeeXAF: 400,
+        totalXAF: 4900,
+        commissionXAF: 270, // 4500 × 0.06
+        riderShareXAF: 260, // 400 × 0.65
+        platformFeeXAF: 410, // 270 + (400 − 260)
       });
     }
 
@@ -440,16 +461,55 @@ describe('RidersService', () => {
       });
     });
 
-    it('markDelivered flips PICKED_UP → DELIVERED for MoMo (already PAID) without touching payment fields', async () => {
+    it('markDelivered flips PICKED_UP → DELIVERED with status-guarded updateMany + writes ORDER_DELIVERED ledger entries (7.1a)', async () => {
       riderOrder(OrderStatus.PICKED_UP, {
         paymentMethod: PaymentMethod.MTN_MOMO,
         paymentStatus: PaymentStatus.PAID,
       });
       await service.markDelivered('user-1', 'o-1', '5678');
-      expect(prisma.order.update).toHaveBeenCalledWith({
-        where: { id: 'o-1' },
+
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: { id: 'o-1', status: OrderStatus.PICKED_UP },
         data: { status: OrderStatus.DELIVERED, deliveredAt: expect.any(Date) },
       });
+
+      expect(ledger.recordTransaction).toHaveBeenCalledTimes(1);
+      const [input, tx] = ledger.recordTransaction.mock.calls[0];
+      expect(input.eventId).toBe('delivery:o-1');
+      expect(input.eventType).toBe('ORDER_DELIVERED');
+      // 4 entries summing to 0:
+      //   CUSTOMER_ESCROW   : +4900
+      //   VENDOR_PAYABLE    : -(4500 - 270) = -4230
+      //   RIDER_PAYABLE     : -260
+      //   PLATFORM_REVENUE  : -410
+      const sum = input.entries.reduce(
+        (acc: number, e: { amountXAF: number }) => acc + e.amountXAF,
+        0,
+      );
+      expect(sum).toBe(0);
+      expect(input.entries).toEqual([
+        expect.objectContaining({ account: 'CUSTOMER_ESCROW', amountXAF: 4900 }),
+        expect.objectContaining({ account: 'VENDOR_PAYABLE', amountXAF: -4230, vendorId: 'v-1' }),
+        expect.objectContaining({ account: 'RIDER_PAYABLE', amountXAF: -260, riderId: 'r-1' }),
+        expect.objectContaining({ account: 'PLATFORM_REVENUE', amountXAF: -410 }),
+      ]);
+      // Recorded inside the prisma transaction, not the standalone client.
+      expect(tx).toBe(prisma);
+    });
+
+    it('markDelivered rolls back the entire transition if the ledger write fails', async () => {
+      riderOrder(OrderStatus.PICKED_UP);
+      ledger.recordTransaction.mockRejectedValueOnce(new Error('ledger boom'));
+      await expect(service.markDelivered('user-1', 'o-1', '5678')).rejects.toThrow('ledger boom');
+    });
+
+    it('markDelivered short-circuits with 409 order_state_changed when updateMany matches zero (concurrent flip)', async () => {
+      riderOrder(OrderStatus.PICKED_UP);
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(service.markDelivered('user-1', 'o-1', '5678')).rejects.toMatchObject({
+        response: { code: 'order_state_changed' },
+      });
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
     });
 
     // The legacy "markDelivered flips CASH paymentStatus=PAID" path was
@@ -479,6 +539,12 @@ describe('RidersService', () => {
         status: OrderStatus.PICKED_UP,
         pickupCode: '1234',
         deliveryCode: '5678',
+        subtotalXAF: 4500,
+        deliveryFeeXAF: 400,
+        totalXAF: 4900,
+        commissionXAF: 270,
+        riderShareXAF: 260,
+        platformFeeXAF: 410,
       });
       await expect(service.markDelivered('user-1', 'o-1', '5678')).rejects.toMatchObject({
         status: 404,

@@ -4,12 +4,21 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OrderStatus, Prisma, RiderStatus, RiderVehicleType, UserRole } from '@prisma/client';
+import {
+  LedgerAccount,
+  LedgerEventType,
+  OrderStatus,
+  Prisma,
+  RiderStatus,
+  RiderVehicleType,
+  UserRole,
+} from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
+import { LedgerService } from '../finance/ledger.service';
 import { RiderAvailabilityDto, RiderHeartbeatDto } from './dto/rider-availability.dto';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
 import { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
@@ -42,6 +51,7 @@ export class RidersService {
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
     private readonly twilio: TwilioService,
+    private readonly ledger: LedgerService,
   ) {}
 
   async submit(
@@ -363,14 +373,88 @@ export class RidersService {
         message: 'Code de livraison incorrect. Demande-le au client.',
       });
     }
-    // Pilot is MoMo-only — paymentStatus is already PAID by this point (set
-    // when the Campay webhook fires onPaymentSucceeded). The CASH branch
-    // that used to flip paymentStatus here is removed per issue #177.
+    const { commissionXAF, riderShareXAF, platformFeeXAF } = order;
+    if (commissionXAF === null || riderShareXAF === null || platformFeeXAF === null) {
+      // Should never fire post-S2: every order has these populated by
+      // onPaymentSucceeded. Refuse loudly rather than ledger-incorrect.
+      throw new ConflictException({
+        code: 'order_missing_finance_snapshot',
+        message: 'Order is missing finance snapshots — cannot mark delivered.',
+      });
+    }
+    // Pilot is MoMo-only — paymentStatus is already PAID by this point.
+    // Per ADR-0005, ORDER_DELIVERED moves money out of customer escrow into
+    // the three payable accounts:
+    //   CUSTOMER_ESCROW  : +totalXAF                  (release escrow)
+    //   VENDOR_PAYABLE   : -(subtotal − commission)   (we owe vendor)
+    //   RIDER_PAYABLE    : -riderShareXAF             (we owe this rider)
+    //   PLATFORM_REVENUE : -platformFeeXAF            (recognise revenue)
     const now = new Date();
-    return this.prisma.order.update({
-      where: { id: order.id },
-      data: { status: OrderStatus.DELIVERED, deliveredAt: now },
+    const vendorPayableXAF = order.subtotalXAF - commissionXAF;
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // Status-guarded — a parallel call (or a future cron) can't overwrite
+      // someone else's transition.
+      const res = await tx.order.updateMany({
+        where: { id: order.id, status: OrderStatus.PICKED_UP },
+        data: { status: OrderStatus.DELIVERED, deliveredAt: now },
+      });
+      if (res.count === 0) {
+        throw new ConflictException({
+          code: 'order_state_changed',
+          message: 'Order status changed during delivery confirmation. Refresh.',
+        });
+      }
+      await this.ledger.recordTransaction(
+        {
+          eventId: `delivery:${order.id}`,
+          eventType: LedgerEventType.ORDER_DELIVERED,
+          entries: [
+            {
+              account: LedgerAccount.CUSTOMER_ESCROW,
+              amountXAF: order.totalXAF,
+              orderId: order.id,
+              description: `Escrow released on delivery of ${order.code ?? order.id}`,
+            },
+            {
+              account: LedgerAccount.VENDOR_PAYABLE,
+              amountXAF: -vendorPayableXAF,
+              orderId: order.id,
+              vendorId: order.vendorId,
+              description: 'Vendor share of delivered order',
+            },
+            {
+              account: LedgerAccount.RIDER_PAYABLE,
+              amountXAF: -riderShareXAF,
+              orderId: order.id,
+              riderId: order.riderId ?? undefined,
+              description: 'Rider share of delivered order',
+            },
+            {
+              account: LedgerAccount.PLATFORM_REVENUE,
+              amountXAF: -platformFeeXAF,
+              orderId: order.id,
+              description: 'Platform fee (commission + delivery margin)',
+            },
+          ],
+        },
+        tx,
+      );
+      return tx.order.findUnique({ where: { id: order.id } });
     });
+    this.logger.info(
+      {
+        event: 'order_delivered_ledgered',
+        orderId: order.id,
+        vendorId: order.vendorId,
+        riderId: order.riderId,
+        totalXAF: order.totalXAF,
+        vendorPayableXAF,
+        riderShareXAF,
+        platformFeeXAF,
+      },
+      'order delivered — ledger entries recorded',
+    );
+    return updated;
   }
 
   private async requireRiderOrder(userId: string, orderId: string) {
@@ -384,12 +468,24 @@ export class RidersService {
       where: { id: orderId },
       select: {
         id: true,
+        code: true,
         riderId: true,
+        vendorId: true,
         status: true,
         pickupCode: true,
         deliveryCode: true,
         paymentMethod: true,
         paymentStatus: true,
+        // Finance snapshots — required by markDelivered to write the
+        // ORDER_DELIVERED ledger entries atomically. Populated at
+        // onPaymentSucceeded (post-7.0b); any order that reaches this
+        // method post-S2 deploy is guaranteed to have these.
+        totalXAF: true,
+        subtotalXAF: true,
+        deliveryFeeXAF: true,
+        commissionXAF: true,
+        riderShareXAF: true,
+        platformFeeXAF: true,
       },
     });
     if (!order || order.riderId !== rider.id) {
