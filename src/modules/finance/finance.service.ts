@@ -1012,4 +1012,111 @@ export class FinanceService {
     }
     return { received: true };
   }
+
+  // ── Admin remediation (#85) ───────────────────────────────────────
+  //
+  // When a payout / refund fails or stalls past 30 min, admin can:
+  //   - retryPayout: flip FAILED → PENDING so PayoutTransferWorker picks
+  //     it up on the next 5-min sweep
+  //   - manualMarkPaid: flip any non-PAID status → PAID with an
+  //     admin-supplied campayRef (the founder fired the transfer in the
+  //     Campay UI manually). Adds an audit-friendly note.
+  //
+  // Both endpoints are admin-only (controller-level @Roles). No ledger
+  // writes here — the payout's ledger entries already exist from when
+  // PayoutTransferWorker / RefundProcessor first ran. The retry path
+  // doesn't rewrite ledger; it just lets the next worker tick try Campay
+  // again. The manual-mark-paid path acknowledges that Campay actually
+  // did move the money (admin verified in Campay UI); ledger stays as-is.
+  async retryVendorPayout(payoutId: string, adminUserId: string): Promise<{ status: 'PENDING' }> {
+    const res = await this.prisma.vendorPayout.updateMany({
+      where: { id: payoutId, status: 'FAILED' },
+      data: { status: 'PENDING', failureReason: null, sentAt: null, campayRef: null },
+    });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'payout_not_in_failed',
+        message: 'Only FAILED payouts can be retried.',
+      });
+    }
+    this.logger.warn(
+      { event: 'vendor_payout_retry_requested', payoutId, adminUserId },
+      'admin requested vendor payout retry — flipped FAILED → PENDING',
+    );
+    return { status: 'PENDING' };
+  }
+
+  async retryRiderPayout(payoutId: string, adminUserId: string): Promise<{ status: 'PENDING' }> {
+    const res = await this.prisma.riderPayout.updateMany({
+      where: { id: payoutId, status: 'FAILED' },
+      data: { status: 'PENDING', failureReason: null, sentAt: null, campayRef: null },
+    });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'payout_not_in_failed',
+        message: 'Only FAILED payouts can be retried.',
+      });
+    }
+    this.logger.warn(
+      { event: 'rider_payout_retry_requested', payoutId, adminUserId },
+      'admin requested rider payout retry — flipped FAILED → PENDING',
+    );
+    return { status: 'PENDING' };
+  }
+
+  async manualMarkVendorPayoutPaid(
+    payoutId: string,
+    campayRef: string,
+    adminUserId: string,
+    note?: string,
+  ): Promise<{ status: 'PAID' }> {
+    const res = await this.prisma.vendorPayout.updateMany({
+      where: { id: payoutId, status: { in: ['PENDING', 'IN_FLIGHT', 'FAILED'] } },
+      data: {
+        status: 'PAID',
+        paidAt: new Date(),
+        campayRef,
+        failureReason: note ? `MANUAL_PAID: ${note}` : null,
+      },
+    });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'payout_already_terminal',
+        message: 'Payout is already PAID or CANCELLED — cannot manually mark.',
+      });
+    }
+    this.logger.warn(
+      { event: 'vendor_payout_manual_paid', payoutId, campayRef, adminUserId },
+      'admin manually marked vendor payout PAID',
+    );
+    return { status: 'PAID' };
+  }
+
+  async manualMarkRiderPayoutPaid(
+    payoutId: string,
+    campayRef: string,
+    adminUserId: string,
+    note?: string,
+  ): Promise<{ status: 'PAID' }> {
+    const res = await this.prisma.riderPayout.updateMany({
+      where: { id: payoutId, status: { in: ['PENDING', 'IN_FLIGHT', 'FAILED'] } },
+      data: {
+        status: 'PAID',
+        paidAt: new Date(),
+        campayRef,
+        failureReason: note ? `MANUAL_PAID: ${note}` : null,
+      },
+    });
+    if (res.count === 0) {
+      throw new ConflictException({
+        code: 'payout_already_terminal',
+        message: 'Payout is already PAID or CANCELLED — cannot manually mark.',
+      });
+    }
+    this.logger.warn(
+      { event: 'rider_payout_manual_paid', payoutId, campayRef, adminUserId },
+      'admin manually marked rider payout PAID',
+    );
+    return { status: 'PAID' };
+  }
 }

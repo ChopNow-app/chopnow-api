@@ -864,6 +864,62 @@ describe('FinanceService', () => {
     });
   });
 
+  describe('admin payout remediation (#85)', () => {
+    it('retryVendorPayout flips FAILED → PENDING + clears campayRef + sentAt + failureReason', async () => {
+      prisma.vendorPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+      const r = await service.retryVendorPayout('vp-1', 'admin-1');
+      expect(r).toEqual({ status: 'PENDING' });
+      expect(prisma.vendorPayout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'vp-1', status: 'FAILED' },
+        data: { status: 'PENDING', failureReason: null, sentAt: null, campayRef: null },
+      });
+    });
+
+    it('retryVendorPayout throws when the row is not FAILED', async () => {
+      prisma.vendorPayout.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(service.retryVendorPayout('vp-1', 'admin-1')).rejects.toMatchObject({
+        response: { code: 'payout_not_in_failed' },
+      });
+    });
+
+    it('manualMarkVendorPayoutPaid flips any non-terminal status → PAID with admin campayRef', async () => {
+      prisma.vendorPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+      const r = await service.manualMarkVendorPayoutPaid(
+        'vp-1',
+        'manual-campay-ref-xyz',
+        'admin-1',
+        'Fired in Campay UI',
+      );
+      expect(r).toEqual({ status: 'PAID' });
+      const args = prisma.vendorPayout.updateMany.mock.calls[0][0];
+      expect(args.where.status).toEqual({ in: ['PENDING', 'IN_FLIGHT', 'FAILED'] });
+      expect(args.data).toMatchObject({
+        status: 'PAID',
+        campayRef: 'manual-campay-ref-xyz',
+        failureReason: expect.stringContaining('MANUAL_PAID'),
+      });
+    });
+
+    it('manualMarkVendorPayoutPaid throws when the row is already PAID', async () => {
+      prisma.vendorPayout.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(
+        service.manualMarkVendorPayoutPaid('vp-1', 'ref', 'admin-1'),
+      ).rejects.toMatchObject({ response: { code: 'payout_already_terminal' } });
+    });
+
+    it('retryRiderPayout has the same shape', async () => {
+      prisma.riderPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+      const r = await service.retryRiderPayout('rp-1', 'admin-1');
+      expect(r).toEqual({ status: 'PENDING' });
+    });
+
+    it('manualMarkRiderPayoutPaid mirrors the vendor flow', async () => {
+      prisma.riderPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+      const r = await service.manualMarkRiderPayoutPaid('rp-1', 'ref', 'admin-1');
+      expect(r).toEqual({ status: 'PAID' });
+    });
+  });
+
   describe('rejectCashoutRequest (7.2b)', () => {
     it('flips a pending request to REJECTED with reason', async () => {
       prisma.vendorCashoutRequest.findUnique.mockResolvedValue({

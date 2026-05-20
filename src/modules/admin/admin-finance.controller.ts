@@ -14,12 +14,14 @@ import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { FinanceService } from '../finance/finance.service';
+import { PayoutEscalationService } from '../finance/payout-escalation.service';
 import { ListCashoutRequestsDto, RejectCashoutRequestDto } from './dto/cashout.dto';
 import {
   ListRefundQueueDto,
   ListRiderBalancesDto,
   ListVendorBalancesDto,
 } from './dto/finance-list.dto';
+import { ManualMarkPaidDto } from './dto/manual-mark-paid.dto';
 
 const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as const;
 
@@ -27,7 +29,10 @@ const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as
 @ApiBearerAuth()
 @Controller('admin')
 export class AdminFinanceController {
-  constructor(private readonly finance: FinanceService) {}
+  constructor(
+    private readonly finance: FinanceService,
+    private readonly escalation: PayoutEscalationService,
+  ) {}
 
   @Roles(...ADMIN_ROLES)
   @Get('vendors/:vendorId/balance')
@@ -133,5 +138,71 @@ export class AdminFinanceController {
     const admin = req.user as { id: string };
     await this.finance.rejectCashoutRequest(requestId, admin.id, dto.reason);
     return { ok: true };
+  }
+
+  // ── Escalation (#85) ────────────────────────────────────────────────
+
+  @Roles(...ADMIN_ROLES)
+  @Get('finance/escalations')
+  @ApiOperation({
+    summary: 'List failed / stuck payouts + refunds needing admin attention',
+    description:
+      'Returns VendorPayout / RiderPayout in FAILED status or stuck IN_FLIGHT ' +
+      'past the 30-min threshold, plus Orders in REFUND_PENDING with refundCampayRef ' +
+      'set but no refundedAt after the same threshold. Sorted oldest first. ' +
+      'Per ADR-0005 §S3 / #85.',
+  })
+  listEscalations() {
+    return this.escalation.listEscalations();
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Post('finance/vendor-payouts/:payoutId/retry')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Retry a FAILED vendor payout — flips it back to PENDING' })
+  retryVendorPayout(@Param('payoutId', ParseUUIDPipe) payoutId: string, @Req() req: Request) {
+    const admin = req.user as { id: string };
+    return this.finance.retryVendorPayout(payoutId, admin.id);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Post('finance/rider-payouts/:payoutId/retry')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Retry a FAILED rider payout — flips it back to PENDING' })
+  retryRiderPayout(@Param('payoutId', ParseUUIDPipe) payoutId: string, @Req() req: Request) {
+    const admin = req.user as { id: string };
+    return this.finance.retryRiderPayout(payoutId, admin.id);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Post('finance/vendor-payouts/:payoutId/manual-mark-paid')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Manually mark a vendor payout PAID after firing it via the Campay UI',
+    description:
+      'Captures the Campay reference admin used in the manual fire so the audit ' +
+      'trail stays connected. Sets status=PAID, paidAt=now. Refuses if the row is ' +
+      'already PAID or CANCELLED.',
+  })
+  manualMarkVendorPayoutPaid(
+    @Param('payoutId', ParseUUIDPipe) payoutId: string,
+    @Body() dto: ManualMarkPaidDto,
+    @Req() req: Request,
+  ) {
+    const admin = req.user as { id: string };
+    return this.finance.manualMarkVendorPayoutPaid(payoutId, dto.campayRef, admin.id, dto.note);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Post('finance/rider-payouts/:payoutId/manual-mark-paid')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Manually mark a rider payout PAID after manual Campay fire' })
+  manualMarkRiderPayoutPaid(
+    @Param('payoutId', ParseUUIDPipe) payoutId: string,
+    @Body() dto: ManualMarkPaidDto,
+    @Req() req: Request,
+  ) {
+    const admin = req.user as { id: string };
+    return this.finance.manualMarkRiderPayoutPaid(payoutId, dto.campayRef, admin.id, dto.note);
   }
 }

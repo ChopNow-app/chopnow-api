@@ -5,6 +5,7 @@ import { CampayRefundWebhookController } from './campay-refund-webhook.controlle
 import { CampayTransferWebhookController } from './campay-transfer-webhook.controller';
 import { FinanceService } from './finance.service';
 import { LedgerService } from './ledger.service';
+import { PayoutEscalationService } from './payout-escalation.service';
 import { PayoutTransferWorker } from './payout-transfer-worker.service';
 import { RefundProcessorService } from './refund-processor.service';
 import { RiderPayoutCronService } from './rider-payout-cron.service';
@@ -29,6 +30,7 @@ import { VendorPayoutCronService } from './vendor-payout-cron.service';
     RiderPayoutCronService,
     PayoutTransferWorker,
     RefundProcessorService,
+    PayoutEscalationService,
   ],
   exports: [
     LedgerService,
@@ -37,6 +39,7 @@ import { VendorPayoutCronService } from './vendor-payout-cron.service';
     RiderPayoutCronService,
     PayoutTransferWorker,
     RefundProcessorService,
+    PayoutEscalationService,
   ],
 })
 export class FinanceModule {}
