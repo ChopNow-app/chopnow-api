@@ -1,8 +1,13 @@
-import { Controller, Get, Param, ParseUUIDPipe } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { FinanceService } from '../finance/finance.service';
+import {
+  ListRefundQueueDto,
+  ListRiderBalancesDto,
+  ListVendorBalancesDto,
+} from './dto/finance-list.dto';
 
 const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as const;
 
@@ -38,5 +43,40 @@ export class AdminFinanceController {
   })
   getRiderBalance(@Param('riderId', ParseUUIDPipe) riderId: string) {
     return this.finance.getRiderBalance(riderId);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Get('finance/vendor-balances')
+  @ApiOperation({
+    summary: 'Paginated list of vendor balances (sorted by balance DESC)',
+    description:
+      'Drives the admin financial dashboard. Filter by VendorStatus, ' +
+      'VendorType, and minimum balance. Pagination via offset/limit (pilot ' +
+      'scope — switch to cursor-based when row counts demand it).',
+  })
+  listVendorBalances(@Query() query: ListVendorBalancesDto) {
+    return this.finance.listVendorBalances(query);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Get('finance/rider-balances')
+  @ApiOperation({
+    summary: 'Paginated list of rider balances (sorted by balance DESC)',
+  })
+  listRiderBalances(@Query() query: ListRiderBalancesDto) {
+    return this.finance.listRiderBalances(query);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Get('finance/refund-queue')
+  @ApiOperation({
+    summary: 'Refund worklist — orders in PaymentStatus.REFUND_PENDING, oldest first',
+    description:
+      'Manual ops worklist until Story 3.8 (Campay refund API) wires the ' +
+      'automated refund flow. Surfaces order code, vendor name, total, and ' +
+      'days since the refund was queued.',
+  })
+  listRefundQueue(@Query() query: ListRefundQueueDto) {
+    return this.finance.listRefundQueue(query);
   }
 }

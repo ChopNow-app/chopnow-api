@@ -1,5 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { LedgerAccount, VendorType } from '@prisma/client';
+import {
+  LedgerAccount,
+  PaymentStatus,
+  RiderVehicleType,
+  VendorStatus,
+  VendorType,
+} from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
@@ -25,6 +31,38 @@ export interface VendorBalance {
   lastPayoutAt: Date | null;
   lastPayoutId: string | null;
   isTrusted: boolean;
+}
+
+export interface VendorBalanceRow {
+  vendorId: string;
+  name: string;
+  type: VendorType;
+  status: VendorStatus;
+  balanceXAF: number;
+  isTrusted: boolean;
+  lastPayoutAt: Date | null;
+}
+
+export interface RiderBalanceRow {
+  riderId: string;
+  name: string | null;
+  vehicleType: RiderVehicleType;
+  balanceXAF: number;
+  lastPayoutAt: Date | null;
+}
+
+export interface RefundQueueRow {
+  orderId: string;
+  code: string;
+  vendorId: string;
+  vendorName: string;
+  userId: string;
+  totalXAF: number;
+  // Days since the order became REFUND_PENDING. cancelledAt is set in the
+  // same transaction that flips paymentStatus to REFUND_PENDING (see
+  // vendorCancelPreOrder), so it's the accurate "refund-queued-at" timestamp.
+  ageDays: number;
+  cancelledAt: Date | null;
 }
 
 export interface RiderBalance {
@@ -191,5 +229,147 @@ export class FinanceService {
       lastPayoutAt: lastPayout?.paidAt ?? lastPayout?.sentAt ?? null,
       lastPayoutId: lastPayout?.id ?? null,
     };
+  }
+
+  // ── Admin dashboard list endpoints (7.1e) ─────────────────────────
+  //
+  // At pilot scope (<200 vendors / <50 riders), per-row balance reads
+  // via Promise.all are fast enough (<500ms total). Post-pilot, replace
+  // with a single CTE that aggregates per-entity in SQL.
+
+  async listVendorBalances(opts: {
+    status?: VendorStatus;
+    type?: VendorType;
+    minBalanceXAF?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; rows: VendorBalanceRow[] }> {
+    const vendors = await this.prisma.vendor.findMany({
+      where: {
+        ...(opts.status ? { status: opts.status } : {}),
+        ...(opts.type ? { type: opts.type } : {}),
+      },
+      select: { id: true },
+      orderBy: { name: 'asc' },
+    });
+
+    // Per-vendor full balance read for the row shape we want
+    // (isTrusted + lastPayoutAt). Capped concurrency by chunking would
+    // be wise post-pilot; for now Prisma's connection pool absorbs the
+    // burst at this scope.
+    const balances = await Promise.all(vendors.map((v) => this.getVendorBalance(v.id)));
+
+    // VendorStatus isn't included in the per-vendor balance read — pull
+    // it in one batch query so we don't fan out N+1.
+    const statuses = await this.prisma.vendor.findMany({
+      where: { id: { in: vendors.map((v) => v.id) } },
+      select: { id: true, status: true },
+    });
+    const statusMap = new Map(statuses.map((s) => [s.id, s.status]));
+
+    let rows: VendorBalanceRow[] = balances.map((b) => ({
+      vendorId: b.vendorId,
+      name: b.name,
+      type: b.type,
+      status: statusMap.get(b.vendorId) ?? VendorStatus.PENDING_REVIEW,
+      balanceXAF: b.balanceXAF,
+      isTrusted: b.isTrusted,
+      lastPayoutAt: b.lastPayoutAt,
+    }));
+
+    if (opts.minBalanceXAF !== undefined) {
+      rows = rows.filter((r) => r.balanceXAF >= opts.minBalanceXAF!);
+    }
+    rows.sort((a, b) => b.balanceXAF - a.balanceXAF);
+
+    const total = rows.length;
+    const offset = opts.offset ?? 0;
+    const limit = opts.limit ?? 50;
+    return { total, rows: rows.slice(offset, offset + limit) };
+  }
+
+  async listRiderBalances(opts: {
+    vehicleType?: RiderVehicleType;
+    minBalanceXAF?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; rows: RiderBalanceRow[] }> {
+    const riders = await this.prisma.rider.findMany({
+      where: opts.vehicleType ? { vehicleType: opts.vehicleType } : {},
+      select: { id: true, vehicleType: true, user: { select: { displayName: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const balances = await Promise.all(riders.map((r) => this.getRiderBalance(r.id)));
+    const vehicleMap = new Map(riders.map((r) => [r.id, r.vehicleType]));
+
+    let rows: RiderBalanceRow[] = balances.map((b) => ({
+      riderId: b.riderId,
+      name: b.name,
+      vehicleType: vehicleMap.get(b.riderId) ?? RiderVehicleType.MOTO,
+      balanceXAF: b.balanceXAF,
+      lastPayoutAt: b.lastPayoutAt,
+    }));
+
+    if (opts.minBalanceXAF !== undefined) {
+      rows = rows.filter((r) => r.balanceXAF >= opts.minBalanceXAF!);
+    }
+    rows.sort((a, b) => b.balanceXAF - a.balanceXAF);
+
+    const total = rows.length;
+    const offset = opts.offset ?? 0;
+    const limit = opts.limit ?? 50;
+    return { total, rows: rows.slice(offset, offset + limit) };
+  }
+
+  // Manual refund-processing worklist. Ordered oldest-first so ops
+  // triages in order. Story 3.8 (Campay refund API) eventually drains
+  // this; until then it's a daily admin task.
+  async listRefundQueue(opts: {
+    limit?: number;
+    offset?: number;
+  }): Promise<{ total: number; rows: RefundQueueRow[] }> {
+    const where = { paymentStatus: PaymentStatus.REFUND_PENDING };
+    const limit = opts.limit ?? 50;
+    const offset = opts.offset ?? 0;
+    const [total, orders] = await Promise.all([
+      this.prisma.order.count({ where }),
+      this.prisma.order.findMany({
+        where,
+        select: {
+          id: true,
+          code: true,
+          vendorId: true,
+          userId: true,
+          totalXAF: true,
+          cancelledAt: true,
+          placedAt: true,
+          vendor: { select: { name: true } },
+        },
+        orderBy: { cancelledAt: 'asc' },
+        skip: offset,
+        take: limit,
+      }),
+    ]);
+
+    const now = Date.now();
+    const rows: RefundQueueRow[] = orders.map((o) => {
+      // Fall back to placedAt if cancelledAt is null — shouldn't happen
+      // for REFUND_PENDING orders post-S1 (vendorCancelPreOrder always
+      // sets it), but is the safe default for legacy rows.
+      const refundQueuedAt = o.cancelledAt ?? o.placedAt;
+      return {
+        orderId: o.id,
+        code: o.code,
+        vendorId: o.vendorId,
+        vendorName: o.vendor.name,
+        userId: o.userId,
+        totalXAF: o.totalXAF,
+        cancelledAt: o.cancelledAt,
+        ageDays: Math.floor((now - refundQueuedAt.getTime()) / (24 * 60 * 60 * 1000)),
+      };
+    });
+
+    return { total, rows };
   }
 }
