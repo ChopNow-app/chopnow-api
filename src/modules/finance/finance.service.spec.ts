@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
-import { VendorType } from '@prisma/client';
+import { RiderVehicleType, VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 import { FinanceService } from './finance.service';
@@ -8,25 +8,25 @@ import { FinanceService } from './finance.service';
 describe('FinanceService', () => {
   let service: FinanceService;
   let prisma: {
-    vendor: { findUnique: jest.Mock };
-    rider: { findUnique: jest.Mock };
+    vendor: { findUnique: jest.Mock; findMany: jest.Mock };
+    rider: { findUnique: jest.Mock; findMany: jest.Mock };
     vendorPayout: { findFirst: jest.Mock };
     riderPayout: { findFirst: jest.Mock };
     ledgerEntry: { aggregate: jest.Mock; groupBy: jest.Mock };
-    order: { count: jest.Mock };
+    order: { count: jest.Mock; findMany: jest.Mock };
   };
 
   beforeEach(async () => {
     prisma = {
-      vendor: { findUnique: jest.fn() },
-      rider: { findUnique: jest.fn() },
+      vendor: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+      rider: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       vendorPayout: { findFirst: jest.fn().mockResolvedValue(null) },
       riderPayout: { findFirst: jest.fn().mockResolvedValue(null) },
       ledgerEntry: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amountXAF: 0 } }),
         groupBy: jest.fn().mockResolvedValue([]),
       },
-      order: { count: jest.fn().mockResolvedValue(0) },
+      order: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
     };
 
     const module = await Test.createTestingModule({
@@ -254,6 +254,184 @@ describe('FinanceService', () => {
       expect(result.lastPayoutId).toBe('rider-payout-1');
       const aggregateArgs = prisma.ledgerEntry.aggregate.mock.calls[0][0];
       expect(aggregateArgs.where.createdAt.gt).toEqual(lastPayout.periodEnd);
+    });
+  });
+
+  describe('listVendorBalances', () => {
+    function seedThreeVendors() {
+      // First findMany: list of vendor IDs. Second findMany: status map.
+      // Both return the same 3 vendors but with different selects.
+      prisma.vendor.findMany
+        .mockResolvedValueOnce([{ id: 'v-1' }, { id: 'v-2' }, { id: 'v-3' }])
+        .mockResolvedValueOnce([
+          { id: 'v-1', status: VendorStatus.ACTIVE },
+          { id: 'v-2', status: VendorStatus.ACTIVE },
+          { id: 'v-3', status: VendorStatus.PENDING_REVIEW },
+        ]);
+      const vendorMap: Record<
+        string,
+        { id: string; name: string; type: VendorType; createdAt: Date }
+      > = {
+        'v-1': {
+          id: 'v-1',
+          name: 'Vendor 1',
+          type: VendorType.INFORMAL,
+          createdAt: new Date('2026-04-01'),
+        },
+        'v-2': {
+          id: 'v-2',
+          name: 'Vendor 2',
+          type: VendorType.RESTAURANT,
+          createdAt: new Date('2026-04-01'),
+        },
+        'v-3': {
+          id: 'v-3',
+          name: 'Vendor 3',
+          type: VendorType.SEMI_FORMAL,
+          createdAt: new Date('2026-04-01'),
+        },
+      };
+      prisma.vendor.findUnique.mockImplementation(({ where }) =>
+        Promise.resolve(vendorMap[where.id]),
+      );
+      // Per-vendor balance based on the where.vendorId.
+      prisma.ledgerEntry.aggregate.mockImplementation(({ where }) => {
+        const balances: Record<string, number> = {
+          'v-1': -1000, // balance 1000
+          'v-2': -5000, // balance 5000
+          'v-3': 0,
+        };
+        return Promise.resolve({ _sum: { amountXAF: balances[where.vendorId] ?? 0 } });
+      });
+    }
+
+    it('returns vendors sorted by balance DESC', async () => {
+      seedThreeVendors();
+      const result = await service.listVendorBalances({});
+      expect(result.total).toBe(3);
+      expect(result.rows.map((r) => r.vendorId)).toEqual(['v-2', 'v-1', 'v-3']);
+      expect(result.rows[0].balanceXAF).toBe(5000);
+    });
+
+    it('respects minBalanceXAF filter', async () => {
+      seedThreeVendors();
+      const result = await service.listVendorBalances({ minBalanceXAF: 2000 });
+      expect(result.total).toBe(1);
+      expect(result.rows[0].vendorId).toBe('v-2');
+    });
+
+    it('attaches vendor status from the batch query (not the per-row read)', async () => {
+      seedThreeVendors();
+      const result = await service.listVendorBalances({});
+      const v3 = result.rows.find((r) => r.vendorId === 'v-3');
+      expect(v3?.status).toBe(VendorStatus.PENDING_REVIEW);
+    });
+
+    it('paginates via offset + limit', async () => {
+      seedThreeVendors();
+      const result = await service.listVendorBalances({ limit: 1, offset: 1 });
+      expect(result.total).toBe(3);
+      expect(result.rows).toHaveLength(1);
+      // Second-highest balance: v-1 (1000)
+      expect(result.rows[0].vendorId).toBe('v-1');
+    });
+  });
+
+  describe('listRiderBalances', () => {
+    it('returns riders sorted by balance DESC + supports vehicleType filter', async () => {
+      prisma.rider.findMany.mockResolvedValueOnce([
+        { id: 'r-1', vehicleType: RiderVehicleType.MOTO, user: { displayName: 'Jean' } },
+        { id: 'r-2', vehicleType: RiderVehicleType.MOTO, user: { displayName: 'Paul' } },
+      ]);
+      // Per-rider findUnique returns the right rider regardless of call order.
+      prisma.rider.findUnique.mockImplementation(({ where }) => {
+        const map: Record<string, { id: string; user: { displayName: string } }> = {
+          'r-1': { id: 'r-1', user: { displayName: 'Jean' } },
+          'r-2': { id: 'r-2', user: { displayName: 'Paul' } },
+        };
+        return Promise.resolve(map[where.id]);
+      });
+      // Per-rider aggregate returns balance based on the riderId in the where.
+      // r-1 → 260 payable / 0 adjustments. r-2 → 780 payable / 0 adjustments.
+      prisma.ledgerEntry.aggregate.mockImplementation(({ where }) => {
+        if (where.account === 'RIDER_PAYABLE') {
+          return Promise.resolve({
+            _sum: { amountXAF: where.riderId === 'r-1' ? -260 : -780 },
+          });
+        }
+        return Promise.resolve({ _sum: { amountXAF: 0 } });
+      });
+
+      const result = await service.listRiderBalances({ vehicleType: RiderVehicleType.MOTO });
+
+      expect(result.total).toBe(2);
+      expect(result.rows[0]).toMatchObject({ riderId: 'r-2', balanceXAF: 780, name: 'Paul' });
+      expect(result.rows[1]).toMatchObject({ riderId: 'r-1', balanceXAF: 260 });
+    });
+  });
+
+  describe('listRefundQueue', () => {
+    it('returns REFUND_PENDING orders oldest-first with ageDays computed from cancelledAt', async () => {
+      const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+      const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
+      prisma.order.count.mockResolvedValueOnce(2);
+      prisma.order.findMany.mockResolvedValueOnce([
+        {
+          id: 'o-old',
+          code: 'TC-OLD',
+          vendorId: 'v-1',
+          userId: 'u-1',
+          totalXAF: 4900,
+          cancelledAt: fiveDaysAgo,
+          placedAt: fiveDaysAgo,
+          vendor: { name: 'Vendor 1' },
+        },
+        {
+          id: 'o-new',
+          code: 'TC-NEW',
+          vendorId: 'v-2',
+          userId: 'u-2',
+          totalXAF: 3500,
+          cancelledAt: oneDayAgo,
+          placedAt: oneDayAgo,
+          vendor: { name: 'Vendor 2' },
+        },
+      ]);
+
+      const result = await service.listRefundQueue({});
+
+      expect(result.total).toBe(2);
+      expect(result.rows[0]).toMatchObject({
+        orderId: 'o-old',
+        ageDays: 5,
+        vendorName: 'Vendor 1',
+      });
+      expect(result.rows[1]).toMatchObject({
+        orderId: 'o-new',
+        ageDays: 1,
+        vendorName: 'Vendor 2',
+      });
+    });
+
+    it('uses placedAt as ageDays anchor when cancelledAt is null (legacy rows)', async () => {
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      prisma.order.count.mockResolvedValueOnce(1);
+      prisma.order.findMany.mockResolvedValueOnce([
+        {
+          id: 'o-1',
+          code: 'TC-1',
+          vendorId: 'v-1',
+          userId: 'u-1',
+          totalXAF: 4900,
+          cancelledAt: null,
+          placedAt: twoDaysAgo,
+          vendor: { name: 'Vendor 1' },
+        },
+      ]);
+
+      const result = await service.listRefundQueue({});
+      expect(result.rows[0].ageDays).toBe(2);
+      expect(result.rows[0].cancelledAt).toBeNull();
     });
   });
 });
