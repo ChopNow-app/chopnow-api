@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../infra/prisma/prisma.module';
 import { FinanceService } from './finance.service';
 import { LedgerService } from './ledger.service';
+import { RiderPayoutCronService } from './rider-payout-cron.service';
 import { VendorPayoutCronService } from './vendor-payout-cron.service';
 
 /**
@@ -16,7 +17,7 @@ import { VendorPayoutCronService } from './vendor-payout-cron.service';
 @Module({
   imports: [PrismaModule],
   controllers: [],
-  providers: [LedgerService, FinanceService, VendorPayoutCronService],
-  exports: [LedgerService, FinanceService, VendorPayoutCronService],
+  providers: [LedgerService, FinanceService, VendorPayoutCronService, RiderPayoutCronService],
+  exports: [LedgerService, FinanceService, VendorPayoutCronService, RiderPayoutCronService],
 })
 export class FinanceModule {}
