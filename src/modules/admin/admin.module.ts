@@ -7,6 +7,8 @@ import { AdminAuthService } from './admin-auth.service';
 import { AdminFinanceController } from './admin-finance.controller';
 import { AdminMetricsController } from './admin-metrics.controller';
 import { AdminMetricsService } from './admin-metrics.service';
+import { AdminRiderFraudController } from './admin-rider-fraud.controller';
+import { AdminRiderFraudService } from './admin-rider-fraud.service';
 import { AdminValidationController } from './admin-validation.controller';
 import { AdminValidationService } from './admin-validation.service';
 
@@ -32,8 +34,14 @@ import { AdminValidationService } from './admin-validation.service';
     AdminValidationController,
     AdminMetricsController,
     AdminFinanceController,
+    AdminRiderFraudController,
   ],
-  providers: [AdminAuthService, AdminValidationService, AdminMetricsService],
-  exports: [AdminAuthService, AdminValidationService, AdminMetricsService],
+  providers: [
+    AdminAuthService,
+    AdminValidationService,
+    AdminMetricsService,
+    AdminRiderFraudService,
+  ],
+  exports: [AdminAuthService, AdminValidationService, AdminMetricsService, AdminRiderFraudService],
 })
 export class AdminModule {}
