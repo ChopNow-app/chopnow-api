@@ -32,7 +32,13 @@ describe('RiderPayoutCronService', () => {
     prisma = {
       rider: {
         findMany: jest.fn().mockResolvedValue([]),
-        findUnique: jest.fn().mockResolvedValue({ createdAt: new Date('2026-04-01') }),
+        // Both findUnique callers (KYC photos + createdAt) share this mock —
+        // return everything; Prisma in prod would honour the select.
+        findUnique: jest.fn().mockResolvedValue({
+          createdAt: new Date('2026-04-01'),
+          idCardPhotoUrl: 'rider-kyc/id-1.webp',
+          selfiePhotoUrl: 'rider-kyc/selfie-1.webp',
+        }),
       },
       riderPayout: {
         findFirst: jest.fn().mockResolvedValue(null),
@@ -124,6 +130,40 @@ describe('RiderPayoutCronService', () => {
       const result = await service.tryScheduleRiderPayout('r-1', '+237670000020', scheduledFor);
       expect(result).toMatchObject({ outcome: 'no_activity', balanceXAF: 0 });
       expect(prisma.riderPayout.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses payout with kyc_incomplete when idCardPhotoUrl is missing (defense-in-depth — #213)', async () => {
+      prisma.rider.findUnique.mockResolvedValue({
+        createdAt: new Date('2026-04-01'),
+        idCardPhotoUrl: null,
+        selfiePhotoUrl: 'rider-kyc/selfie-1.webp',
+      });
+      finance.getRiderBalance.mockResolvedValue(riderBalance({ balanceXAF: 1560 }));
+
+      const result = await service.tryScheduleRiderPayout('r-1', '+237670000020', scheduledFor);
+
+      expect(result).toMatchObject({
+        outcome: 'kyc_incomplete',
+        missing: ['idCardPhotoUrl'],
+      });
+      expect(finance.getRiderBalance).not.toHaveBeenCalled();
+      expect(prisma.riderPayout.create).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses payout when both KYC photos missing — surfaces both', async () => {
+      prisma.rider.findUnique.mockResolvedValue({
+        createdAt: new Date('2026-04-01'),
+        idCardPhotoUrl: null,
+        selfiePhotoUrl: null,
+      });
+
+      const result = await service.tryScheduleRiderPayout('r-1', '+237670000020', scheduledFor);
+
+      expect(result).toMatchObject({
+        outcome: 'kyc_incomplete',
+        missing: ['idCardPhotoUrl', 'selfiePhotoUrl'],
+      });
     });
 
     it('returns already_scheduled when a payout for (riderId, periodStart) already exists (idempotent re-run)', async () => {
