@@ -101,6 +101,7 @@ export class EnvService {
     password?: string;
     webhookSecret?: string;
     transfersEnabled?: boolean;
+    refundsEnabled?: boolean;
   } {
     return {
       apiUrl: this.raw.get<string>('CAMPAY_API_URL'),
@@ -111,6 +112,11 @@ export class EnvService {
       // then the worker queries PENDING rows but skips the network call
       // and leaves rows for manual fire via the admin dashboard.
       transfersEnabled: this.raw.get<string>('CAMPAY_TRANSFERS_ENABLED') === 'true',
+      // Same kill-switch shape for refunds (#90). RefundProcessor logs
+      // awareness but doesn't fire when this is false. Admin can refund
+      // manually via the Campay UI and mark the order REFUNDED through
+      // the admin endpoint.
+      refundsEnabled: this.raw.get<string>('CAMPAY_REFUNDS_ENABLED') === 'true',
     };
   }
   requireCampay(): { apiUrl: string; username: string; password: string; webhookSecret: string } {

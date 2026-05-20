@@ -28,7 +28,13 @@ describe('FinanceService', () => {
       count: jest.Mock;
     };
     ledgerEntry: { aggregate: jest.Mock; groupBy: jest.Mock };
-    order: { count: jest.Mock; findMany: jest.Mock; updateMany: jest.Mock };
+    order: {
+      count: jest.Mock;
+      findMany: jest.Mock;
+      findUnique: jest.Mock;
+      update: jest.Mock;
+      updateMany: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
   let ledger: { recordTransaction: jest.Mock };
@@ -67,7 +73,9 @@ describe('FinanceService', () => {
       order: {
         count: jest.fn().mockResolvedValue(0),
         findMany: jest.fn().mockResolvedValue([]),
-        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({}),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
@@ -741,6 +749,118 @@ describe('FinanceService', () => {
       const result = await service.handleTransferWebhook({ status: 'SUCCESSFUL' });
       expect(result).toEqual({ received: true });
       expect(prisma.vendorPayout.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('handleRefundWebhook (#90)', () => {
+    it('flips REFUND_PENDING → REFUNDED on SUCCESSFUL + writes the settle ledger pair', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce({
+        id: 'o-1',
+        code: 'TC-1',
+        totalXAF: 4900,
+        paymentStatus: 'REFUND_PENDING',
+      });
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      await service.handleRefundWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-refund-1',
+      });
+
+      expect(prisma.order.updateMany).toHaveBeenCalledWith({
+        where: { id: 'o-1', paymentStatus: 'REFUND_PENDING' },
+        data: { paymentStatus: 'REFUNDED', refundedAt: expect.any(Date) },
+      });
+      expect(ledger.recordTransaction).toHaveBeenCalledTimes(1);
+      const [input] = ledger.recordTransaction.mock.calls[0];
+      expect(input.eventId).toBe('refund_settled:o-1');
+      expect(input.eventType).toBe('REFUND_ISSUED');
+      expect(input.entries).toEqual([
+        expect.objectContaining({ account: 'REFUND_PAYABLE', amountXAF: 4900, orderId: 'o-1' }),
+        expect.objectContaining({ account: 'CAMPAY_FLOAT', amountXAF: -4900, orderId: 'o-1' }),
+      ]);
+    });
+
+    it('on FAILED: clears refundCampayRef + refundInitiatedAt and captures failureReason — leaves REFUND_PENDING for retry', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce({
+        id: 'o-1',
+        code: 'TC-1',
+        totalXAF: 4900,
+        paymentStatus: 'REFUND_PENDING',
+      });
+
+      await service.handleRefundWebhook({
+        status: 'FAILED',
+        reference: 'campay-refund-1',
+        failure_reason: 'recipient_not_found',
+      });
+
+      expect(prisma.order.update).toHaveBeenCalledWith({
+        where: { id: 'o-1' },
+        data: {
+          refundCampayRef: null,
+          refundInitiatedAt: null,
+          refundFailureReason: 'recipient_not_found',
+        },
+      });
+      // No status change, no ledger write
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it('short-circuits on dedup hit (second webhook for the same reference)', async () => {
+      const dedupMock = (service as unknown as { dedup: { markProcessed: jest.Mock } }).dedup;
+      dedupMock.markProcessed.mockResolvedValueOnce({
+        isFirst: false,
+        existingResult: 'refunded',
+      });
+
+      await service.handleRefundWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-refund-dup',
+      });
+
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it('ignores non-terminal status (PENDING)', async () => {
+      await service.handleRefundWebhook({
+        status: 'PENDING',
+        reference: 'campay-refund-1',
+      });
+      expect(prisma.order.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('logs + acks an unknown reference (no matching order)', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce(null);
+
+      const result = await service.handleRefundWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-refund-orphan',
+      });
+
+      expect(result).toEqual({ received: true });
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it('handles status mismatch (order already REFUNDED) — duplicate webhook, no-op', async () => {
+      prisma.order.findUnique.mockResolvedValueOnce({
+        id: 'o-1',
+        code: 'TC-1',
+        totalXAF: 4900,
+        paymentStatus: 'REFUNDED',
+      });
+
+      await service.handleRefundWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-refund-1',
+      });
+
+      expect(prisma.order.updateMany).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
     });
   });
 

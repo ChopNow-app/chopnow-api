@@ -503,6 +503,15 @@ model Order {
   deliveredAt DateTime?
   cancelledAt DateTime?
 
+  // Refund flow (S3 / #90). Populated by RefundProcessor when it claims
+  // the row (refundInitiatedAt) and again when Campay returns a
+  // reference (refundCampayRef). The Campay webhook eventually flips
+  // paymentStatus REFUND_PENDING → REFUNDED and stamps refundedAt.
+  refundInitiatedAt   DateTime?
+  refundCampayRef     String?   @unique
+  refundedAt          DateTime?
+  refundFailureReason String?
+
   // Vendor acceptance SLA — set on order creation to placedAt + ACCEPTANCE_TTL_SECONDS
   // for immediate orders. For pre-orders this column stays NULL at create time and
   // is set by PreOrderPromotionService when scheduledFor - PRE_ORDER_NOTIFICATION_LEAD
