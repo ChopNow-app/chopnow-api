@@ -3,6 +3,7 @@ import { NotFoundException } from '@nestjs/common';
 import { RiderVehicleType, VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
+import { CampayWebhookDedupService } from '../../infra/campay/campay-webhook-dedup.service';
 import { FinanceService } from './finance.service';
 import { LedgerService } from './ledger.service';
 
@@ -77,6 +78,13 @@ describe('FinanceService', () => {
         FinanceService,
         { provide: PrismaService, useValue: prisma },
         { provide: LedgerService, useValue: ledger },
+        {
+          provide: CampayWebhookDedupService,
+          useValue: {
+            markProcessed: jest.fn().mockResolvedValue({ isFirst: true, existingResult: null }),
+            recordResult: jest.fn().mockResolvedValue(undefined),
+          },
+        },
         pinoLoggerProvider(FinanceService.name),
       ],
     }).compile();
@@ -627,6 +635,28 @@ describe('FinanceService', () => {
   });
 
   describe('handleTransferWebhook (#216)', () => {
+    it('short-circuits without state changes when the dedup table reports the webhook as a duplicate (#88)', async () => {
+      // Force the dedup service to claim it's a dup
+      const dedupMock = (
+        service as unknown as {
+          dedup: { markProcessed: jest.Mock };
+        }
+      ).dedup;
+      dedupMock.markProcessed.mockResolvedValueOnce({
+        isFirst: false,
+        existingResult: 'vendor_paid',
+      });
+
+      await service.handleTransferWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-tx-dup',
+      });
+
+      expect(prisma.vendorPayout.findUnique).not.toHaveBeenCalled();
+      expect(prisma.riderPayout.findUnique).not.toHaveBeenCalled();
+      expect(prisma.vendorPayout.updateMany).not.toHaveBeenCalled();
+    });
+
     it('flips IN_FLIGHT → PAID on SUCCESSFUL when the campayRef matches a vendor payout', async () => {
       prisma.vendorPayout.findUnique.mockResolvedValueOnce({
         id: 'vp-1',

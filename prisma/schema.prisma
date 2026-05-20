@@ -724,6 +724,38 @@ model LedgerEntry {
   @@map("ledger_entries")
 }
 
+// Campay webhook dedup table (ADR-0005, S3 / chopnow-api#88).
+// Persistence-layer idempotency for Campay callbacks. INSERT-first
+// pattern: the (eventType, reference) unique constraint causes the
+// second webhook for the same Campay reference to fail with a known
+// error, which the dedup service converts into a "not-first" signal.
+// State-mutating logic only runs when we win the insert race.
+enum CampayWebhookEventType {
+  COLLECT // inbound payment status callback (Order)
+  TRANSFER // outbound payout status callback (VendorPayout / RiderPayout)
+  REFUND // refund status callback (S3 #90 future)
+}
+
+model CampayWebhookEvent {
+  id          String                 @id @default(uuid())
+  eventType   CampayWebhookEventType
+  reference   String // Campay reference (or external_reference fallback)
+  // Full webhook body for audit. JSON keeps it queryable without
+  // schema migrations every time Campay adds a field.
+  payload     Json
+  // Short string describing what we did first time around: e.g.
+  // "order_paid", "payout_failed", "no_match", "ignored_non_terminal".
+  result      String?
+  processedAt DateTime               @default(now())
+
+  // The hot path: unique on (eventType, reference) so the second
+  // webhook for the same event becomes a constraint violation, which
+  // CampayWebhookDedupService converts into a no-op.
+  @@unique([eventType, reference])
+  @@index([eventType, processedAt])
+  @@map("campay_webhook_events")
+}
+
 enum CashoutRequestStatus {
   PENDING_APPROVAL // vendor has requested, admin hasn't acted
   APPROVED // admin approved, VendorPayout created

@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
 import { PaymentsService } from './payments.service';
+import { CampayWebhookDedupService } from '../../infra/campay/campay-webhook-dedup.service';
 import { CampayService } from '../../infra/campay/campay.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -17,6 +18,7 @@ describe('PaymentsService', () => {
   let redis: { setNX: jest.Mock; del: jest.Mock };
   let events: { emit: jest.Mock };
   let env: { appUrl: string; campay: { apiUrl?: string } };
+  let dedup: { markProcessed: jest.Mock; recordResult: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -37,6 +39,10 @@ describe('PaymentsService', () => {
     };
     events = { emit: jest.fn() };
     env = { appUrl: 'https://api.chopnow.app', campay: { apiUrl: 'https://demo.campay.net/api' } };
+    dedup = {
+      markProcessed: jest.fn().mockResolvedValue({ isFirst: true, existingResult: null }),
+      recordResult: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -47,6 +53,7 @@ describe('PaymentsService', () => {
         { provide: RedisService, useValue: redis },
         { provide: EventEmitter2, useValue: events },
         { provide: EnvService, useValue: env },
+        { provide: CampayWebhookDedupService, useValue: dedup },
       ],
     }).compile();
     service = module.get(PaymentsService);
