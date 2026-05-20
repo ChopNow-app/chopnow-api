@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { CampayCircuitBreakerService } from '../../infra/campay/campay-circuit-breaker.service';
 import { FinanceService } from '../finance/finance.service';
 import { PayoutEscalationService } from '../finance/payout-escalation.service';
 import { ListCashoutRequestsDto, RejectCashoutRequestDto } from './dto/cashout.dto';
@@ -32,6 +33,7 @@ export class AdminFinanceController {
   constructor(
     private readonly finance: FinanceService,
     private readonly escalation: PayoutEscalationService,
+    private readonly campayBreaker: CampayCircuitBreakerService,
   ) {}
 
   @Roles(...ADMIN_ROLES)
@@ -141,6 +143,20 @@ export class AdminFinanceController {
   }
 
   // ── Escalation (#85) ────────────────────────────────────────────────
+
+  @Roles(...ADMIN_ROLES)
+  @Get('finance/campay-circuit')
+  @ApiOperation({
+    summary: 'Campay circuit breaker state (#92) — CLOSED / OPEN / HALF_OPEN',
+    description:
+      'Exposes the breaker state for the admin financial dashboard. When OPEN, ' +
+      'every CampayService outbound call (collect, transfer, refund, balance) ' +
+      'fails fast with code campay_circuit_open until the cool-down elapses. ' +
+      'Useful when investigating a wave of FAILED payouts.',
+  })
+  getCampayCircuitState() {
+    return this.campayBreaker.getState();
+  }
 
   @Roles(...ADMIN_ROLES)
   @Get('finance/escalations')
