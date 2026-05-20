@@ -36,8 +36,35 @@ export class PayoutTransferWorker {
     let attempted = 0;
     let initiated = 0;
     let skippedManualMode = 0;
+    let skippedInsufficientBalance = 0;
     let failedCount = 0;
     let raceLostCount = 0;
+
+    // S3 #89: fetch the Campay platform float once per tick. We deduct
+    // each successfully-initiated transfer from a local "remaining"
+    // counter so we don't overcommit within the same tick. If Campay
+    // /balance/ fails, we skip the whole sweep (the next tick retries)
+    // — it's safer to be late on payouts than to misjudge available
+    // float and bounce transfers.
+    let remainingBalanceXAF: number | null = null;
+    if (transfersEnabled) {
+      try {
+        remainingBalanceXAF = await this.campay.getBalance();
+        this.logger.info(
+          { event: 'payout_transfer_balance_fetched', balanceXAF: remainingBalanceXAF },
+          'Campay platform balance fetched for transfer sweep',
+        );
+      } catch (err) {
+        this.logger.error(
+          {
+            event: 'payout_transfer_balance_fetch_failed',
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'Campay balance fetch failed — skipping transfer sweep entirely',
+        );
+        return;
+      }
+    }
 
     // Vendor payouts first (weekly cron volume), then rider payouts
     // (daily, lower per-run count).
@@ -49,9 +76,25 @@ export class PayoutTransferWorker {
     });
     for (const p of vendorRows) {
       attempted += 1;
+      if (transfersEnabled && remainingBalanceXAF !== null && p.netXAF > remainingBalanceXAF) {
+        skippedInsufficientBalance += 1;
+        this.logger.error(
+          {
+            event: 'payout_transfer_skipped_balance',
+            kind: 'vendor',
+            payoutId: p.id,
+            netXAF: p.netXAF,
+            remainingBalanceXAF,
+          },
+          'payout skipped — insufficient Campay platform balance',
+        );
+        continue;
+      }
       const outcome = await this.tryTransferVendor(p.id, p.momoPhone, p.netXAF, transfersEnabled);
-      if (outcome === 'initiated') initiated += 1;
-      else if (outcome === 'skipped_manual') skippedManualMode += 1;
+      if (outcome === 'initiated') {
+        initiated += 1;
+        if (remainingBalanceXAF !== null) remainingBalanceXAF -= p.netXAF;
+      } else if (outcome === 'skipped_manual') skippedManualMode += 1;
       else if (outcome === 'failed') failedCount += 1;
       else if (outcome === 'race_lost') raceLostCount += 1;
     }
@@ -64,9 +107,25 @@ export class PayoutTransferWorker {
     });
     for (const p of riderRows) {
       attempted += 1;
+      if (transfersEnabled && remainingBalanceXAF !== null && p.netXAF > remainingBalanceXAF) {
+        skippedInsufficientBalance += 1;
+        this.logger.error(
+          {
+            event: 'payout_transfer_skipped_balance',
+            kind: 'rider',
+            payoutId: p.id,
+            netXAF: p.netXAF,
+            remainingBalanceXAF,
+          },
+          'payout skipped — insufficient Campay platform balance',
+        );
+        continue;
+      }
       const outcome = await this.tryTransferRider(p.id, p.momoPhone, p.netXAF, transfersEnabled);
-      if (outcome === 'initiated') initiated += 1;
-      else if (outcome === 'skipped_manual') skippedManualMode += 1;
+      if (outcome === 'initiated') {
+        initiated += 1;
+        if (remainingBalanceXAF !== null) remainingBalanceXAF -= p.netXAF;
+      } else if (outcome === 'skipped_manual') skippedManualMode += 1;
       else if (outcome === 'failed') failedCount += 1;
       else if (outcome === 'race_lost') raceLostCount += 1;
     }
@@ -80,8 +139,10 @@ export class PayoutTransferWorker {
         attempted,
         initiated,
         skippedManualMode,
+        skippedInsufficientBalance,
         failed: failedCount,
         raceLost: raceLostCount,
+        endingBalanceXAF: remainingBalanceXAF,
       },
       'payout transfer worker completed',
     );
