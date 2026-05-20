@@ -95,12 +95,22 @@ export class EnvService {
   }
 
   // --- Campay (Stories 3.3, 3.4, 7.x) ---
-  get campay(): { apiUrl?: string; username?: string; password?: string; webhookSecret?: string } {
+  get campay(): {
+    apiUrl?: string;
+    username?: string;
+    password?: string;
+    webhookSecret?: string;
+    transfersEnabled?: boolean;
+  } {
     return {
       apiUrl: this.raw.get<string>('CAMPAY_API_URL'),
       username: this.raw.get<string>('CAMPAY_USERNAME'),
       password: this.raw.get<string>('CAMPAY_PASSWORD'),
       webhookSecret: this.raw.get<string>('CAMPAY_WEBHOOK_SECRET'),
+      // Outbound transfers are blocked on Campay Go-Live + RCCM. Until
+      // then the worker queries PENDING rows but skips the network call
+      // and leaves rows for manual fire via the admin dashboard.
+      transfersEnabled: this.raw.get<string>('CAMPAY_TRANSFERS_ENABLED') === 'true',
     };
   }
   requireCampay(): { apiUrl: string; username: string; password: string; webhookSecret: string } {

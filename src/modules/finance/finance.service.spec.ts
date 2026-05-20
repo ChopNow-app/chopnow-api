@@ -11,8 +11,13 @@ describe('FinanceService', () => {
   let prisma: {
     vendor: { findUnique: jest.Mock; findMany: jest.Mock };
     rider: { findUnique: jest.Mock; findMany: jest.Mock };
-    vendorPayout: { findFirst: jest.Mock; create: jest.Mock };
-    riderPayout: { findFirst: jest.Mock };
+    vendorPayout: {
+      findFirst: jest.Mock;
+      findUnique: jest.Mock;
+      create: jest.Mock;
+      updateMany: jest.Mock;
+    };
+    riderPayout: { findFirst: jest.Mock; findUnique: jest.Mock; updateMany: jest.Mock };
     vendorCashoutRequest: {
       findUnique: jest.Mock;
       findFirst: jest.Mock;
@@ -33,9 +38,15 @@ describe('FinanceService', () => {
       rider: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       vendorPayout: {
         findFirst: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue(null),
         create: jest.fn().mockImplementation(({ data }) => ({ id: 'payout-new', ...data })),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
-      riderPayout: { findFirst: jest.fn().mockResolvedValue(null) },
+      riderPayout: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        findUnique: jest.fn().mockResolvedValue(null),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
       vendorCashoutRequest: {
         findUnique: jest.fn(),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -612,6 +623,94 @@ describe('FinanceService', () => {
       await expect(service.approveCashoutRequest('req-1', 'admin-1')).rejects.toMatchObject({
         response: { code: 'cashout_request_not_pending' },
       });
+    });
+  });
+
+  describe('handleTransferWebhook (#216)', () => {
+    it('flips IN_FLIGHT → PAID on SUCCESSFUL when the campayRef matches a vendor payout', async () => {
+      prisma.vendorPayout.findUnique.mockResolvedValueOnce({
+        id: 'vp-1',
+        status: 'IN_FLIGHT',
+      });
+      prisma.vendorPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      const result = await service.handleTransferWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-tx-1',
+      });
+
+      expect(result).toEqual({ received: true });
+      expect(prisma.vendorPayout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'vp-1', status: 'IN_FLIGHT' },
+        data: { status: 'PAID', paidAt: expect.any(Date) },
+      });
+    });
+
+    it('flips IN_FLIGHT → FAILED on FAILED with failure_reason captured', async () => {
+      prisma.vendorPayout.findUnique.mockResolvedValueOnce({
+        id: 'vp-1',
+        status: 'IN_FLIGHT',
+      });
+
+      await service.handleTransferWebhook({
+        status: 'FAILED',
+        reference: 'campay-tx-1',
+        failure_reason: 'recipient_not_found',
+      });
+
+      expect(prisma.vendorPayout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'vp-1', status: 'IN_FLIGHT' },
+        data: { status: 'FAILED', failureReason: 'recipient_not_found' },
+      });
+    });
+
+    it('falls back to rider payout when no vendor matches', async () => {
+      prisma.vendorPayout.findUnique.mockResolvedValueOnce(null);
+      prisma.riderPayout.findUnique.mockResolvedValueOnce({
+        id: 'rp-1',
+        status: 'IN_FLIGHT',
+      });
+      prisma.riderPayout.updateMany.mockResolvedValueOnce({ count: 1 });
+
+      await service.handleTransferWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-tx-1',
+      });
+
+      expect(prisma.riderPayout.updateMany).toHaveBeenCalledWith({
+        where: { id: 'rp-1', status: 'IN_FLIGHT' },
+        data: { status: 'PAID', paidAt: expect.any(Date) },
+      });
+    });
+
+    it('is idempotent — second webhook with same reference matches a non-IN_FLIGHT row and is a no-op', async () => {
+      prisma.vendorPayout.findUnique.mockResolvedValueOnce({
+        id: 'vp-1',
+        status: 'PAID', // already paid by first webhook
+      });
+
+      await service.handleTransferWebhook({
+        status: 'SUCCESSFUL',
+        reference: 'campay-tx-1',
+      });
+
+      expect(prisma.vendorPayout.updateMany).not.toHaveBeenCalled();
+      expect(prisma.riderPayout.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('ignores non-terminal statuses (PENDING) — Campay will call again', async () => {
+      await service.handleTransferWebhook({
+        status: 'PENDING',
+        reference: 'campay-tx-1',
+      });
+      expect(prisma.vendorPayout.findUnique).not.toHaveBeenCalled();
+      expect(prisma.riderPayout.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('handles missing reference gracefully — logs + ack', async () => {
+      const result = await service.handleTransferWebhook({ status: 'SUCCESSFUL' });
+      expect(result).toEqual({ received: true });
+      expect(prisma.vendorPayout.findUnique).not.toHaveBeenCalled();
     });
   });
 
