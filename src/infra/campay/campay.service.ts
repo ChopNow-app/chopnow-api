@@ -78,6 +78,12 @@ export class CampayService {
   // Refresh ~5min before declared expiry — Campay tokens typically run 1h.
   private tokenExpiresAt = 0;
 
+  // S3 #89: cache the Campay float balance for 60s. The transfer worker
+  // calls this once per tick; we don't want to hammer Campay /balance/.
+  private balanceXAF: number | null = null;
+  private balanceFetchedAt = 0;
+  private static readonly BALANCE_TTL_MS = 60_000;
+
   constructor(
     @InjectPinoLogger(CampayService.name) private readonly logger: PinoLogger,
     private readonly env: EnvService,
@@ -241,6 +247,57 @@ export class CampayService {
       throw new Error('campay_missing_reference');
     }
     return { reference, status: (data.status as string | undefined) ?? 'PENDING' };
+  }
+
+  // Campay platform float balance (Story 7.9 / chopnow-api#89). Returned
+  // in XAF integer for easy comparison against payout netXAF. Cached for
+  // 60s — the payout worker checks at most once per tick.
+  //
+  // forceRefresh=true bypasses the cache (admin manual refresh in the
+  // financial dashboard).
+  async getBalance(opts: { forceRefresh?: boolean } = {}): Promise<number> {
+    const now = Date.now();
+    if (
+      !opts.forceRefresh &&
+      this.balanceXAF !== null &&
+      now - this.balanceFetchedAt < CampayService.BALANCE_TTL_MS
+    ) {
+      return this.balanceXAF;
+    }
+
+    const cfg = this.env.requireCampay();
+    const token = await this.getToken();
+    const res = await fetch(`${cfg.apiUrl}/balance/`, {
+      method: 'GET',
+      headers: { Authorization: `Token ${token}` },
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      this.logger.error(
+        { event: 'campay_balance_fetch_failed', httpStatus: res.status, response: data },
+        'Campay balance call failed',
+      );
+      throw new Error(
+        typeof data.message === 'string' ? data.message : `campay_http_${res.status}`,
+      );
+    }
+
+    // Campay's balance response shape varies by tier; we look for the
+    // most common keys. Fall back to total_balance / balance. All values
+    // expected in XAF.
+    const raw = (data.total_balance ?? data.balance ?? data.amount ?? 0) as number | string;
+    const xaf = typeof raw === 'string' ? Number(raw) : raw;
+    if (!Number.isFinite(xaf)) {
+      this.logger.error(
+        { event: 'campay_balance_parse_failed', response: data },
+        'Campay balance response unparseable',
+      );
+      throw new Error('campay_balance_invalid');
+    }
+
+    this.balanceXAF = Math.round(xaf);
+    this.balanceFetchedAt = now;
+    return this.balanceXAF;
   }
 
   // ── private ──────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ describe('PayoutTransferWorker', () => {
     vendorPayout: { findMany: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
     riderPayout: { findMany: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
   };
-  let campay: { initiateTransfer: jest.Mock };
+  let campay: { initiateTransfer: jest.Mock; getBalance: jest.Mock };
   let env: { campay: { transfersEnabled: boolean } };
 
   beforeEach(async () => {
@@ -31,6 +31,9 @@ describe('PayoutTransferWorker', () => {
       initiateTransfer: jest
         .fn()
         .mockResolvedValue({ reference: 'campay-tx-1', status: 'PENDING' }),
+      // Large enough that none of the per-test payouts trip the
+      // insufficient-balance branch by default. Individual tests override.
+      getBalance: jest.fn().mockResolvedValue(10_000_000),
     };
     env = { campay: { transfersEnabled: false } };
 
@@ -162,6 +165,66 @@ describe('PayoutTransferWorker', () => {
         where: { id: 'v-2' },
         data: { campayRef: 'campay-tx-2' },
       });
+    });
+  });
+
+  describe('Campay balance pre-check (#89)', () => {
+    beforeEach(() => {
+      env.campay.transfersEnabled = true;
+    });
+
+    it('skips the entire sweep if Campay /balance/ fails', async () => {
+      campay.getBalance.mockRejectedValueOnce(new Error('campay down'));
+      prisma.vendorPayout.findMany.mockResolvedValueOnce([
+        { id: 'v-1', momoPhone: '+237670000001', netXAF: 4230 },
+      ]);
+
+      await service.sweepPendingTransfers();
+
+      // No locks, no Campay transfer calls
+      expect(prisma.vendorPayout.findMany).not.toHaveBeenCalled();
+      expect(prisma.vendorPayout.updateMany).not.toHaveBeenCalled();
+      expect(campay.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    it('skips a single payout when remaining balance < netXAF', async () => {
+      campay.getBalance.mockResolvedValueOnce(1000); // 1k FCFA available
+      prisma.vendorPayout.findMany.mockResolvedValueOnce([
+        { id: 'v-1', momoPhone: '+237670000001', netXAF: 4230 }, // > 1000
+      ]);
+
+      await service.sweepPendingTransfers();
+
+      // Skipped (no lock, no Campay call)
+      expect(prisma.vendorPayout.updateMany).not.toHaveBeenCalled();
+      expect(campay.initiateTransfer).not.toHaveBeenCalled();
+    });
+
+    it('deducts each initiated transfer from remaining balance, stopping when it runs out', async () => {
+      // Available 5000. First two payouts (2000 each) succeed; third
+      // (2000) trips insufficient because 5000 - 2000 - 2000 = 1000 < 2000.
+      campay.getBalance.mockResolvedValueOnce(5000);
+      prisma.vendorPayout.findMany.mockResolvedValueOnce([
+        { id: 'v-1', momoPhone: '+237670000001', netXAF: 2000 },
+        { id: 'v-2', momoPhone: '+237670000002', netXAF: 2000 },
+        { id: 'v-3', momoPhone: '+237670000003', netXAF: 2000 },
+      ]);
+
+      await service.sweepPendingTransfers();
+
+      // 2 initiations, 1 balance skip
+      expect(campay.initiateTransfer).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not fetch balance when CAMPAY_TRANSFERS_ENABLED=false', async () => {
+      env.campay.transfersEnabled = false;
+      prisma.vendorPayout.findMany.mockResolvedValueOnce([
+        { id: 'v-1', momoPhone: '+237670000001', netXAF: 4230 },
+      ]);
+
+      await service.sweepPendingTransfers();
+
+      expect(campay.getBalance).not.toHaveBeenCalled();
     });
   });
 });
