@@ -867,4 +867,149 @@ export class FinanceService {
     await this.dedup.recordResult({ eventType: 'TRANSFER', reference, result: 'no_match' });
     return { received: true };
   }
+
+  // ── Refund webhook (S3 / #90) ─────────────────────────────────────
+  //
+  // Campay calls POST /webhooks/campay/refund after the outbound refund
+  // /withdraw/ settles. We resolve the order by refundCampayRef, flip
+  // paymentStatus REFUND_PENDING → REFUNDED, and write the "settle the
+  // refund" ledger pair (REFUND_PAYABLE + / CAMPAY_FLOAT −).
+  async handleRefundWebhook(payload: {
+    status?: string;
+    reference?: string;
+    external_reference?: string;
+    failure_reason?: string;
+  }): Promise<{ received: true }> {
+    const reference = payload.reference ?? payload.external_reference;
+    if (!reference) {
+      this.logger.warn(
+        { event: 'campay_refund_webhook_missing_reference', payload },
+        'Campay refund webhook missing reference field',
+      );
+      return { received: true };
+    }
+    const status = (payload.status ?? '').toUpperCase();
+    const succeeded = status === 'SUCCESSFUL' || status === 'SUCCESS' || status === 'PAID';
+    const failed = status === 'FAILED' || status === 'CANCELLED';
+    if (!succeeded && !failed) {
+      this.logger.info(
+        { event: 'campay_refund_webhook_ignored', reference, status },
+        'Campay refund webhook in non-terminal state, ignored',
+      );
+      return { received: true };
+    }
+
+    const dedup = await this.dedup.markProcessed({
+      eventType: 'REFUND',
+      reference,
+      payload,
+    });
+    if (!dedup.isFirst) {
+      return { received: true };
+    }
+
+    const order = await this.prisma.order.findUnique({
+      where: { refundCampayRef: reference },
+      select: { id: true, code: true, totalXAF: true, paymentStatus: true },
+    });
+    if (!order) {
+      this.logger.warn(
+        { event: 'campay_refund_webhook_unknown_reference', reference },
+        'Campay refund webhook reference matched no order',
+      );
+      await this.dedup.recordResult({ eventType: 'REFUND', reference, result: 'no_match' });
+      return { received: true };
+    }
+
+    if (order.paymentStatus !== PaymentStatus.REFUND_PENDING) {
+      // Already settled (REFUNDED) or somehow rolled back — log + ack.
+      this.logger.warn(
+        {
+          event: 'campay_refund_webhook_status_mismatch',
+          orderId: order.id,
+          currentStatus: order.paymentStatus,
+        },
+        'Campay refund webhook arrived but order is not REFUND_PENDING — likely duplicate or stale',
+      );
+      await this.dedup.recordResult({
+        eventType: 'REFUND',
+        reference,
+        result: `status_mismatch_${order.paymentStatus.toLowerCase()}`,
+      });
+      return { received: true };
+    }
+
+    const now = new Date();
+    if (succeeded) {
+      // Settle: REFUND_PAYABLE + / CAMPAY_FLOAT − in the same transaction
+      // as the status flip. Status-guarded updateMany prevents duplicate
+      // settlement when two webhook deliveries slip past the dedup row.
+      await this.prisma.$transaction(async (tx) => {
+        const res = await tx.order.updateMany({
+          where: { id: order.id, paymentStatus: PaymentStatus.REFUND_PENDING },
+          data: { paymentStatus: PaymentStatus.REFUNDED, refundedAt: now },
+        });
+        if (res.count === 0) return;
+        await this.ledger.recordTransaction(
+          {
+            eventId: `refund_settled:${order.id}`,
+            eventType: LedgerEventType.REFUND_ISSUED,
+            entries: [
+              {
+                account: LedgerAccount.REFUND_PAYABLE,
+                amountXAF: order.totalXAF,
+                orderId: order.id,
+                description: `Refund settled — liability cleared for order ${order.code}`,
+              },
+              {
+                account: LedgerAccount.CAMPAY_FLOAT,
+                amountXAF: -order.totalXAF,
+                orderId: order.id,
+                description: 'Refund funds left platform Campay float',
+              },
+            ],
+          },
+          tx,
+        );
+      });
+      this.logger.info(
+        {
+          event: 'refund_settled',
+          orderId: order.id,
+          totalXAF: order.totalXAF,
+          reference,
+        },
+        'refund settled — Campay confirmed, paymentStatus REFUNDED',
+      );
+      await this.dedup.recordResult({ eventType: 'REFUND', reference, result: 'refunded' });
+    } else {
+      // Campay rejected the outbound transfer. Leave paymentStatus as
+      // REFUND_PENDING but record the failure so admin sees it; the
+      // RefundProcessor's retry loop will pick it up after the lock
+      // expires (or admin can manually reset via #85 escalation).
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          refundCampayRef: null,
+          refundInitiatedAt: null,
+          refundFailureReason: payload.failure_reason ?? 'campay_reported_failure',
+        },
+      });
+      this.logger.error(
+        {
+          event: 'refund_failed_at_settlement',
+          orderId: order.id,
+          reference,
+          reason: payload.failure_reason ?? null,
+        },
+        'refund failed at Campay settlement — row reset for retry',
+      );
+      await this.dedup.recordResult({
+        eventType: 'REFUND',
+        reference,
+        result: 'settlement_failed',
+      });
+    }
+    return { received: true };
+  }
 }

@@ -44,6 +44,23 @@ export interface TransferResponse {
   status: string;
 }
 
+/** Refund request — outbound to customer MSISDN. */
+export interface RefundRequest {
+  amountXAF: number;
+  /** Customer's payer phone (E.164). */
+  toPhone: string;
+  description: string;
+  /** Our own order id used as the externalReference (Campay echoes it back). */
+  externalReference: string;
+  webhookUrl?: string;
+}
+
+export interface RefundResponse {
+  /** Campay-issued reference, persisted on Order.refundCampayRef. */
+  reference: string;
+  status: string;
+}
+
 /** Shape of the incoming webhook payload (the bits we care about). */
 export interface CampayWebhookPayload {
   status: 'SUCCESSFUL' | 'FAILED' | 'CANCELLED' | 'PENDING' | string;
@@ -165,6 +182,61 @@ export class CampayService {
           response: data,
         },
         'Campay transfer response missing reference field',
+      );
+      throw new Error('campay_missing_reference');
+    }
+    return { reference, status: (data.status as string | undefined) ?? 'PENDING' };
+  }
+
+  // Refund (Story 7.10 / chopnow-api#90). Functionally the same shape
+  // as an outbound transfer — MoMo refunds aren't a first-class concept
+  // at the aggregator level; we just send the customer their money back
+  // via /withdraw/. The webhook lands at POST /webhooks/campay/refund
+  // and the description carries 'refund' so the customer sees a
+  // recognizable label.
+  async initiateRefund(req: RefundRequest): Promise<RefundResponse> {
+    const cfg = this.env.requireCampay();
+    const token = await this.getToken();
+
+    const body: Record<string, unknown> = {
+      amount: String(req.amountXAF),
+      to: req.toPhone,
+      description: req.description,
+      external_reference: req.externalReference,
+    };
+    if (req.webhookUrl) body.webhook = req.webhookUrl;
+
+    const res = await fetch(`${cfg.apiUrl}/withdraw/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Token ${token}` },
+      body: JSON.stringify(body),
+    });
+
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok || data.status === 'FAILED') {
+      this.logger.error(
+        {
+          event: 'campay_refund_failed',
+          httpStatus: res.status,
+          externalReference: req.externalReference,
+          response: data,
+        },
+        'Campay refund call failed',
+      );
+      throw new Error(
+        typeof data.message === 'string' ? data.message : `campay_http_${res.status}`,
+      );
+    }
+
+    const reference = data.reference as string | undefined;
+    if (!reference) {
+      this.logger.error(
+        {
+          event: 'campay_refund_missing_reference',
+          externalReference: req.externalReference,
+          response: data,
+        },
+        'Campay refund response missing reference field',
       );
       throw new Error('campay_missing_reference');
     }
