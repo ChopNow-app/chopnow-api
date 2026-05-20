@@ -30,6 +30,7 @@ export class RiderPayoutCronService {
     let scheduledCount = 0;
     let skippedBelowMin = 0;
     let skippedZero = 0;
+    let skippedKycIncomplete = 0;
     let totalXAF = 0;
     let failedCount = 0;
 
@@ -55,6 +56,9 @@ export class RiderPayoutCronService {
             break;
           case 'no_activity':
             skippedZero += 1;
+            break;
+          case 'kyc_incomplete':
+            skippedKycIncomplete += 1;
             break;
           case 'already_scheduled':
             // Idempotent re-run — no-op.
@@ -82,6 +86,7 @@ export class RiderPayoutCronService {
         scheduled: scheduledCount,
         skippedBelowMin,
         skippedZero,
+        skippedKycIncomplete,
         failed: failedCount,
         totalXAF,
       },
@@ -98,7 +103,33 @@ export class RiderPayoutCronService {
     | { outcome: 'below_minimum'; balanceXAF: number }
     | { outcome: 'no_activity'; balanceXAF: number }
     | { outcome: 'already_scheduled'; payoutId: string }
+    | { outcome: 'kyc_incomplete'; missing: string[] }
   > {
+    // KYC defense-in-depth (#213 review): RiderStatus.ACTIVE already
+    // requires admin approval (and admin verifies KYC photos before
+    // approving) but the cron should be its own backstop in case an
+    // approval ever fires before KYC was actually completed. If either
+    // identity photo is missing, refuse payout and flag the rider.
+    const kyc = await this.prisma.rider.findUnique({
+      where: { id: riderId },
+      select: { idCardPhotoUrl: true, selfiePhotoUrl: true },
+    });
+    const missing: string[] = [];
+    if (!kyc?.idCardPhotoUrl) missing.push('idCardPhotoUrl');
+    if (!kyc?.selfiePhotoUrl) missing.push('selfiePhotoUrl');
+    if (missing.length > 0) {
+      this.logger.warn(
+        {
+          event: 'rider_payout_skipped',
+          riderId,
+          reason: 'kyc_incomplete',
+          missing,
+        },
+        'rider payout refused — KYC photos missing despite ACTIVE status',
+      );
+      return { outcome: 'kyc_incomplete', missing };
+    }
+
     const balance = await this.finance.getRiderBalance(riderId);
 
     if (balance.balanceXAF <= 0) {
