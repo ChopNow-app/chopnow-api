@@ -27,6 +27,23 @@ export interface VendorBalance {
   isTrusted: boolean;
 }
 
+export interface RiderBalance {
+  riderId: string;
+  // Display name pulled via User.displayName; null if the rider hasn't
+  // set one (admins can still recognise them by phone in the wider view).
+  name: string | null;
+  // Signed; positive = platform owes rider. Riders rarely go negative
+  // since they don't take penalties at pilot scope, but the sign is
+  // consistent with the vendor shape.
+  balanceXAF: number;
+  components: {
+    grossXAF: number; // sum of riderShareXAF on delivered orders since last payout
+    adjustmentsXAF: number; // admin ADJUSTMENT entries since last payout
+  };
+  lastPayoutAt: Date | null;
+  lastPayoutId: string | null;
+}
+
 @Injectable()
 export class FinanceService {
   constructor(
@@ -123,6 +140,56 @@ export class FinanceService {
       lastPayoutAt: lastPayout?.paidAt ?? lastPayout?.sentAt ?? null,
       lastPayoutId: lastPayout?.id ?? null,
       isTrusted,
+    };
+  }
+
+  // Reads the rider's current ledger position. Simpler than vendor: no
+  // commission, no penalty — riders earn the delivery share directly.
+  async getRiderBalance(riderId: string): Promise<RiderBalance> {
+    const rider = await this.prisma.rider.findUnique({
+      where: { id: riderId },
+      select: { id: true, user: { select: { displayName: true } } },
+    });
+    if (!rider) {
+      throw new NotFoundException({ code: 'rider_not_found', message: 'Unknown rider.' });
+    }
+
+    const lastPayout = await this.prisma.riderPayout.findFirst({
+      where: { riderId, status: { in: ['PAID', 'IN_FLIGHT'] } },
+      orderBy: { periodEnd: 'desc' },
+      select: { id: true, paidAt: true, sentAt: true, periodEnd: true },
+    });
+    const cutoff = lastPayout?.periodEnd ?? null;
+
+    const payableAgg = await this.prisma.ledgerEntry.aggregate({
+      _sum: { amountXAF: true },
+      where: {
+        riderId,
+        account: LedgerAccount.RIDER_PAYABLE,
+        ...(cutoff ? { createdAt: { gt: cutoff } } : {}),
+      },
+    });
+    const adjustmentsAgg = await this.prisma.ledgerEntry.aggregate({
+      _sum: { amountXAF: true },
+      where: {
+        riderId,
+        account: LedgerAccount.PLATFORM_REVENUE,
+        eventType: 'ADJUSTMENT',
+        ...(cutoff ? { createdAt: { gt: cutoff } } : {}),
+      },
+    });
+
+    const balanceXAF = -(payableAgg._sum.amountXAF ?? 0) + 0;
+    const adjustmentsXAF = -(adjustmentsAgg._sum.amountXAF ?? 0) + 0;
+    const grossXAF = balanceXAF - adjustmentsXAF;
+
+    return {
+      riderId: rider.id,
+      name: rider.user.displayName ?? null,
+      balanceXAF,
+      components: { grossXAF, adjustmentsXAF },
+      lastPayoutAt: lastPayout?.paidAt ?? lastPayout?.sentAt ?? null,
+      lastPayoutId: lastPayout?.id ?? null,
     };
   }
 }

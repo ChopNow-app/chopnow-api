@@ -25,4 +25,18 @@ export class AdminFinanceController {
   getVendorBalance(@Param('vendorId', ParseUUIDPipe) vendorId: string) {
     return this.finance.getVendorBalance(vendorId);
   }
+
+  @Roles(...ADMIN_ROLES)
+  @Get('riders/:riderId/balance')
+  @ApiOperation({
+    summary: 'Rider balance — read from LedgerEntry, signed (positive = platform owes rider)',
+    description:
+      "Returns the rider's current balance plus per-component breakdown " +
+      '(gross, adjustments) accumulated since the last paid RiderPayout. ' +
+      'Riders have no commission or penalty surface in v1 — they earn the ' +
+      'rider share of the delivery fee directly. See ADR-0005.',
+  })
+  getRiderBalance(@Param('riderId', ParseUUIDPipe) riderId: string) {
+    return this.finance.getRiderBalance(riderId);
+  }
 }
