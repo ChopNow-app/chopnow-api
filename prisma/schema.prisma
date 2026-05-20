@@ -358,12 +358,13 @@ model Vendor {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  categories MenuCategory[]
-  items      Item[]
-  orders     Order[]
-  ratings    OrderRating[]
-  penalties  VendorPenalty[]
-  payouts    VendorPayout[]
+  categories      MenuCategory[]
+  items           Item[]
+  orders          Order[]
+  ratings         OrderRating[]
+  penalties       VendorPenalty[]
+  payouts         VendorPayout[]
+  cashoutRequests VendorCashoutRequest[]
 
   @@index([status])
   @@index([type])
@@ -721,6 +722,40 @@ model LedgerEntry {
   @@index([riderId, createdAt])
   @@index([orderId])
   @@map("ledger_entries")
+}
+
+enum CashoutRequestStatus {
+  PENDING_APPROVAL // vendor has requested, admin hasn't acted
+  APPROVED // admin approved, VendorPayout created
+  REJECTED // admin declined (reason captured)
+  CANCELLED // vendor or admin cancelled before approval
+}
+
+// On-demand cashout request for INFORMAL vendors (ADR-0005, 7.2b).
+// Separate from VendorPayout to keep the strict (vendorId, periodStart)
+// uniqueness clean — a rejected request shouldn't permanently block a
+// future request for that period.
+model VendorCashoutRequest {
+  id               String               @id @default(uuid())
+  vendorId         String
+  vendor           Vendor               @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  // Balance at the moment the vendor tapped "Demander virement". Snapshotted
+  // for admin transparency; final payout uses the live balance at approval.
+  requestedXAF     Int
+  status           CashoutRequestStatus @default(PENDING_APPROVAL)
+  // Set when admin acts.
+  approvedAt       DateTime?
+  approvedByUserId String?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  // FK to the VendorPayout created on approval; null until then or if rejected.
+  payoutId         String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([vendorId, status])
+  @@index([status, createdAt])
+  @@map("vendor_cashout_requests")
 }
 
 model VendorPayout {

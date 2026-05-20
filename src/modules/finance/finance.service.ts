@@ -1,6 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
 import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  CashoutRequestStatus,
   LedgerAccount,
+  LedgerEventType,
+  OrderStatus,
   PaymentStatus,
   RiderVehicleType,
   VendorStatus,
@@ -8,6 +16,11 @@ import {
 } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { LedgerService } from './ledger.service';
+
+// Same threshold the cron uses — keeps admin approval consistent with
+// the weekly batch. Negative-balance + dispute refusal applied identically.
+const MIN_CASHOUT_XAF = 500;
 
 // "Trusted vendor" threshold per ADR-0005 §Decision. Used by the
 // on-demand cashout path (7.2b) — trusted vendors get same-day approval,
@@ -87,6 +100,7 @@ export class FinanceService {
   constructor(
     @InjectPinoLogger(FinanceService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
+    private readonly ledger: LedgerService,
   ) {}
 
   // Reads the vendor's current ledger position. The balance is derived from
@@ -371,5 +385,321 @@ export class FinanceService {
     });
 
     return { total, rows };
+  }
+
+  // ── On-demand cashout requests (7.2b — INFORMAL vendors) ──────────
+  //
+  // INFORMAL vendors don't go through the weekly cron — they request
+  // cashout when they need it (daily cashflow expectation per ADR-0005).
+  // v1 is admin-gated: vendor request → admin approves → VendorPayout
+  // created via the same code path as the cron.
+
+  async requestVendorCashout(vendorId: string): Promise<{
+    requestId: string;
+    requestedXAF: number;
+    isTrusted: boolean;
+  }> {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { id: vendorId },
+      select: { id: true, type: true, status: true, name: true },
+    });
+    if (!vendor) {
+      throw new NotFoundException({ code: 'vendor_not_found' });
+    }
+    if (vendor.type !== VendorType.INFORMAL) {
+      throw new BadRequestException({
+        code: 'cashout_request_only_for_informal',
+        message:
+          'On-demand cashout is reserved for INFORMAL vendors. Formal vendors are paid via the Sunday cron.',
+      });
+    }
+    if (vendor.status !== VendorStatus.ACTIVE) {
+      throw new ConflictException({
+        code: 'vendor_not_active',
+        message: 'Cashout is only available for ACTIVE vendors.',
+      });
+    }
+
+    // Rate-limit: refuse if there's already a PENDING_APPROVAL request.
+    // Vendor must wait for admin to act on the prior one before queuing
+    // another. Keeps the admin queue from filling with duplicates.
+    const existingPending = await this.prisma.vendorCashoutRequest.findFirst({
+      where: { vendorId, status: CashoutRequestStatus.PENDING_APPROVAL },
+      select: { id: true },
+    });
+    if (existingPending) {
+      throw new ConflictException({
+        code: 'cashout_request_already_pending',
+        message: 'Une demande de virement est déjà en cours. Patiente la décision.',
+      });
+    }
+
+    const balance = await this.getVendorBalance(vendorId);
+    if (balance.balanceXAF <= 0) {
+      throw new ConflictException({
+        code: 'cashout_request_no_balance',
+        message: 'Aucun solde disponible pour le moment. Réessaie après ta prochaine livraison.',
+      });
+    }
+
+    const request = await this.prisma.vendorCashoutRequest.create({
+      data: {
+        vendorId,
+        requestedXAF: balance.balanceXAF,
+      },
+    });
+    this.logger.info(
+      {
+        event: 'cashout_requested',
+        vendorId,
+        requestId: request.id,
+        requestedXAF: balance.balanceXAF,
+        isTrusted: balance.isTrusted,
+      },
+      'vendor requested on-demand cashout',
+    );
+    return {
+      requestId: request.id,
+      requestedXAF: balance.balanceXAF,
+      isTrusted: balance.isTrusted,
+    };
+  }
+
+  async listCashoutRequests(opts: {
+    status?: CashoutRequestStatus;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    total: number;
+    rows: Array<{
+      requestId: string;
+      vendorId: string;
+      vendorName: string;
+      vendorType: VendorType;
+      requestedXAF: number;
+      status: CashoutRequestStatus;
+      createdAt: Date;
+      ageHours: number;
+      isTrusted: boolean;
+    }>;
+  }> {
+    const where = opts.status ? { status: opts.status } : {};
+    const limit = opts.limit ?? 50;
+    const offset = opts.offset ?? 0;
+
+    const [total, requests] = await Promise.all([
+      this.prisma.vendorCashoutRequest.count({ where }),
+      this.prisma.vendorCashoutRequest.findMany({
+        where,
+        orderBy: { createdAt: 'asc' },
+        skip: offset,
+        take: limit,
+        select: {
+          id: true,
+          vendorId: true,
+          requestedXAF: true,
+          status: true,
+          createdAt: true,
+          vendor: { select: { name: true, type: true } },
+        },
+      }),
+    ]);
+
+    // Trust per request (cheap at pilot scope — Promise.all over a page).
+    const trustMap = new Map<string, boolean>();
+    await Promise.all(
+      requests.map(async (r) => {
+        const b = await this.getVendorBalance(r.vendorId);
+        trustMap.set(r.id, b.isTrusted);
+      }),
+    );
+
+    const now = Date.now();
+    const rows = requests.map((r) => ({
+      requestId: r.id,
+      vendorId: r.vendorId,
+      vendorName: r.vendor.name,
+      vendorType: r.vendor.type,
+      requestedXAF: r.requestedXAF,
+      status: r.status,
+      createdAt: r.createdAt,
+      ageHours: Math.floor((now - r.createdAt.getTime()) / (60 * 60 * 1000)),
+      isTrusted: trustMap.get(r.id) ?? false,
+    }));
+
+    return { total, rows };
+  }
+
+  async approveCashoutRequest(
+    requestId: string,
+    adminUserId: string,
+  ): Promise<{
+    payoutId: string;
+    netXAF: number;
+  }> {
+    const request = await this.prisma.vendorCashoutRequest.findUnique({
+      where: { id: requestId },
+      select: {
+        id: true,
+        vendorId: true,
+        status: true,
+        vendor: { select: { id: true, momoPhone: true, createdAt: true } },
+      },
+    });
+    if (!request) {
+      throw new NotFoundException({ code: 'cashout_request_not_found' });
+    }
+    if (request.status !== CashoutRequestStatus.PENDING_APPROVAL) {
+      throw new ConflictException({
+        code: 'cashout_request_not_pending',
+        message: 'This request has already been resolved.',
+      });
+    }
+
+    // Re-read the live balance — never trust the requestedXAF snapshot,
+    // the vendor may have had more (or fewer) orders since they tapped.
+    const balance = await this.getVendorBalance(request.vendorId);
+    if (balance.balanceXAF < MIN_CASHOUT_XAF) {
+      throw new ConflictException({
+        code: 'cashout_below_minimum',
+        message: `Le solde actuel (${balance.balanceXAF} FCFA) est en dessous du minimum (${MIN_CASHOUT_XAF}).`,
+      });
+    }
+
+    // Negative-balance / dispute refusal (#205) — same rule as the cron.
+    const openDisputes = await this.prisma.order.count({
+      where: { vendorId: request.vendorId, paymentStatus: PaymentStatus.REFUND_PENDING },
+    });
+    if (openDisputes > 0) {
+      throw new ConflictException({
+        code: 'cashout_open_disputes',
+        message: 'Cannot approve while a refund is pending for this vendor.',
+      });
+    }
+
+    // Derive periodStart consistently with how the weekly cron does
+    // (last paid VendorPayout periodEnd, or vendor.createdAt).
+    const lastPaidPayout = await this.prisma.vendorPayout.findFirst({
+      where: { vendorId: request.vendorId, status: { in: ['PAID', 'IN_FLIGHT'] } },
+      orderBy: { periodEnd: 'desc' },
+      select: { periodEnd: true },
+    });
+    const periodStart = lastPaidPayout?.periodEnd ?? request.vendor.createdAt;
+    const periodEnd = new Date();
+
+    // Atomic: VendorPayout + paired ledger entries + Order.payoutId tag
+    // + VendorCashoutRequest status flip to APPROVED. Same eventId scheme
+    // as the cron so a single SQL query covers both code paths.
+    const payoutId = await this.prisma.$transaction(async (tx) => {
+      const payout = await tx.vendorPayout.create({
+        data: {
+          vendorId: request.vendorId,
+          periodStart,
+          periodEnd,
+          grossXAF: balance.components.grossXAF,
+          commissionXAF: balance.components.commissionXAF,
+          penaltyXAF: balance.components.penaltyXAF,
+          adjustmentsXAF: balance.components.adjustmentsXAF,
+          netXAF: balance.balanceXAF,
+          momoPhone: request.vendor.momoPhone,
+          scheduledFor: periodEnd,
+        },
+      });
+      await this.ledger.recordTransaction(
+        {
+          eventId: `vendor_payout:${payout.id}`,
+          eventType: LedgerEventType.VENDOR_PAYOUT,
+          entries: [
+            {
+              account: LedgerAccount.VENDOR_PAYABLE,
+              amountXAF: balance.balanceXAF,
+              vendorId: request.vendorId,
+              payoutId: payout.id,
+              description: 'Vendor on-demand cashout (admin approved)',
+            },
+            {
+              account: LedgerAccount.CAMPAY_FLOAT,
+              amountXAF: -balance.balanceXAF,
+              vendorId: request.vendorId,
+              payoutId: payout.id,
+              description: 'Funds leaving platform Campay float',
+            },
+          ],
+        },
+        tx,
+      );
+      await tx.order.updateMany({
+        where: {
+          vendorId: request.vendorId,
+          status: OrderStatus.DELIVERED,
+          deliveredAt: { gt: periodStart, lte: periodEnd },
+          payoutId: null,
+        },
+        data: { payoutId: payout.id },
+      });
+      await tx.vendorCashoutRequest.update({
+        where: { id: requestId },
+        data: {
+          status: CashoutRequestStatus.APPROVED,
+          approvedAt: periodEnd,
+          approvedByUserId: adminUserId,
+          payoutId: payout.id,
+        },
+      });
+      return payout.id;
+    });
+
+    this.logger.info(
+      {
+        event: 'cashout_approved',
+        vendorId: request.vendorId,
+        requestId,
+        payoutId,
+        adminUserId,
+        netXAF: balance.balanceXAF,
+      },
+      'admin approved cashout request',
+    );
+
+    return { payoutId, netXAF: balance.balanceXAF };
+  }
+
+  async rejectCashoutRequest(
+    requestId: string,
+    adminUserId: string,
+    reason: string,
+  ): Promise<void> {
+    const request = await this.prisma.vendorCashoutRequest.findUnique({
+      where: { id: requestId },
+      select: { id: true, status: true, vendorId: true },
+    });
+    if (!request) {
+      throw new NotFoundException({ code: 'cashout_request_not_found' });
+    }
+    if (request.status !== CashoutRequestStatus.PENDING_APPROVAL) {
+      throw new ConflictException({
+        code: 'cashout_request_not_pending',
+        message: 'This request has already been resolved.',
+      });
+    }
+    await this.prisma.vendorCashoutRequest.update({
+      where: { id: requestId },
+      data: {
+        status: CashoutRequestStatus.REJECTED,
+        rejectedAt: new Date(),
+        rejectionReason: reason,
+        approvedByUserId: adminUserId,
+      },
+    });
+    this.logger.info(
+      {
+        event: 'cashout_rejected',
+        vendorId: request.vendorId,
+        requestId,
+        adminUserId,
+        reason,
+      },
+      'admin rejected cashout request',
+    );
   }
 }
