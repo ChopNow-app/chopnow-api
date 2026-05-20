@@ -9,7 +9,9 @@ describe('FinanceService', () => {
   let service: FinanceService;
   let prisma: {
     vendor: { findUnique: jest.Mock };
+    rider: { findUnique: jest.Mock };
     vendorPayout: { findFirst: jest.Mock };
+    riderPayout: { findFirst: jest.Mock };
     ledgerEntry: { aggregate: jest.Mock; groupBy: jest.Mock };
     order: { count: jest.Mock };
   };
@@ -17,7 +19,9 @@ describe('FinanceService', () => {
   beforeEach(async () => {
     prisma = {
       vendor: { findUnique: jest.fn() },
+      rider: { findUnique: jest.fn() },
       vendorPayout: { findFirst: jest.fn().mockResolvedValue(null) },
+      riderPayout: { findFirst: jest.fn().mockResolvedValue(null) },
       ledgerEntry: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amountXAF: 0 } }),
         groupBy: jest.fn().mockResolvedValue([]),
@@ -165,6 +169,89 @@ describe('FinanceService', () => {
       expect(result.lastPayoutAt).toEqual(lastPayout.paidAt);
       expect(result.lastPayoutId).toBe('payout-1');
       // aggregate was called with createdAt > periodEnd
+      const aggregateArgs = prisma.ledgerEntry.aggregate.mock.calls[0][0];
+      expect(aggregateArgs.where.createdAt.gt).toEqual(lastPayout.periodEnd);
+    });
+  });
+
+  describe('getRiderBalance', () => {
+    it('throws NotFoundException with code rider_not_found when the rider does not exist', async () => {
+      prisma.rider.findUnique.mockResolvedValue(null);
+      await expect(service.getRiderBalance('r-nope')).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('returns a zero balance for a fresh rider (no ledger activity)', async () => {
+      prisma.rider.findUnique.mockResolvedValue({
+        id: 'r-1',
+        user: { displayName: 'Jean Mboué' },
+      });
+
+      const result = await service.getRiderBalance('r-1');
+
+      expect(result).toMatchObject({
+        riderId: 'r-1',
+        name: 'Jean Mboué',
+        balanceXAF: 0,
+        components: { grossXAF: 0, adjustmentsXAF: 0 },
+        lastPayoutAt: null,
+        lastPayoutId: null,
+      });
+    });
+
+    it('computes balance from RIDER_PAYABLE sum (inverted for rider-friendly sign)', async () => {
+      prisma.rider.findUnique.mockResolvedValue({
+        id: 'r-1',
+        user: { displayName: 'Jean' },
+      });
+      // Three delivered orders × 260 = -780 in RIDER_PAYABLE.
+      prisma.ledgerEntry.aggregate.mockResolvedValueOnce({ _sum: { amountXAF: -780 } });
+      // No adjustments.
+      prisma.ledgerEntry.aggregate.mockResolvedValueOnce({ _sum: { amountXAF: 0 } });
+
+      const result = await service.getRiderBalance('r-1');
+
+      expect(result.balanceXAF).toBe(780);
+      expect(result.components.grossXAF).toBe(780);
+      expect(result.components.adjustmentsXAF).toBe(0);
+    });
+
+    it('separates admin adjustments from gross delivery earnings', async () => {
+      prisma.rider.findUnique.mockResolvedValue({
+        id: 'r-1',
+        user: { displayName: null },
+      });
+      // -780 RIDER_PAYABLE (balance 780). Adjustments leg of an ADJUSTMENT
+      // event: PLATFORM_REVENUE entry of -100 means the platform recognised
+      // -100 of revenue (gave the rider a 100 bonus); rider's payable
+      // contribution from that event also reflects the +100.
+      prisma.ledgerEntry.aggregate.mockResolvedValueOnce({ _sum: { amountXAF: -880 } });
+      prisma.ledgerEntry.aggregate.mockResolvedValueOnce({ _sum: { amountXAF: -100 } });
+
+      const result = await service.getRiderBalance('r-1');
+
+      expect(result.balanceXAF).toBe(880);
+      expect(result.components.adjustmentsXAF).toBe(100);
+      expect(result.components.grossXAF).toBe(780);
+      expect(result.name).toBeNull();
+    });
+
+    it('uses last paid RiderPayout periodEnd as the ledger-history cutoff', async () => {
+      prisma.rider.findUnique.mockResolvedValue({
+        id: 'r-1',
+        user: { displayName: 'Jean' },
+      });
+      const lastPayout = {
+        id: 'rider-payout-1',
+        paidAt: new Date('2026-05-18T06:00:00Z'),
+        sentAt: new Date('2026-05-18T06:00:00Z'),
+        periodEnd: new Date('2026-05-17T23:59:59Z'),
+      };
+      prisma.riderPayout.findFirst.mockResolvedValue(lastPayout);
+
+      const result = await service.getRiderBalance('r-1');
+
+      expect(result.lastPayoutAt).toEqual(lastPayout.paidAt);
+      expect(result.lastPayoutId).toBe('rider-payout-1');
       const aggregateArgs = prisma.ledgerEntry.aggregate.mock.calls[0][0];
       expect(aggregateArgs.where.createdAt.gt).toEqual(lastPayout.periodEnd);
     });
