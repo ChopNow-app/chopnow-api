@@ -4,35 +4,68 @@ import { RiderVehicleType, VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 import { FinanceService } from './finance.service';
+import { LedgerService } from './ledger.service';
 
 describe('FinanceService', () => {
   let service: FinanceService;
   let prisma: {
     vendor: { findUnique: jest.Mock; findMany: jest.Mock };
     rider: { findUnique: jest.Mock; findMany: jest.Mock };
-    vendorPayout: { findFirst: jest.Mock };
+    vendorPayout: { findFirst: jest.Mock; create: jest.Mock };
     riderPayout: { findFirst: jest.Mock };
+    vendorCashoutRequest: {
+      findUnique: jest.Mock;
+      findFirst: jest.Mock;
+      findMany: jest.Mock;
+      create: jest.Mock;
+      update: jest.Mock;
+      count: jest.Mock;
+    };
     ledgerEntry: { aggregate: jest.Mock; groupBy: jest.Mock };
-    order: { count: jest.Mock; findMany: jest.Mock };
+    order: { count: jest.Mock; findMany: jest.Mock; updateMany: jest.Mock };
+    $transaction: jest.Mock;
   };
+  let ledger: { recordTransaction: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
       vendor: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
       rider: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
-      vendorPayout: { findFirst: jest.fn().mockResolvedValue(null) },
+      vendorPayout: {
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ id: 'payout-new', ...data })),
+      },
       riderPayout: { findFirst: jest.fn().mockResolvedValue(null) },
+      vendorCashoutRequest: {
+        findUnique: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+        create: jest.fn().mockImplementation(({ data }) => ({
+          id: 'req-1',
+          createdAt: new Date(),
+          ...data,
+        })),
+        update: jest.fn().mockImplementation(({ where, data }) => ({ id: where.id, ...data })),
+        count: jest.fn().mockResolvedValue(0),
+      },
       ledgerEntry: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amountXAF: 0 } }),
         groupBy: jest.fn().mockResolvedValue([]),
       },
-      order: { count: jest.fn().mockResolvedValue(0), findMany: jest.fn().mockResolvedValue([]) },
+      order: {
+        count: jest.fn().mockResolvedValue(0),
+        findMany: jest.fn().mockResolvedValue([]),
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+      $transaction: jest.fn().mockImplementation(async (cb) => cb(prisma)),
     };
+    ledger = { recordTransaction: jest.fn().mockResolvedValue(undefined) };
 
     const module = await Test.createTestingModule({
       providers: [
         FinanceService,
         { provide: PrismaService, useValue: prisma },
+        { provide: LedgerService, useValue: ledger },
         pinoLoggerProvider(FinanceService.name),
       ],
     }).compile();
@@ -432,6 +465,174 @@ describe('FinanceService', () => {
       const result = await service.listRefundQueue({});
       expect(result.rows[0].ageDays).toBe(2);
       expect(result.rows[0].cancelledAt).toBeNull();
+    });
+  });
+
+  describe('requestVendorCashout (7.2b)', () => {
+    function informalVendor() {
+      prisma.vendor.findUnique.mockResolvedValue({
+        id: 'v-1',
+        name: 'Tantine Belle',
+        type: VendorType.INFORMAL,
+        status: VendorStatus.ACTIVE,
+        createdAt: new Date('2026-04-01'),
+      });
+    }
+
+    it('creates a request with the live balance when no pending request exists', async () => {
+      informalVendor();
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: -3000 } });
+
+      const result = await service.requestVendorCashout('v-1');
+
+      expect(result.requestedXAF).toBe(3000);
+      expect(prisma.vendorCashoutRequest.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ vendorId: 'v-1', requestedXAF: 3000 }),
+      });
+    });
+
+    it('refuses non-INFORMAL vendors (formal vendors use the Sunday cron)', async () => {
+      prisma.vendor.findUnique.mockResolvedValue({
+        id: 'v-1',
+        name: 'Resto',
+        type: VendorType.RESTAURANT,
+        status: VendorStatus.ACTIVE,
+        createdAt: new Date('2026-04-01'),
+      });
+
+      await expect(service.requestVendorCashout('v-1')).rejects.toMatchObject({
+        response: { code: 'cashout_request_only_for_informal' },
+      });
+      expect(prisma.vendorCashoutRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses if a request is already pending (rate-limit)', async () => {
+      informalVendor();
+      prisma.vendorCashoutRequest.findFirst.mockResolvedValue({ id: 'req-existing' });
+
+      await expect(service.requestVendorCashout('v-1')).rejects.toMatchObject({
+        response: { code: 'cashout_request_already_pending' },
+      });
+      expect(prisma.vendorCashoutRequest.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses if balance is zero or negative', async () => {
+      informalVendor();
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: 0 } });
+
+      await expect(service.requestVendorCashout('v-1')).rejects.toMatchObject({
+        response: { code: 'cashout_request_no_balance' },
+      });
+    });
+  });
+
+  describe('approveCashoutRequest (7.2b)', () => {
+    function pendingRequest() {
+      prisma.vendorCashoutRequest.findUnique.mockResolvedValue({
+        id: 'req-1',
+        vendorId: 'v-1',
+        status: 'PENDING_APPROVAL',
+        vendor: {
+          id: 'v-1',
+          momoPhone: '+237670000111',
+          createdAt: new Date('2026-04-01'),
+        },
+      });
+      prisma.vendor.findUnique.mockResolvedValue({
+        id: 'v-1',
+        name: 'Tantine',
+        type: VendorType.INFORMAL,
+        createdAt: new Date('2026-04-01'),
+      });
+    }
+
+    it('creates a VendorPayout + paired ledger entries when balance >= minimum and no disputes', async () => {
+      pendingRequest();
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: -3000 } });
+
+      const result = await service.approveCashoutRequest('req-1', 'admin-1');
+
+      expect(result).toMatchObject({ netXAF: 3000 });
+      expect(prisma.vendorPayout.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          vendorId: 'v-1',
+          netXAF: 3000,
+          momoPhone: '+237670000111',
+        }),
+      });
+      expect(ledger.recordTransaction).toHaveBeenCalledTimes(1);
+      const [input] = ledger.recordTransaction.mock.calls[0];
+      expect(input.eventType).toBe('VENDOR_PAYOUT');
+      expect(input.entries).toEqual([
+        expect.objectContaining({ account: 'VENDOR_PAYABLE', amountXAF: 3000 }),
+        expect.objectContaining({ account: 'CAMPAY_FLOAT', amountXAF: -3000 }),
+      ]);
+      // Request is marked APPROVED with the new payoutId
+      expect(prisma.vendorCashoutRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'req-1' },
+          data: expect.objectContaining({
+            status: 'APPROVED',
+            approvedByUserId: 'admin-1',
+            payoutId: 'payout-new',
+          }),
+        }),
+      );
+    });
+
+    it('refuses if balance dropped below minimum since request', async () => {
+      pendingRequest();
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: -200 } });
+
+      await expect(service.approveCashoutRequest('req-1', 'admin-1')).rejects.toMatchObject({
+        response: { code: 'cashout_below_minimum' },
+      });
+      expect(prisma.vendorPayout.create).not.toHaveBeenCalled();
+      expect(ledger.recordTransaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses if an open dispute appeared since request (#205)', async () => {
+      pendingRequest();
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: -3000 } });
+      prisma.order.count.mockResolvedValue(1);
+
+      await expect(service.approveCashoutRequest('req-1', 'admin-1')).rejects.toMatchObject({
+        response: { code: 'cashout_open_disputes' },
+      });
+      expect(prisma.vendorPayout.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses if request is not pending (already approved / rejected)', async () => {
+      prisma.vendorCashoutRequest.findUnique.mockResolvedValue({
+        id: 'req-1',
+        vendorId: 'v-1',
+        status: 'APPROVED',
+        vendor: { id: 'v-1', momoPhone: '+237670000111', createdAt: new Date() },
+      });
+      await expect(service.approveCashoutRequest('req-1', 'admin-1')).rejects.toMatchObject({
+        response: { code: 'cashout_request_not_pending' },
+      });
+    });
+  });
+
+  describe('rejectCashoutRequest (7.2b)', () => {
+    it('flips a pending request to REJECTED with reason', async () => {
+      prisma.vendorCashoutRequest.findUnique.mockResolvedValue({
+        id: 'req-1',
+        vendorId: 'v-1',
+        status: 'PENDING_APPROVAL',
+      });
+      await service.rejectCashoutRequest('req-1', 'admin-1', 'KYC incomplete');
+      expect(prisma.vendorCashoutRequest.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'req-1' },
+          data: expect.objectContaining({
+            status: 'REJECTED',
+            rejectionReason: 'KYC incomplete',
+            approvedByUserId: 'admin-1',
+          }),
+        }),
+      );
     });
   });
 });

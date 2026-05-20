@@ -29,6 +29,7 @@ import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { SubmitVendorDto } from './dto/submit-vendor.dto';
 import { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
+import { FinanceService } from '../finance/finance.service';
 import { VendorService } from './vendor.service';
 
 // Photo upload guardrail. 5MB matches what the Vendor form on Android Chrome
@@ -45,7 +46,10 @@ const imagePipe = new ParseFilePipeBuilder()
 @ApiTags('vendors')
 @Controller('vendors')
 export class VendorController {
-  constructor(private readonly vendors: VendorService) {}
+  constructor(
+    private readonly vendors: VendorService,
+    private readonly finance: FinanceService,
+  ) {}
 
   // Public: anyone with the share link `tchopnow.app/vendre` can submit. The
   // throttler still applies — IP-level rate limit prevents spammy resubmissions.
@@ -130,6 +134,27 @@ export class VendorController {
   updateMe(@Req() req: Request, @Body() dto: UpdateVendorProfileDto) {
     const user = req.user as { id: string };
     return this.vendors.updateOwn(user.id, dto);
+  }
+
+  // INFORMAL on-demand cashout request (ADR-0005, 7.2b). Creates a
+  // VendorCashoutRequest with status PENDING_APPROVAL — admin must
+  // approve before money moves. Refuses if another request is already
+  // pending or if balance is zero / negative.
+  @Roles(UserRole.VENDOR)
+  @ApiBearerAuth()
+  @Post('me/cashout-request')
+  @HttpCode(201)
+  @ApiOperation({
+    summary: 'Request an on-demand cashout (INFORMAL vendors only)',
+    description:
+      'Creates a VendorCashoutRequest. Admin must approve before payout fires. ' +
+      'Refuses if a pending request already exists, vendor is not INFORMAL, or ' +
+      'balance is non-positive. SEMI_FORMAL / RESTAURANT vendors use the Sunday cron.',
+  })
+  async requestCashout(@Req() req: Request) {
+    const user = req.user as { id: string };
+    const vendor = await this.vendors.getOwn(user.id);
+    return this.finance.requestVendorCashout(vendor.id);
   }
 
   @Roles(UserRole.VENDOR)

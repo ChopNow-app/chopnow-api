@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { FinanceModule } from '../finance/finance.module';
 import { AvailabilityController } from './availability.controller';
 import { AvailabilityService } from './availability.service';
 import { BrowseController } from './browse.controller';
@@ -24,6 +25,7 @@ import { VendorService } from './vendor.service';
  * Story 2.12 — FTS search (post-MVP)
  */
 @Module({
+  imports: [FinanceModule],
   controllers: [VendorController, MenuController, AvailabilityController, BrowseController],
   providers: [VendorService, MenuService, AvailabilityService, BrowseService],
   exports: [VendorService, MenuService, AvailabilityService, BrowseService],

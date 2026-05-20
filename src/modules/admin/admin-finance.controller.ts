@@ -1,8 +1,20 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { FinanceService } from '../finance/finance.service';
+import { ListCashoutRequestsDto, RejectCashoutRequestDto } from './dto/cashout.dto';
 import {
   ListRefundQueueDto,
   ListRiderBalancesDto,
@@ -78,5 +90,48 @@ export class AdminFinanceController {
   })
   listRefundQueue(@Query() query: ListRefundQueueDto) {
     return this.finance.listRefundQueue(query);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Get('finance/cashout-requests')
+  @ApiOperation({
+    summary: 'Cashout request queue — INFORMAL vendor on-demand cashouts (ADR-0005, 7.2b)',
+    description:
+      'Paginated list of vendor-side cashout requests, oldest first. Filter ' +
+      'by CashoutRequestStatus. Each row carries vendor name, requested amount, ' +
+      'age in hours, and the live isTrusted flag.',
+  })
+  listCashoutRequests(@Query() query: ListCashoutRequestsDto) {
+    return this.finance.listCashoutRequests(query);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Post('finance/cashout-requests/:requestId/approve')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Approve a cashout request — creates a VendorPayout via the 7.2a path',
+    description:
+      'Reads live balance, applies the same negative-balance + minimum-amount ' +
+      'guards as the weekly cron, creates a VendorPayout (status PENDING) with ' +
+      'paired VENDOR_PAYABLE / CAMPAY_FLOAT ledger entries. Refuses if balance ' +
+      'changed below MIN_CASHOUT_XAF since request, or open dispute appeared.',
+  })
+  approveCashoutRequest(@Param('requestId', ParseUUIDPipe) requestId: string, @Req() req: Request) {
+    const admin = req.user as { id: string };
+    return this.finance.approveCashoutRequest(requestId, admin.id);
+  }
+
+  @Roles(...ADMIN_ROLES)
+  @Post('finance/cashout-requests/:requestId/reject')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Reject a cashout request with a reason' })
+  async rejectCashoutRequest(
+    @Param('requestId', ParseUUIDPipe) requestId: string,
+    @Body() dto: RejectCashoutRequestDto,
+    @Req() req: Request,
+  ) {
+    const admin = req.user as { id: string };
+    await this.finance.rejectCashoutRequest(requestId, admin.id, dto.reason);
+    return { ok: true };
   }
 }
