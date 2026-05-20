@@ -7,6 +7,7 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { CampayWebhookDedupService } from '../../infra/campay/campay-webhook-dedup.service';
 import { CampayService, CampayWebhookPayload } from '../../infra/campay/campay.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -39,6 +40,7 @@ export class PaymentsService {
     private readonly redis: RedisService,
     private readonly events: EventEmitter2,
     private readonly env: EnvService,
+    private readonly dedup: CampayWebhookDedupService,
   ) {}
 
   /**
@@ -142,7 +144,24 @@ export class PaymentsService {
       return { received: true };
     }
 
-    // Step 1: short-lived lock to serialise duplicates.
+    // Step 0 (S3 #88): persistence-layer dedup. If a previous webhook
+    // for this (COLLECT, reference) was already processed, the unique
+    // insert fails and we bail without touching any state. Survives
+    // process restarts unlike the Redis lock below.
+    const dedup = await this.dedup.markProcessed({
+      eventType: 'COLLECT',
+      reference,
+      payload,
+    });
+    if (!dedup.isFirst) {
+      return { received: true };
+    }
+
+    // Step 1: short-lived lock to serialise duplicates inside a single
+    // millisecond window. Belt + suspenders with the dedup table — if
+    // two webhooks slip past the insert race (extremely unlikely), the
+    // Redis lock still serialises them so onPaymentSucceeded can rely
+    // on its own status guard.
     const lockAcquired = await this.redis.setNX(
       `lock:payment:${reference}`,
       '1',
@@ -165,11 +184,13 @@ export class PaymentsService {
         { event: 'campay_webhook_unknown_reference', reference },
         'Campay webhook for unknown reference (no matching order)',
       );
+      await this.dedup.recordResult({ eventType: 'COLLECT', reference, result: 'no_match' });
       return { received: true };
     }
 
     // Step 3: dispatch by status. Other statuses (PENDING) are no-ops — we
     // wait for the terminal one.
+    let dedupResult = 'ignored_non_terminal';
     if (payload.status === 'SUCCESSFUL') {
       // Re-fetch by id to get the freshest paymentStatus — emit only if
       // we're transitioning from a non-PAID state. OrdersService.onPaymentSucceeded
@@ -179,6 +200,7 @@ export class PaymentsService {
         providerReference: payload.reference ?? reference,
         payerPhone: payload.phone_number,
       });
+      dedupResult = 'order_paid_event_emitted';
     } else if (payload.status === 'FAILED' || payload.status === 'CANCELLED') {
       if (order.paymentStatus !== PaymentStatus.PAID) {
         await this.prisma.order.update({
@@ -189,9 +211,13 @@ export class PaymentsService {
           orderId: order.id,
           reason: payload.status,
         });
+        dedupResult = `payment_${payload.status.toLowerCase()}`;
+      } else {
+        dedupResult = 'already_paid_ignored';
       }
     }
 
+    await this.dedup.recordResult({ eventType: 'COLLECT', reference, result: dedupResult });
     return { received: true };
   }
 

@@ -15,6 +15,7 @@ import {
   VendorType,
 } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
+import { CampayWebhookDedupService } from '../../infra/campay/campay-webhook-dedup.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { LedgerService } from './ledger.service';
 
@@ -101,6 +102,7 @@ export class FinanceService {
     @InjectPinoLogger(FinanceService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly ledger: LedgerService,
+    private readonly dedup: CampayWebhookDedupService,
   ) {}
 
   // Reads the vendor's current ledger position. The balance is derived from
@@ -728,11 +730,25 @@ export class FinanceService {
     const succeeded = status === 'SUCCESSFUL' || status === 'SUCCESS' || status === 'PAID';
     const failed = status === 'FAILED' || status === 'CANCELLED';
     if (!succeeded && !failed) {
-      // PENDING or anything else — just ack and wait for the next callback.
+      // PENDING or anything else — just ack and wait for the next
+      // callback. Don't record in the dedup table either — the terminal
+      // callback (later) should be the one that books the result.
       this.logger.info(
         { event: 'campay_transfer_webhook_ignored', reference, status },
         'Campay transfer webhook in non-terminal state, ignored',
       );
+      return { received: true };
+    }
+
+    // S3 #88: persistence-layer dedup. Terminal-status callbacks only
+    // process once per (TRANSFER, reference). Survives restarts and
+    // multi-instance replicas — the unique constraint is the gate.
+    const dedup = await this.dedup.markProcessed({
+      eventType: 'TRANSFER',
+      reference,
+      payload,
+    });
+    if (!dedup.isFirst) {
       return { received: true };
     }
 
@@ -755,6 +771,11 @@ export class FinanceService {
           },
           'Campay transfer webhook arrived but payout is not IN_FLIGHT — likely duplicate or stale',
         );
+        await this.dedup.recordResult({
+          eventType: 'TRANSFER',
+          reference,
+          result: `vendor_status_mismatch_${vendor.status.toLowerCase()}`,
+        });
         return { received: true };
       }
       const res = await this.prisma.vendorPayout.updateMany({
@@ -779,6 +800,11 @@ export class FinanceService {
             : 'vendor payout FAILED — Campay rejected',
         );
       }
+      await this.dedup.recordResult({
+        eventType: 'TRANSFER',
+        reference,
+        result: succeeded ? 'vendor_paid' : 'vendor_failed',
+      });
       return { received: true };
     }
 
@@ -797,6 +823,11 @@ export class FinanceService {
           },
           'Campay transfer webhook arrived but payout is not IN_FLIGHT — likely duplicate or stale',
         );
+        await this.dedup.recordResult({
+          eventType: 'TRANSFER',
+          reference,
+          result: `rider_status_mismatch_${rider.status.toLowerCase()}`,
+        });
         return { received: true };
       }
       const res = await this.prisma.riderPayout.updateMany({
@@ -821,6 +852,11 @@ export class FinanceService {
             : 'rider payout FAILED — Campay rejected',
         );
       }
+      await this.dedup.recordResult({
+        eventType: 'TRANSFER',
+        reference,
+        result: succeeded ? 'rider_paid' : 'rider_failed',
+      });
       return { received: true };
     }
 
@@ -828,6 +864,7 @@ export class FinanceService {
       { event: 'campay_transfer_webhook_unknown_reference', reference },
       'Campay transfer webhook reference matched no payout',
     );
+    await this.dedup.recordResult({ eventType: 'TRANSFER', reference, result: 'no_match' });
     return { received: true };
   }
 }
