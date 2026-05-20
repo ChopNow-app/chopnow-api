@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from '../../infra/prisma/prisma.module';
 import { FinanceService } from './finance.service';
 import { LedgerService } from './ledger.service';
+import { VendorPayoutCronService } from './vendor-payout-cron.service';
 
 /**
  * Epic 7 — Finance & Cashout.
@@ -15,7 +16,7 @@ import { LedgerService } from './ledger.service';
 @Module({
   imports: [PrismaModule],
   controllers: [],
-  providers: [LedgerService, FinanceService],
-  exports: [LedgerService, FinanceService],
+  providers: [LedgerService, FinanceService, VendorPayoutCronService],
+  exports: [LedgerService, FinanceService, VendorPayoutCronService],
 })
 export class FinanceModule {}
