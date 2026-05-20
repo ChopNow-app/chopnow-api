@@ -702,4 +702,132 @@ export class FinanceService {
       'admin rejected cashout request',
     );
   }
+
+  // ── Outbound transfer webhook (S3 / #216) ────────────────────────
+  //
+  // Campay POSTs to /webhooks/campay/transfer after an outbound /withdraw/.
+  // The transfer was initiated by PayoutTransferWorker which set
+  // VendorPayout.campayRef / RiderPayout.campayRef. We resolve by that
+  // reference and flip IN_FLIGHT → PAID (or FAILED) atomically with a
+  // status guard so duplicate webhooks are no-ops.
+  async handleTransferWebhook(payload: {
+    status?: string;
+    reference?: string;
+    external_reference?: string;
+    failure_reason?: string;
+  }): Promise<{ received: true }> {
+    const reference = payload.reference ?? payload.external_reference;
+    if (!reference) {
+      this.logger.warn(
+        { event: 'campay_transfer_webhook_missing_reference', payload },
+        'Campay transfer webhook missing reference field',
+      );
+      return { received: true };
+    }
+    const status = (payload.status ?? '').toUpperCase();
+    const succeeded = status === 'SUCCESSFUL' || status === 'SUCCESS' || status === 'PAID';
+    const failed = status === 'FAILED' || status === 'CANCELLED';
+    if (!succeeded && !failed) {
+      // PENDING or anything else — just ack and wait for the next callback.
+      this.logger.info(
+        { event: 'campay_transfer_webhook_ignored', reference, status },
+        'Campay transfer webhook in non-terminal state, ignored',
+      );
+      return { received: true };
+    }
+
+    // Try VendorPayout first; if no match, RiderPayout. The eventId
+    // prefix in external_reference would be cleaner but Campay's
+    // outbound reference is its own; we just look up by campayRef.
+    const now = new Date();
+    const vendor = await this.prisma.vendorPayout.findUnique({
+      where: { campayRef: reference },
+      select: { id: true, status: true },
+    });
+    if (vendor) {
+      if (vendor.status !== 'IN_FLIGHT') {
+        this.logger.warn(
+          {
+            event: 'campay_transfer_webhook_status_mismatch',
+            payoutKind: 'vendor',
+            payoutId: vendor.id,
+            currentStatus: vendor.status,
+          },
+          'Campay transfer webhook arrived but payout is not IN_FLIGHT — likely duplicate or stale',
+        );
+        return { received: true };
+      }
+      const res = await this.prisma.vendorPayout.updateMany({
+        where: { id: vendor.id, status: 'IN_FLIGHT' },
+        data: succeeded
+          ? { status: 'PAID', paidAt: now }
+          : {
+              status: 'FAILED',
+              failureReason: payload.failure_reason ?? 'campay_reported_failure',
+            },
+      });
+      if (res.count === 1) {
+        this.logger.info(
+          {
+            event: succeeded ? 'payout_transfer_succeeded' : 'payout_transfer_failed',
+            kind: 'vendor',
+            payoutId: vendor.id,
+            reference,
+          },
+          succeeded
+            ? 'vendor payout PAID — Campay confirmed'
+            : 'vendor payout FAILED — Campay rejected',
+        );
+      }
+      return { received: true };
+    }
+
+    const rider = await this.prisma.riderPayout.findUnique({
+      where: { campayRef: reference },
+      select: { id: true, status: true },
+    });
+    if (rider) {
+      if (rider.status !== 'IN_FLIGHT') {
+        this.logger.warn(
+          {
+            event: 'campay_transfer_webhook_status_mismatch',
+            payoutKind: 'rider',
+            payoutId: rider.id,
+            currentStatus: rider.status,
+          },
+          'Campay transfer webhook arrived but payout is not IN_FLIGHT — likely duplicate or stale',
+        );
+        return { received: true };
+      }
+      const res = await this.prisma.riderPayout.updateMany({
+        where: { id: rider.id, status: 'IN_FLIGHT' },
+        data: succeeded
+          ? { status: 'PAID', paidAt: now }
+          : {
+              status: 'FAILED',
+              failureReason: payload.failure_reason ?? 'campay_reported_failure',
+            },
+      });
+      if (res.count === 1) {
+        this.logger.info(
+          {
+            event: succeeded ? 'payout_transfer_succeeded' : 'payout_transfer_failed',
+            kind: 'rider',
+            payoutId: rider.id,
+            reference,
+          },
+          succeeded
+            ? 'rider payout PAID — Campay confirmed'
+            : 'rider payout FAILED — Campay rejected',
+        );
+      }
+      return { received: true };
+    }
+
+    this.logger.warn(
+      { event: 'campay_transfer_webhook_unknown_reference', reference },
+      'Campay transfer webhook reference matched no payout',
+    );
+    return { received: true };
+  }
 }
