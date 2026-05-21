@@ -6,15 +6,38 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 
-// Story 4.17 — only orders where a rider has been dispatched and is
-// actively moving through delivery are eligible for a proxy call. We
-// don't expose the call button before pickup or after drop-off.
-const CALL_ELIGIBLE_STATUSES: ReadonlySet<OrderStatus> = new Set([
+// Story 4.17 / 3.17 — masked voice proxy. Each party sees the TchopNow
+// voice number on caller ID; the platform bridges via Twilio. No party
+// ever sees another party's raw phone number, so they cannot bypass
+// the platform via direct contact.
+//
+// Eligibility windows per direction:
+//   rider ↔ consumer    — order must be PICKED_UP or coming up to it
+//                          (vendor accepted, food being delivered)
+//   vendor ↔ consumer   — anytime after vendor ACCEPTED, until DELIVERED
+//                          (consumer asks about address, vendor flags
+//                          out-of-stock substitution, etc.)
+//   vendor ↔ rider      — only when a rider has been assigned and the
+//                          order is in the prep/pickup window
+//                          (vendor calls rider before they arrive)
+//   consumer ↔ vendor   — same as vendor ↔ consumer (symmetric)
+//   consumer ↔ rider    — same as rider ↔ consumer (symmetric)
+
+const ALL_LIVE_STATUSES: ReadonlySet<OrderStatus> = new Set([
   OrderStatus.ACCEPTED,
   OrderStatus.IN_PREP,
   OrderStatus.READY_PICKUP,
   OrderStatus.PICKED_UP,
 ]);
+
+// Vendor ↔ rider only makes sense once a rider has been dispatched. The
+// rider may not pick up yet, but they're assigned (status guard is still
+// the live set; we additionally require riderId to be present).
+const RIDER_INVOLVED_STATUSES = ALL_LIVE_STATUSES;
+
+// Leg type — drives the TwiML bridge to pick the right destination
+// number. Stays opaque to clients; passed as ?to= on the webhook URL.
+export type CallTarget = 'consumer' | 'vendor' | 'rider';
 
 @Injectable()
 export class VoiceProxyService {
@@ -25,89 +48,250 @@ export class VoiceProxyService {
     private readonly env: EnvService,
   ) {}
 
-  /**
-   * Rider taps "Appeler le client" in the livreur app.
-   *
-   * Flow:
-   *   1. Verify the caller is the assigned rider on this order.
-   *   2. Ask Twilio to call the *rider's* phone first; the caller ID is
-   *      our TchopNow voice number (never the client's number).
-   *   3. When the rider answers, Twilio fetches `/api/webhooks/twilio/voice/bridge?orderId=X`
-   *      which returns TwiML that <Dial>s the client's deliveryPhone — also
-   *      masked behind the same TchopNow number.
-   *   4. Hard 3-min cap via TwilioService.timeLimit.
-   */
-  async startRiderToConsumer(orderId: string, riderUserId: string): Promise<{ callSid: string }> {
-    const rider = await this.prisma.rider.findUnique({
-      where: { userId: riderUserId },
-      select: { id: true, user: { select: { phone: true } } },
-    });
-    if (!rider) throw new NotFoundException('rider_not_found');
+  // ── Rider-initiated calls ────────────────────────────────────────
 
+  async startRiderToConsumer(orderId: string, riderUserId: string): Promise<{ callSid: string }> {
+    const rider = await this.requireRider(riderUserId);
+    await this.requireOrderAssignedToRider(orderId, rider.id);
+    return this.bridgeCall({
+      fromUserPhone: rider.user.phone,
+      target: 'consumer',
+      orderId,
+      direction: 'rider_to_consumer',
+    });
+  }
+
+  // ── Vendor-initiated calls ───────────────────────────────────────
+
+  async startVendorToConsumer(orderId: string, vendorUserId: string): Promise<{ callSid: string }> {
+    const vendor = await this.requireVendor(vendorUserId);
+    await this.requireOrderForVendor(orderId, vendor.id, { needRider: false });
+    return this.bridgeCall({
+      fromUserPhone: vendor.whatsappPhone,
+      target: 'consumer',
+      orderId,
+      direction: 'vendor_to_consumer',
+    });
+  }
+
+  async startVendorToRider(orderId: string, vendorUserId: string): Promise<{ callSid: string }> {
+    const vendor = await this.requireVendor(vendorUserId);
+    await this.requireOrderForVendor(orderId, vendor.id, { needRider: true });
+    return this.bridgeCall({
+      fromUserPhone: vendor.whatsappPhone,
+      target: 'rider',
+      orderId,
+      direction: 'vendor_to_rider',
+    });
+  }
+
+  // ── Consumer-initiated calls ─────────────────────────────────────
+
+  async startConsumerToVendor(
+    orderId: string,
+    consumerUserId: string,
+  ): Promise<{ callSid: string }> {
+    const order = await this.requireOrderForConsumer(orderId, consumerUserId, {
+      needRider: false,
+    });
+    const consumer = await this.requireConsumer(consumerUserId);
+    return this.bridgeCall({
+      fromUserPhone: consumer.phone,
+      target: 'vendor',
+      orderId: order.id,
+      direction: 'consumer_to_vendor',
+    });
+  }
+
+  async startConsumerToRider(
+    orderId: string,
+    consumerUserId: string,
+  ): Promise<{ callSid: string }> {
+    const order = await this.requireOrderForConsumer(orderId, consumerUserId, {
+      needRider: true,
+    });
+    const consumer = await this.requireConsumer(consumerUserId);
+    return this.bridgeCall({
+      fromUserPhone: consumer.phone,
+      target: 'rider',
+      orderId: order.id,
+      direction: 'consumer_to_rider',
+    });
+  }
+
+  // ── TwiML bridge ─────────────────────────────────────────────────
+
+  // Twilio fetches the bridge URL after the originating leg answers.
+  // ?to=consumer|vendor|rider picks which party to dial.
+  async buildBridgeTwiml(orderId: string, target: CallTarget): Promise<string> {
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
-      select: { id: true, riderId: true, status: true, deliveryPhone: true },
+      select: {
+        status: true,
+        deliveryPhone: true,
+        vendor: { select: { whatsappPhone: true } },
+        rider: { select: { user: { select: { phone: true } } } },
+      },
     });
-    if (!order || order.riderId !== rider.id) throw new NotFoundException('order_not_found');
-
-    if (!CALL_ELIGIBLE_STATUSES.has(order.status)) {
-      throw new NotFoundException('order_not_found'); // status-leak guard
+    if (!order || !ALL_LIVE_STATUSES.has(order.status)) {
+      return this.hangupTwiml("La commande n'est plus active.");
     }
 
-    const riderPhone = rider.user.phone;
-    if (!riderPhone) {
-      throw new NotFoundException('rider_phone_missing');
+    let dialNumber: string | null = null;
+    let copy = '';
+    if (target === 'consumer') {
+      dialNumber = order.deliveryPhone;
+      copy = 'Connexion avec votre client TchopNow.';
+    } else if (target === 'vendor') {
+      dialNumber = order.vendor?.whatsappPhone ?? null;
+      copy = 'Connexion avec le restaurant TchopNow.';
+    } else if (target === 'rider') {
+      dialNumber = order.rider?.user?.phone ?? null;
+      copy = 'Connexion avec votre livreur TchopNow.';
     }
 
-    const bridgeUrl = this.buildBridgeUrl(order.id);
-    const callSid = await this.twilio.startBridgedCall(normalizePhone(riderPhone), bridgeUrl);
+    if (!dialNumber) {
+      return this.hangupTwiml('Numéro indisponible.');
+    }
 
+    const cfg = this.env.twilio;
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Response>',
+      `  <Say language="fr-FR">${copy}</Say>`,
+      `  <Dial callerId="${cfg.voiceFrom ?? ''}" timeout="30" timeLimit="170">`,
+      `    <Number>${normalizePhone(dialNumber)}</Number>`,
+      '  </Dial>',
+      '</Response>',
+    ].join('');
+  }
+
+  // ── private ──────────────────────────────────────────────────────
+
+  private hangupTwiml(message: string): string {
+    return [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<Response>',
+      `  <Say language="fr-FR">${message}</Say>`,
+      '  <Hangup/>',
+      '</Response>',
+    ].join('');
+  }
+
+  private async bridgeCall(args: {
+    fromUserPhone: string | null | undefined;
+    target: CallTarget;
+    orderId: string;
+    direction: string;
+  }): Promise<{ callSid: string }> {
+    if (!args.fromUserPhone) {
+      throw new NotFoundException('caller_phone_missing');
+    }
+    const bridgeUrl = this.buildBridgeUrl(args.orderId, args.target);
+    const callSid = await this.twilio.startBridgedCall(
+      normalizePhone(args.fromUserPhone),
+      bridgeUrl,
+    );
     this.logger.info(
       {
         event: 'voice_proxy_call_started',
-        orderId: order.id,
+        orderId: args.orderId,
         callSid,
-        direction: 'rider_to_consumer',
+        direction: args.direction,
       },
       'Voice proxy bridged call started',
     );
     return { callSid };
   }
 
-  /**
-   * Returns the TwiML body Twilio fetches when the rider's leg answers.
-   * Twilio reads the XML and dials the consumer.
-   */
-  async buildBridgeTwiml(orderId: string): Promise<string> {
-    const order = await this.prisma.order.findUnique({
-      where: { id: orderId },
-      select: { deliveryPhone: true, status: true },
-    });
-    if (!order || !CALL_ELIGIBLE_STATUSES.has(order.status)) {
-      // Hang up politely — refuse to bridge for stale / cancelled orders.
-      return [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<Response>',
-        '  <Say language="fr-FR">La commande n\'est plus active.</Say>',
-        '  <Hangup/>',
-        '</Response>',
-      ].join('');
-    }
-
-    const cfg = this.env.twilio;
-    const consumerNumber = normalizePhone(order.deliveryPhone);
-    return [
-      '<?xml version="1.0" encoding="UTF-8"?>',
-      '<Response>',
-      '  <Say language="fr-FR">Connexion avec votre client TchopNow.</Say>',
-      `  <Dial callerId="${cfg.voiceFrom ?? ''}" timeout="30" timeLimit="170">`,
-      `    <Number>${consumerNumber}</Number>`,
-      '  </Dial>',
-      '</Response>',
-    ].join('');
+  private buildBridgeUrl(orderId: string, target: CallTarget): string {
+    return (
+      `${this.env.appUrl}/api/webhooks/twilio/voice/bridge` +
+      `?orderId=${encodeURIComponent(orderId)}` +
+      `&to=${encodeURIComponent(target)}`
+    );
   }
 
-  private buildBridgeUrl(orderId: string): string {
-    return `${this.env.appUrl}/api/webhooks/twilio/voice/bridge?orderId=${encodeURIComponent(orderId)}`;
+  private async requireRider(userId: string) {
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true, user: { select: { phone: true } } },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+    return rider;
+  }
+
+  private async requireVendor(userId: string) {
+    const vendor = await this.prisma.vendor.findUnique({
+      where: { userId },
+      select: { id: true, whatsappPhone: true },
+    });
+    if (!vendor) throw new NotFoundException('vendor_not_found');
+    return vendor;
+  }
+
+  private async requireConsumer(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { phone: true },
+    });
+    if (!user) throw new NotFoundException('user_not_found');
+    return user;
+  }
+
+  private async requireOrderAssignedToRider(orderId: string, riderId: string) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, riderId: true, status: true },
+    });
+    if (!order || order.riderId !== riderId) throw new NotFoundException('order_not_found');
+    if (!ALL_LIVE_STATUSES.has(order.status)) {
+      throw new NotFoundException('order_not_found');
+    }
+    return order;
+  }
+
+  private async requireOrderForVendor(
+    orderId: string,
+    vendorId: string,
+    opts: { needRider: boolean },
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, vendorId: true, status: true, riderId: true },
+    });
+    if (!order || order.vendorId !== vendorId) throw new NotFoundException('order_not_found');
+    if (!ALL_LIVE_STATUSES.has(order.status)) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (opts.needRider && !order.riderId) {
+      throw new NotFoundException('rider_not_assigned');
+    }
+    if (opts.needRider && !RIDER_INVOLVED_STATUSES.has(order.status)) {
+      throw new NotFoundException('order_not_found');
+    }
+    return order;
+  }
+
+  private async requireOrderForConsumer(
+    orderId: string,
+    userId: string,
+    opts: { needRider: boolean },
+  ) {
+    const order = await this.prisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, userId: true, status: true, riderId: true },
+    });
+    if (!order || order.userId !== userId) throw new NotFoundException('order_not_found');
+    if (!ALL_LIVE_STATUSES.has(order.status)) {
+      throw new NotFoundException('order_not_found');
+    }
+    if (opts.needRider && !order.riderId) {
+      throw new NotFoundException('rider_not_assigned');
+    }
+    if (opts.needRider && !RIDER_INVOLVED_STATUSES.has(order.status)) {
+      throw new NotFoundException('order_not_found');
+    }
+    return order;
   }
 }

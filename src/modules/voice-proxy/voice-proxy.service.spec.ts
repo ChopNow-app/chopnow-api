@@ -52,7 +52,7 @@ describe('VoiceProxyService', () => {
       const result = await service.startRiderToConsumer('order-1', 'user-rider');
       expect(twilio.startBridgedCall).toHaveBeenCalledWith(
         '+237670000111',
-        'https://api.chopnow.app/api/webhooks/twilio/voice/bridge?orderId=order-1',
+        'https://api.chopnow.app/api/webhooks/twilio/voice/bridge?orderId=order-1&to=consumer',
       );
       expect(result).toEqual({ callSid: 'CA_test_sid' });
     });
@@ -97,8 +97,10 @@ describe('VoiceProxyService', () => {
       prisma.order.findUnique.mockResolvedValue({
         deliveryPhone: '670000222',
         status: OrderStatus.PICKED_UP,
+        vendor: { whatsappPhone: '+237670000333' },
+        rider: { user: { phone: '+237670000444' } },
       });
-      const xml = await service.buildBridgeTwiml('order-1');
+      const xml = await service.buildBridgeTwiml('order-1', 'consumer');
       expect(xml).toContain('<Response>');
       expect(xml).toContain('<Dial callerId="+14155238886"');
       expect(xml).toContain('<Number>+237670000222</Number>');
@@ -110,16 +112,54 @@ describe('VoiceProxyService', () => {
       prisma.order.findUnique.mockResolvedValue({
         deliveryPhone: '670000222',
         status: OrderStatus.DELIVERED,
+        vendor: { whatsappPhone: '+237670000333' },
+        rider: null,
       });
-      const xml = await service.buildBridgeTwiml('order-1');
+      const xml = await service.buildBridgeTwiml('order-1', 'consumer');
       expect(xml).toContain('<Hangup/>');
       expect(xml).not.toContain('<Dial');
     });
 
     it('handles unknown order id without leaking', async () => {
       prisma.order.findUnique.mockResolvedValue(null);
-      const xml = await service.buildBridgeTwiml('nope');
+      const xml = await service.buildBridgeTwiml('nope', 'consumer');
       expect(xml).toContain('<Hangup/>');
+    });
+
+    it('dials the vendor when target=vendor', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        status: OrderStatus.IN_PREP,
+        deliveryPhone: '670000222',
+        vendor: { whatsappPhone: '+237670000333' },
+        rider: null,
+      });
+      const xml = await service.buildBridgeTwiml('order-1', 'vendor');
+      expect(xml).toContain('<Number>+237670000333</Number>');
+      expect(xml).toContain('restaurant');
+    });
+
+    it('dials the rider when target=rider', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        status: OrderStatus.PICKED_UP,
+        deliveryPhone: '670000222',
+        vendor: { whatsappPhone: '+237670000333' },
+        rider: { user: { phone: '+237670000444' } },
+      });
+      const xml = await service.buildBridgeTwiml('order-1', 'rider');
+      expect(xml).toContain('<Number>+237670000444</Number>');
+      expect(xml).toContain('livreur');
+    });
+
+    it('hangs up if the target has no number assigned (e.g. unassigned rider)', async () => {
+      prisma.order.findUnique.mockResolvedValue({
+        status: OrderStatus.IN_PREP,
+        deliveryPhone: '670000222',
+        vendor: { whatsappPhone: '+237670000333' },
+        rider: null,
+      });
+      const xml = await service.buildBridgeTwiml('order-1', 'rider');
+      expect(xml).toContain('<Hangup/>');
+      expect(xml).toContain('indisponible');
     });
   });
 });

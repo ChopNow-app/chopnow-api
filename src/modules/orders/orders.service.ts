@@ -57,6 +57,23 @@ export const PRE_ORDER_PENALTY_ROUND_TO_XAF = 50;
 
 // Status sets — keep transition gates explicit so a bug in one branch can't
 // silently teleport an order past the wrong gate.
+// Story 3.17 — vendor-side phone masking helper. Keeps the country code
+// + last 2 digits so the vendor can roughly recognize the number on a
+// callback ringing, but strips the bypass-prone middle.
+// Input: '+237670000099' → '+237 6•• ••• •99'. Falsy input stays falsy.
+function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return phone ?? '';
+  const trimmed = phone.trim();
+  if (trimmed.length < 6) return '••••••';
+  const last2 = trimmed.slice(-2);
+  // For +237XXXXXXXXX show '+237 6•• ••• •XX'; for anything else just
+  // show last-2 + dots.
+  if (trimmed.startsWith('+237') && trimmed.length >= 11) {
+    return `+237 ${trimmed[4]}•• ••• •${last2}`;
+  }
+  return `${trimmed.slice(0, 2)}•••••${last2}`;
+}
+
 const VENDOR_CAN_DECIDE: ReadonlySet<OrderStatus> = new Set([
   OrderStatus.PENDING, // cash flow lands here before vendor decision
   OrderStatus.CONFIRMED, // MoMo flow after webhook
@@ -341,10 +358,15 @@ export class OrdersService {
     // other's secret. Consumer sees their delivery code; vendor sees their
     // pickup code. Rider gets neither via this endpoint (they read codes
     // off the physical people they meet).
+    //
+    // Story 3.17 — never expose deliveryPhone to the vendor. They use the
+    // masked voice proxy (POST /orders/:id/vendor-call-consumer) to reach
+    // the customer; the raw number would let them bypass the platform.
     return {
       ...order,
       pickupCode: isVendorSide ? order.pickupCode : undefined,
       deliveryCode: isOwner ? order.deliveryCode : undefined,
+      deliveryPhone: isVendorSide ? maskPhone(order.deliveryPhone) : order.deliveryPhone,
     };
   }
 
@@ -496,7 +518,12 @@ export class OrdersService {
     });
     // Story 4.13 — strip deliveryCode (consumer's secret) before sending to
     // the vendor. Vendor only ever needs pickupCode.
-    return orders.map((o) => ({ ...o, deliveryCode: undefined }));
+    // Story 3.17 — also mask deliveryPhone; vendor uses the voice proxy.
+    return orders.map((o) => ({
+      ...o,
+      deliveryCode: undefined,
+      deliveryPhone: maskPhone(o.deliveryPhone),
+    }));
   }
 
   async acceptOrder(orderId: string, userId: string) {
