@@ -18,6 +18,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiOkResponse,
   ApiOperation,
   ApiQuery,
   ApiTags,
@@ -29,6 +30,7 @@ import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { SubmitVendorDto } from './dto/submit-vendor.dto';
 import { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
+import { VendorSelfBalanceDto } from '../finance/dto/self-balance.dto';
 import { FinanceService } from '../finance/finance.service';
 import { VendorService } from './vendor.service';
 
@@ -134,6 +136,28 @@ export class VendorController {
   updateMe(@Req() req: Request, @Body() dto: UpdateVendorProfileDto) {
     const user = req.user as { id: string };
     return this.vendors.updateOwn(user.id, dto);
+  }
+
+  // Self-service balance view (Story 7.2 — vendor earnings transparency).
+  // Shows balance, last + next payout, recent history, and (for INFORMAL)
+  // whether a cashout request is already in flight.
+  @Roles(UserRole.VENDOR)
+  @ApiBearerAuth()
+  @Get('me/balance')
+  @ApiOperation({
+    summary: 'Get own balance + payout history',
+    description:
+      "Read-only self-service view of the vendor's ledger position. Surfaces " +
+      'balanceXAF, isTrusted (drives same-day vs 24h cashout for INFORMAL), the ' +
+      'last 5 payouts, and the next scheduled payout estimate. RESTAURANT and ' +
+      'SEMI_FORMAL vendors see the next Sunday 02:00 Africa/Douala estimate; ' +
+      'INFORMAL vendors see ON_DEMAND with no estimatedAt.',
+  })
+  @ApiOkResponse({ type: VendorSelfBalanceDto })
+  async getMyBalance(@Req() req: Request): Promise<VendorSelfBalanceDto> {
+    const user = req.user as { id: string };
+    const vendor = await this.vendors.getOwn(user.id);
+    return this.finance.getVendorSelfView(vendor.id);
   }
 
   // INFORMAL on-demand cashout request (ADR-0005, 7.2b). Creates a

@@ -207,6 +207,18 @@ export class RidersService {
     };
   }
 
+  // Resolves a session userId to the rider's own id. 404 if no rider row
+  // exists for the user. Used by controllers that need to call a service
+  // keyed on riderId (finance.getRiderSelfView, etc.).
+  async getOwnId(userId: string): Promise<string> {
+    const rider = await this.prisma.rider.findUnique({
+      where: { userId },
+      select: { id: true },
+    });
+    if (!rider) throw new NotFoundException('rider_not_found');
+    return rider.id;
+  }
+
   /**
    * Story 1.8 — rider self-update.
    *

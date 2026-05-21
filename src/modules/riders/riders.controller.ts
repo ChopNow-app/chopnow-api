@@ -19,6 +19,7 @@ import {
   ApiBearerAuth,
   ApiBody,
   ApiConsumes,
+  ApiOkResponse,
   ApiOperation,
   ApiQuery,
   ApiTags,
@@ -28,6 +29,8 @@ import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { RiderSelfBalanceDto } from '../finance/dto/self-balance.dto';
+import { FinanceService } from '../finance/finance.service';
 import { ConfirmationCodeDto } from './dto/confirmation-code.dto';
 import { RiderAvailabilityDto, RiderHeartbeatDto } from './dto/rider-availability.dto';
 import { SubmitRiderDto } from './dto/submit-rider.dto';
@@ -47,7 +50,10 @@ const kycImagePipe = new ParseFilePipeBuilder()
 @ApiTags('riders')
 @Controller('riders')
 export class RidersController {
-  constructor(private readonly riders: RidersService) {}
+  constructor(
+    private readonly riders: RidersService,
+    private readonly finance: FinanceService,
+  ) {}
 
   // Public — riders don't yet have an account when they submit. Throttler
   // still applies on the IP level to discourage spam.
@@ -109,6 +115,29 @@ export class RidersController {
   updateMe(@Req() req: Request, @Body() dto: UpdateRiderProfileDto) {
     const user = req.user as { id: string };
     return this.riders.updateOwn(user.id, dto);
+  }
+
+  // Self-service balance view (Story 7.2 — rider earnings transparency).
+  // Same shape as the vendor view minus vendor-only fields (isTrusted,
+  // vendorType, pendingCashoutRequestId): riders don't have a trust
+  // threshold or on-demand cashout path at pilot scope. The next-payout
+  // estimate mirrors the daily 06:00 Africa/Douala cron.
+  @Roles(UserRole.RIDER)
+  @ApiBearerAuth()
+  @Get('me/balance')
+  @ApiOperation({
+    summary: 'Get own balance + payout history',
+    description:
+      "Read-only self-service view of the rider's ledger position. Balance is " +
+      'the sum of RIDER_PAYABLE entries since the last successful payout; the ' +
+      'next scheduled payout is the next 06:00 Africa/Douala (or null if balance ' +
+      'is zero — cron would skip).',
+  })
+  @ApiOkResponse({ type: RiderSelfBalanceDto })
+  async getMyBalance(@Req() req: Request): Promise<RiderSelfBalanceDto> {
+    const user = req.user as { id: string };
+    const riderId = await this.riders.getOwnId(user.id);
+    return this.finance.getRiderSelfView(riderId);
   }
 
   // ── Story 4.1 / 4.4 — availability + heartbeat ─────────────────────
