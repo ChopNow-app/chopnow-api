@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { CampayModule } from '../../infra/campay/campay.module';
 import { AuthModule } from '../auth/auth.module';
 import { FinanceModule } from '../finance/finance.module';
 import { AdminAuthController } from './admin-auth.controller';
@@ -28,7 +29,7 @@ import { AdminValidationService } from './admin-validation.service';
  * AuthModule import gives us JwtRevocationService for the suspend flow.
  */
 @Module({
-  imports: [JwtModule.register({}), AuthModule, FinanceModule],
+  imports: [JwtModule.register({}), AuthModule, FinanceModule, CampayModule],
   controllers: [
     AdminAuthController,
     AdminValidationController,
