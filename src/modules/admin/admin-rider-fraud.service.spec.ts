@@ -10,7 +10,7 @@ import { AdminRiderFraudService } from './admin-rider-fraud.service';
 describe('AdminRiderFraudService', () => {
   let service: AdminRiderFraudService;
   let prisma: {
-    order: { findUnique: jest.Mock; updateMany: jest.Mock };
+    order: { findUnique: jest.Mock; updateMany: jest.Mock; findMany: jest.Mock };
     rider: { findUnique: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -22,6 +22,7 @@ describe('AdminRiderFraudService', () => {
       order: {
         findUnique: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       rider: {
         findUnique: jest.fn(),
@@ -211,6 +212,46 @@ describe('AdminRiderFraudService', () => {
           note: 'note',
         }),
       ).rejects.toMatchObject({ response: { code: 'order_state_changed' } });
+    });
+  });
+
+  describe('listStuckPickups', () => {
+    it('queries PICKED_UP orders older than 2h, oldest first', async () => {
+      await service.listStuckPickups();
+      const args = prisma.order.findMany.mock.calls[0][0];
+      expect(args.where.status).toBe(OrderStatus.PICKED_UP);
+      const cutoff = args.where.pickedUpAt.lt as Date;
+      const minutesAgo = (Date.now() - cutoff.getTime()) / 60_000;
+      expect(minutesAgo).toBeGreaterThanOrEqual(119.9);
+      expect(minutesAgo).toBeLessThanOrEqual(120.1);
+      expect(args.orderBy).toEqual({ pickedUpAt: 'asc' });
+    });
+
+    it('flattens vendor + rider relations into the response with minutesStuck', async () => {
+      const pickedAt = new Date(Date.now() - 150 * 60_000);
+      prisma.order.findMany.mockResolvedValueOnce([
+        {
+          id: 'o-1',
+          code: 'TC-1',
+          vendorId: 'v-1',
+          riderId: 'r-1',
+          userId: 'u-1',
+          totalXAF: 4900,
+          pickedUpAt: pickedAt,
+          vendor: { name: 'Tantine' },
+          rider: { user: { displayName: 'Jean' } },
+        },
+      ]);
+      const items = await service.listStuckPickups();
+      expect(items[0]).toMatchObject({
+        orderId: 'o-1',
+        code: 'TC-1',
+        vendorName: 'Tantine',
+        riderName: 'Jean',
+        minutesStuck: expect.any(Number),
+      });
+      expect(items[0].minutesStuck).toBeGreaterThanOrEqual(149);
+      expect(items[0].minutesStuck).toBeLessThanOrEqual(151);
     });
   });
 });

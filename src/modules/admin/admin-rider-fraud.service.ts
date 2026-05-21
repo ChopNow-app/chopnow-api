@@ -38,6 +38,23 @@ export interface ResolveRiderFraudInput {
   note: string;
 }
 
+// Same threshold the StuckPickupDetectorService cron uses — surfaces
+// orders where rider scanned pickup but never marked delivered.
+const STUCK_THRESHOLD_MINUTES = 120;
+
+export interface StuckPickupItem {
+  orderId: string;
+  code: string;
+  vendorId: string;
+  vendorName: string;
+  riderId: string | null;
+  riderName: string | null;
+  userId: string;
+  totalXAF: number;
+  pickedUpAt: Date | null;
+  minutesStuck: number;
+}
+
 @Injectable()
 export class AdminRiderFraudService {
   constructor(
@@ -46,6 +63,48 @@ export class AdminRiderFraudService {
     private readonly ledger: LedgerService,
     private readonly jwtRevocation: JwtRevocationService,
   ) {}
+
+  // Synchronous version of the StuckPickupDetectorService cron's output.
+  // Powers the admin frontend's "Incidents livreurs" tab.
+  async listStuckPickups(): Promise<StuckPickupItem[]> {
+    const now = new Date();
+    const cutoff = new Date(now.getTime() - STUCK_THRESHOLD_MINUTES * 60_000);
+
+    const rows = await this.prisma.order.findMany({
+      where: {
+        status: OrderStatus.PICKED_UP,
+        pickedUpAt: { lt: cutoff },
+      },
+      orderBy: { pickedUpAt: 'asc' },
+      take: 100,
+      select: {
+        id: true,
+        code: true,
+        vendorId: true,
+        riderId: true,
+        userId: true,
+        totalXAF: true,
+        pickedUpAt: true,
+        vendor: { select: { name: true } },
+        rider: { select: { user: { select: { displayName: true } } } },
+      },
+    });
+
+    return rows.map((o) => ({
+      orderId: o.id,
+      code: o.code,
+      vendorId: o.vendorId,
+      vendorName: o.vendor.name,
+      riderId: o.riderId,
+      riderName: o.rider?.user?.displayName ?? null,
+      userId: o.userId,
+      totalXAF: o.totalXAF,
+      pickedUpAt: o.pickedUpAt,
+      minutesStuck: o.pickedUpAt
+        ? Math.floor((now.getTime() - o.pickedUpAt.getTime()) / 60_000)
+        : 0,
+    }));
+  }
 
   async resolveRiderFraud(
     orderId: string,
