@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
@@ -13,6 +13,19 @@ const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as
 @Controller('admin/orders')
 export class AdminRiderFraudController {
   constructor(private readonly riderFraud: AdminRiderFraudService) {}
+
+  @Roles(...ADMIN_ROLES)
+  @Get('stuck-pickup')
+  @ApiOperation({
+    summary: 'List Orders stuck in PICKED_UP > 2h — admin rider-fraud triage queue',
+    description:
+      'Synchronous version of the StuckPickupDetectorService cron output. Returns ' +
+      'orders where the rider scanned pickup but never marked delivered, oldest first. ' +
+      'Powers the admin /admin/finance → Incidents livreurs tab.',
+  })
+  listStuckPickups() {
+    return this.riderFraud.listStuckPickups();
+  }
 
   @Roles(...ADMIN_ROLES)
   @Post(':orderId/resolve-rider-fraud')
