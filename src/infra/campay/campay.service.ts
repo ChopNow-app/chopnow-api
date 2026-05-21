@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../config/env.service';
+import { CampayCircuitBreakerService } from './campay-circuit-breaker.service';
 
 /**
  * Campay client. POC validated 2026-04-13 (poc-1-campay) — see results.md.
@@ -87,9 +88,14 @@ export class CampayService {
   constructor(
     @InjectPinoLogger(CampayService.name) private readonly logger: PinoLogger,
     private readonly env: EnvService,
+    private readonly breaker: CampayCircuitBreakerService,
   ) {}
 
   async initiateCollect(req: CollectRequest): Promise<CollectResponse> {
+    return this.breaker.wrap('initiateCollect', () => this.initiateCollectImpl(req));
+  }
+
+  private async initiateCollectImpl(req: CollectRequest): Promise<CollectResponse> {
     const cfg = this.env.requireCampay();
     const token = await this.getToken();
 
@@ -146,6 +152,10 @@ export class CampayService {
   // Webhook for the resulting status callback is registered separately
   // at POST /webhooks/campay/transfer.
   async initiateTransfer(req: TransferRequest): Promise<TransferResponse> {
+    return this.breaker.wrap('initiateTransfer', () => this.initiateTransferImpl(req));
+  }
+
+  private async initiateTransferImpl(req: TransferRequest): Promise<TransferResponse> {
     const cfg = this.env.requireCampay();
     const token = await this.getToken();
 
@@ -201,6 +211,10 @@ export class CampayService {
   // and the description carries 'refund' so the customer sees a
   // recognizable label.
   async initiateRefund(req: RefundRequest): Promise<RefundResponse> {
+    return this.breaker.wrap('initiateRefund', () => this.initiateRefundImpl(req));
+  }
+
+  private async initiateRefundImpl(req: RefundRequest): Promise<RefundResponse> {
     const cfg = this.env.requireCampay();
     const token = await this.getToken();
 
@@ -256,6 +270,10 @@ export class CampayService {
   // forceRefresh=true bypasses the cache (admin manual refresh in the
   // financial dashboard).
   async getBalance(opts: { forceRefresh?: boolean } = {}): Promise<number> {
+    return this.breaker.wrap('getBalance', () => this.getBalanceImpl(opts));
+  }
+
+  private async getBalanceImpl(opts: { forceRefresh?: boolean } = {}): Promise<number> {
     const now = Date.now();
     if (
       !opts.forceRefresh &&
