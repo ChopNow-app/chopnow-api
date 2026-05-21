@@ -190,6 +190,29 @@ jobs:
 
           # Show the resulting state for the workflow log.
           docker compose ps
+
+          # Reclaim disk on the droplet. Without this step, every deploy
+          # leaves the previous `chopnow-api:staging-<sha>` image behind as
+          # an untagged ~1.1GB layer set — 30 deploys filled a 48GB disk
+          # and the deploy at 2026-05-21 12:07 / 17:37 UTC failed with
+          # "no space left on device".
+          #
+          # What's kept:
+          #   - The currently-running image (referenced by the api
+          #     container; docker never prunes referenced images)
+          #   - Any image younger than 24h (rollback target if today's
+          #     deploy turns out bad — `docker compose up` it without
+          #     re-pulling from GHCR)
+          #
+          # What's removed:
+          #   - All untagged + tagged images >24h old that aren't
+          #     referenced by a running container
+          #   - Volumes NEVER pruned (Postgres + Redis state are safe)
+          #
+          # Idempotent — running on an already-clean host is a few-ms no-op.
+          docker image prune -af --filter "until=24h"
+          echo "Disk after prune:"
+          df -h /
           EOF
 
       - name: Health check
