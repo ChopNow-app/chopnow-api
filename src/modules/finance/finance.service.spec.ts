@@ -15,10 +15,16 @@ describe('FinanceService', () => {
     vendorPayout: {
       findFirst: jest.Mock;
       findUnique: jest.Mock;
+      findMany: jest.Mock;
       create: jest.Mock;
       updateMany: jest.Mock;
     };
-    riderPayout: { findFirst: jest.Mock; findUnique: jest.Mock; updateMany: jest.Mock };
+    riderPayout: {
+      findFirst: jest.Mock;
+      findUnique: jest.Mock;
+      findMany: jest.Mock;
+      updateMany: jest.Mock;
+    };
     vendorCashoutRequest: {
       findUnique: jest.Mock;
       findFirst: jest.Mock;
@@ -46,12 +52,14 @@ describe('FinanceService', () => {
       vendorPayout: {
         findFirst: jest.fn().mockResolvedValue(null),
         findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn().mockImplementation(({ data }) => ({ id: 'payout-new', ...data })),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       riderPayout: {
         findFirst: jest.fn().mockResolvedValue(null),
         findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
         updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       vendorCashoutRequest: {
@@ -938,6 +946,191 @@ describe('FinanceService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('getVendorSelfView (Story 7.2 — self-service balance)', () => {
+    function vendorBalanceMocks(opts: {
+      type: VendorType;
+      payableSum?: number; // raw VENDOR_PAYABLE sum (negative = owed to vendor)
+    }) {
+      prisma.vendor.findUnique.mockResolvedValue({
+        id: 'v-1',
+        name: 'Mama Benz',
+        type: opts.type,
+        createdAt: new Date('2026-01-01'),
+      });
+      prisma.ledgerEntry.aggregate.mockResolvedValue({
+        _sum: { amountXAF: opts.payableSum ?? -3000 },
+      });
+      prisma.ledgerEntry.groupBy.mockResolvedValue([]);
+      prisma.order.count.mockResolvedValue(0);
+    }
+
+    it('RESTAURANT vendor with balance shows WEEKLY_SUNDAY cadence + estimatedAt set', async () => {
+      vendorBalanceMocks({ type: VendorType.RESTAURANT, payableSum: -5000 });
+      prisma.vendorPayout.findMany.mockResolvedValue([
+        {
+          id: 'p-1',
+          periodStart: new Date('2026-05-04'),
+          periodEnd: new Date('2026-05-10'),
+          netXAF: 4500,
+          status: 'PAID',
+          paidAt: new Date('2026-05-11'),
+        },
+      ]);
+
+      const view = await service.getVendorSelfView('v-1');
+
+      expect(view.balanceXAF).toBe(5000);
+      expect(view.vendorType).toBe('RESTAURANT');
+      expect(view.nextScheduledPayout.cadence).toBe('WEEKLY_SUNDAY');
+      expect(view.nextScheduledPayout.estimatedAt).not.toBeNull();
+      expect(view.lastPayoutXAF).toBe(4500);
+      expect(view.recentPayouts).toHaveLength(1);
+      expect(view.pendingCashoutRequestId).toBeNull();
+    });
+
+    it('RESTAURANT vendor with zero balance gets WEEKLY_SUNDAY + null estimatedAt (cron skips)', async () => {
+      vendorBalanceMocks({ type: VendorType.RESTAURANT, payableSum: 0 });
+
+      const view = await service.getVendorSelfView('v-1');
+
+      expect(view.balanceXAF).toBe(0);
+      expect(view.nextScheduledPayout.cadence).toBe('WEEKLY_SUNDAY');
+      expect(view.nextScheduledPayout.estimatedAt).toBeNull();
+    });
+
+    it('INFORMAL vendor with pending cashout surfaces requestId and ON_DEMAND cadence', async () => {
+      vendorBalanceMocks({ type: VendorType.INFORMAL, payableSum: -2500 });
+      prisma.vendorCashoutRequest.findFirst.mockResolvedValue({ id: 'req-pending' });
+
+      const view = await service.getVendorSelfView('v-1');
+
+      expect(view.vendorType).toBe('INFORMAL');
+      expect(view.nextScheduledPayout.cadence).toBe('ON_DEMAND');
+      expect(view.nextScheduledPayout.estimatedAt).toBeNull();
+      expect(view.pendingCashoutRequestId).toBe('req-pending');
+    });
+
+    it('INFORMAL vendor with no pending cashout returns pendingCashoutRequestId = null', async () => {
+      vendorBalanceMocks({ type: VendorType.INFORMAL, payableSum: -2500 });
+      prisma.vendorCashoutRequest.findFirst.mockResolvedValue(null);
+
+      const view = await service.getVendorSelfView('v-1');
+
+      expect(view.pendingCashoutRequestId).toBeNull();
+    });
+
+    it('RESTAURANT vendor never checks vendorCashoutRequest (it would never apply)', async () => {
+      vendorBalanceMocks({ type: VendorType.RESTAURANT, payableSum: -1000 });
+
+      await service.getVendorSelfView('v-1');
+
+      // The cashout-request lookup is INFORMAL-only — confirms we don't fan out
+      // the query for vendors that can't use it.
+      expect(prisma.vendorCashoutRequest.findFirst).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getRiderSelfView (Story 7.2 — self-service balance)', () => {
+    beforeEach(() => {
+      prisma.rider.findUnique.mockResolvedValue({
+        id: 'r-1',
+        user: { displayName: 'Aïssa' },
+      });
+    });
+
+    it('rider with balance shows DAILY_MORNING cadence + estimatedAt set', async () => {
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: -1500 } });
+      prisma.riderPayout.findMany.mockResolvedValue([
+        {
+          id: 'rp-1',
+          periodStart: new Date('2026-05-20'),
+          periodEnd: new Date('2026-05-21'),
+          netXAF: 1200,
+          status: 'PAID',
+          paidAt: new Date('2026-05-21'),
+        },
+      ]);
+
+      const view = await service.getRiderSelfView('r-1');
+
+      expect(view.balanceXAF).toBe(1500);
+      expect(view.nextScheduledPayout.cadence).toBe('DAILY_MORNING');
+      expect(view.nextScheduledPayout.estimatedAt).not.toBeNull();
+      expect(view.lastPayoutXAF).toBe(1200);
+      expect(view.recentPayouts).toHaveLength(1);
+    });
+
+    it('rider with zero balance gets DAILY_MORNING + null estimatedAt', async () => {
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: 0 } });
+
+      const view = await service.getRiderSelfView('r-1');
+
+      expect(view.balanceXAF).toBe(0);
+      expect(view.nextScheduledPayout.estimatedAt).toBeNull();
+    });
+
+    it('rider without a paid payout has lastPayoutAt = null', async () => {
+      prisma.ledgerEntry.aggregate.mockResolvedValue({ _sum: { amountXAF: -800 } });
+      prisma.riderPayout.findMany.mockResolvedValue([
+        {
+          id: 'rp-pending',
+          periodStart: new Date('2026-05-20'),
+          periodEnd: new Date('2026-05-21'),
+          netXAF: 800,
+          status: 'PENDING',
+          paidAt: null,
+        },
+      ]);
+
+      const view = await service.getRiderSelfView('r-1');
+
+      expect(view.lastPayoutAt).toBeNull();
+      expect(view.lastPayoutXAF).toBeNull();
+      expect(view.recentPayouts[0]?.status).toBe('PENDING');
+    });
+  });
+});
+
+import { nextMorningAt06DoualaUtc, nextSundayAt02DoualaUtc } from './finance.service';
+
+describe('next-payout estimators', () => {
+  describe('nextSundayAt02DoualaUtc', () => {
+    it('from Monday noon UTC returns the upcoming Sunday 01:00 UTC (= 02:00 Douala)', () => {
+      // Monday 2026-05-18 12:00 UTC → next Sunday 02:00 Douala = 2026-05-24 01:00 UTC
+      const next = nextSundayAt02DoualaUtc(new Date('2026-05-18T12:00:00Z'));
+      expect(next.toISOString()).toBe('2026-05-24T01:00:00.000Z');
+    });
+
+    it('from Sunday 00:30 Douala (= Saturday 23:30 UTC) returns the SAME day at 02:00 Douala', () => {
+      // Saturday 2026-05-23 23:30 UTC = Sunday 00:30 Douala → same Sunday 02:00 Douala = 2026-05-24 01:00 UTC
+      const next = nextSundayAt02DoualaUtc(new Date('2026-05-23T23:30:00Z'));
+      expect(next.toISOString()).toBe('2026-05-24T01:00:00.000Z');
+    });
+
+    it('from Sunday 03:00 Douala (= 02:00 UTC) skips to the NEXT Sunday', () => {
+      // Sunday 2026-05-24 02:00 UTC = 03:00 Douala → next Sunday = 2026-05-31 01:00 UTC
+      const next = nextSundayAt02DoualaUtc(new Date('2026-05-24T02:00:00Z'));
+      expect(next.toISOString()).toBe('2026-05-31T01:00:00.000Z');
+    });
+  });
+
+  describe('nextMorningAt06DoualaUtc', () => {
+    it('from 03:00 Douala (02:00 UTC) returns today 06:00 Douala (05:00 UTC)', () => {
+      const next = nextMorningAt06DoualaUtc(new Date('2026-05-21T02:00:00Z'));
+      expect(next.toISOString()).toBe('2026-05-21T05:00:00.000Z');
+    });
+
+    it('from 08:00 Douala (07:00 UTC) returns tomorrow 06:00 Douala (05:00 UTC)', () => {
+      const next = nextMorningAt06DoualaUtc(new Date('2026-05-21T07:00:00Z'));
+      expect(next.toISOString()).toBe('2026-05-22T05:00:00.000Z');
+    });
+
+    it('from exactly 06:00 Douala (05:00 UTC) pushes to tomorrow (the cron already fired)', () => {
+      const next = nextMorningAt06DoualaUtc(new Date('2026-05-21T05:00:00Z'));
+      expect(next.toISOString()).toBe('2026-05-22T05:00:00.000Z');
     });
   });
 });

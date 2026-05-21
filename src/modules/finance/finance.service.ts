@@ -1119,4 +1119,183 @@ export class FinanceService {
     );
     return { status: 'PAID' };
   }
+
+  // ── Vendor + rider self-service balance view (7.2 — transparency) ─
+
+  // Wraps getVendorBalance with the data the vendor's "Mon solde" card
+  // needs: recent payouts, next scheduled cadence, and (for INFORMAL) any
+  // in-flight cashout request so the CTA can be disabled correctly.
+  async getVendorSelfView(vendorId: string): Promise<{
+    balanceXAF: number;
+    isTrusted: boolean;
+    vendorType: VendorType;
+    lastPayoutAt: string | null;
+    lastPayoutXAF: number | null;
+    nextScheduledPayout: { cadence: 'WEEKLY_SUNDAY' | 'ON_DEMAND'; estimatedAt: string | null };
+    recentPayouts: Array<{
+      id: string;
+      periodStart: string;
+      periodEnd: string;
+      netXAF: number;
+      status: 'PENDING' | 'IN_FLIGHT' | 'PAID' | 'FAILED' | 'CANCELLED';
+      paidAt: string | null;
+    }>;
+    pendingCashoutRequestId: string | null;
+  }> {
+    const balance = await this.getVendorBalance(vendorId);
+
+    const recentPayoutsRaw = await this.prisma.vendorPayout.findMany({
+      where: { vendorId },
+      orderBy: { periodEnd: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        periodStart: true,
+        periodEnd: true,
+        netXAF: true,
+        status: true,
+        paidAt: true,
+      },
+    });
+    const recentPayouts = recentPayoutsRaw.map((p) => ({
+      id: p.id,
+      periodStart: p.periodStart.toISOString(),
+      periodEnd: p.periodEnd.toISOString(),
+      netXAF: p.netXAF,
+      status: p.status,
+      paidAt: p.paidAt?.toISOString() ?? null,
+    }));
+
+    const lastPaid = recentPayoutsRaw.find((p) => p.status === 'PAID');
+    const lastPayoutAt = lastPaid?.paidAt?.toISOString() ?? null;
+    const lastPayoutXAF = lastPaid?.netXAF ?? null;
+
+    // INFORMAL vendors trigger via cashout request — the cron doesn't touch
+    // them. Only one PENDING_APPROVAL request can exist at a time, so a
+    // truthy result means the CTA should be locked.
+    let pendingCashoutRequestId: string | null = null;
+    if (balance.type === VendorType.INFORMAL) {
+      const req = await this.prisma.vendorCashoutRequest.findFirst({
+        where: { vendorId, status: CashoutRequestStatus.PENDING_APPROVAL },
+        select: { id: true },
+      });
+      pendingCashoutRequestId = req?.id ?? null;
+    }
+
+    const isOnDemand = balance.type === VendorType.INFORMAL;
+    const cadence: 'WEEKLY_SUNDAY' | 'ON_DEMAND' = isOnDemand ? 'ON_DEMAND' : 'WEEKLY_SUNDAY';
+    // For on-demand vendors, there's no scheduled date. For weekly vendors
+    // with no balance, also null (cron would skip them).
+    const estimatedAt =
+      isOnDemand || balance.balanceXAF <= 0
+        ? null
+        : nextSundayAt02DoualaUtc(new Date()).toISOString();
+
+    return {
+      balanceXAF: balance.balanceXAF,
+      isTrusted: balance.isTrusted,
+      vendorType: balance.type,
+      lastPayoutAt,
+      lastPayoutXAF,
+      nextScheduledPayout: { cadence, estimatedAt },
+      recentPayouts,
+      pendingCashoutRequestId,
+    };
+  }
+
+  async getRiderSelfView(riderId: string): Promise<{
+    balanceXAF: number;
+    lastPayoutAt: string | null;
+    lastPayoutXAF: number | null;
+    nextScheduledPayout: { cadence: 'DAILY_MORNING'; estimatedAt: string | null };
+    recentPayouts: Array<{
+      id: string;
+      periodStart: string;
+      periodEnd: string;
+      netXAF: number;
+      status: 'PENDING' | 'IN_FLIGHT' | 'PAID' | 'FAILED' | 'CANCELLED';
+      paidAt: string | null;
+    }>;
+  }> {
+    const balance = await this.getRiderBalance(riderId);
+
+    const recentPayoutsRaw = await this.prisma.riderPayout.findMany({
+      where: { riderId },
+      orderBy: { periodEnd: 'desc' },
+      take: 5,
+      select: {
+        id: true,
+        periodStart: true,
+        periodEnd: true,
+        netXAF: true,
+        status: true,
+        paidAt: true,
+      },
+    });
+    const recentPayouts = recentPayoutsRaw.map((p) => ({
+      id: p.id,
+      periodStart: p.periodStart.toISOString(),
+      periodEnd: p.periodEnd.toISOString(),
+      netXAF: p.netXAF,
+      status: p.status,
+      paidAt: p.paidAt?.toISOString() ?? null,
+    }));
+
+    const lastPaid = recentPayoutsRaw.find((p) => p.status === 'PAID');
+    const lastPayoutAt = lastPaid?.paidAt?.toISOString() ?? null;
+    const lastPayoutXAF = lastPaid?.netXAF ?? null;
+
+    const estimatedAt =
+      balance.balanceXAF <= 0 ? null : nextMorningAt06DoualaUtc(new Date()).toISOString();
+
+    return {
+      balanceXAF: balance.balanceXAF,
+      lastPayoutAt,
+      lastPayoutXAF,
+      nextScheduledPayout: { cadence: 'DAILY_MORNING', estimatedAt },
+      recentPayouts,
+    };
+  }
+}
+
+// ── Next-payout estimator helpers ─────────────────────────────────────
+//
+// Cameroon is UTC+1 year-round (no DST). The vendor + rider payout crons
+// fire at `Africa/Douala` local time via the @Cron timeZone option; these
+// helpers mirror that schedule for the API view.
+//
+// Implementation: shift the input forward by 1h so the underlying Date's
+// UTC getters/setters read as Douala wall-clock, do the day-of-week and
+// hour-of-day math, then shift back by 1h to get the true UTC instant.
+
+const DOUALA_OFFSET_MS = 60 * 60 * 1000;
+
+export function nextSundayAt02DoualaUtc(now: Date): Date {
+  const wallClock = new Date(now.getTime() + DOUALA_OFFSET_MS);
+  const dow = wallClock.getUTCDay(); // 0 = Sunday
+  const hour = wallClock.getUTCHours();
+  // Days to add to reach the next Sunday 02:00 Douala.
+  // If currently Sunday before 02:00, target is *today*; otherwise next Sunday.
+  let daysAhead: number;
+  if (dow === 0 && hour < 2) {
+    daysAhead = 0;
+  } else {
+    daysAhead = (7 - dow) % 7;
+    if (daysAhead === 0) daysAhead = 7; // currently Sunday after 02:00 → next week
+  }
+  const target = new Date(wallClock.getTime());
+  target.setUTCDate(wallClock.getUTCDate() + daysAhead);
+  target.setUTCHours(2, 0, 0, 0);
+  return new Date(target.getTime() - DOUALA_OFFSET_MS);
+}
+
+export function nextMorningAt06DoualaUtc(now: Date): Date {
+  const wallClock = new Date(now.getTime() + DOUALA_OFFSET_MS);
+  const target = new Date(wallClock.getTime());
+  target.setUTCHours(6, 0, 0, 0);
+  // If we're past 06:00 Douala today, push to tomorrow.
+  if (target.getTime() <= wallClock.getTime()) {
+    target.setUTCDate(target.getUTCDate() + 1);
+  }
+  return new Date(target.getTime() - DOUALA_OFFSET_MS);
 }
