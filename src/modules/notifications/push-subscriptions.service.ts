@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { SubscribePushDto } from './dto/subscribe-push.dto';
+import type { SubscribePushDto } from './dto/subscribe-push.dto';
 
 /**
  * Thin DB layer over the PushSubscription table. The unique constraint is

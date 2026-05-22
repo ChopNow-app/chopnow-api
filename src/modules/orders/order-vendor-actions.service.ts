@@ -10,7 +10,7 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
 import { LedgerService } from '../finance/ledger.service';
-import { RefuseOrderDto } from './dto/vendor-decision.dto';
+import type { RefuseOrderDto } from './dto/vendor-decision.dto';
 import {
   PRE_ORDER_PENALTY_RATE,
   PRE_ORDER_PENALTY_ROUND_TO_XAF,

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
-import { BrowseCatalogueDto } from './dto/browse-catalogue.dto';
+import type { BrowseCatalogueDto } from './dto/browse-catalogue.dto';
 import { AvailabilityService, WeeklyHours } from './availability.service';
 
 // Story 2.5 — ETA only; fee math is shared with order checkout via

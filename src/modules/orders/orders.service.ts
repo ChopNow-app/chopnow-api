@@ -4,7 +4,7 @@ import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
-import { RateOrderDto } from './dto/rate-order.dto';
+import type { RateOrderDto } from './dto/rate-order.dto';
 import { CONSUMER_CAN_CANCEL, maskPhone } from './orders.constants';
 
 /**
