@@ -10,6 +10,9 @@ import {
   VendorType,
 } from '@prisma/client';
 import { OrdersService } from './orders.service';
+import { OrderCreationService } from './order-creation.service';
+import { OrderVendorActionsService } from './order-vendor-actions.service';
+import { OrderPaymentLifecycleService } from './order-payment-lifecycle.service';
 import { OrderLifecycleScheduler } from './order-lifecycle.scheduler';
 import { LedgerService } from '../finance/ledger.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -18,8 +21,17 @@ import { RefusalReason } from './dto/vendor-decision.dto';
 import { DomainEvents } from '../../shared/events/domain-events';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
-describe('OrdersService', () => {
+describe('Orders module services', () => {
+  // The split into four services (Creation / VendorActions /
+  // PaymentLifecycle / Orders) happened after the umbrella service hit
+  // ~1100 LOC. Tests still live in one file because they all share the
+  // same mocked Prisma + EventEmitter2 + LedgerService graph — splitting
+  // the spec would duplicate ~80 LOC of beforeEach across four files for
+  // no readability win.
   let service: OrdersService;
+  let creation: OrderCreationService;
+  let vendorActions: OrderVendorActionsService;
+  let paymentLifecycle: OrderPaymentLifecycleService;
   let prisma: {
     order: {
       findUnique: jest.Mock;
@@ -105,7 +117,13 @@ describe('OrdersService', () => {
     const module = await Test.createTestingModule({
       providers: [
         OrdersService,
+        OrderCreationService,
+        OrderVendorActionsService,
+        OrderPaymentLifecycleService,
         pinoLoggerProvider(OrdersService.name),
+        pinoLoggerProvider(OrderCreationService.name),
+        pinoLoggerProvider(OrderVendorActionsService.name),
+        pinoLoggerProvider(OrderPaymentLifecycleService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: events },
         { provide: LedgerService, useValue: ledger },
@@ -113,6 +131,9 @@ describe('OrdersService', () => {
       ],
     }).compile();
     service = module.get(OrdersService);
+    creation = module.get(OrderCreationService);
+    vendorActions = module.get(OrderVendorActionsService);
+    paymentLifecycle = module.get(OrderPaymentLifecycleService);
   });
 
   describe('createOrder', () => {
@@ -136,7 +157,7 @@ describe('OrdersService', () => {
     it('creates a PENDING order with server-computed totals — vendor not yet notified', async () => {
       readyHappyPath();
 
-      const order = await service.createOrder('user-1', baseDto);
+      const order = await creation.createOrder('user-1', baseDto);
 
       // Subtotal = 2*2000 + 1*500 = 4500
       // Fee: 1.5km → 250 + 150 = 400 → floor=500
@@ -167,7 +188,7 @@ describe('OrdersService', () => {
 
     it('does NOT set acceptanceDeadlineAt at creation — set when payment confirms (#179)', async () => {
       readyHappyPath();
-      await service.createOrder('user-1', baseDto);
+      await creation.createOrder('user-1', baseDto);
       const createArgs = prisma.order.create.mock.calls[0][0];
       expect(createArgs.data.acceptanceDeadlineAt).toBeUndefined();
     });
@@ -184,7 +205,7 @@ describe('OrdersService', () => {
       ]);
 
       await expect(
-        service.createOrder('user-1', { ...baseDto, items: [{ itemId: 'i-1', quantity: 1 }] }),
+        creation.createOrder('user-1', { ...baseDto, items: [{ itemId: 'i-1', quantity: 1 }] }),
       ).rejects.toMatchObject({ response: { code: 'order_below_minimum' } });
       expect(prisma.order.create).not.toHaveBeenCalled();
     });
@@ -195,7 +216,7 @@ describe('OrdersService', () => {
         status: VendorStatus.PENDING_REVIEW,
         isOpen: true,
       });
-      await expect(service.createOrder('user-1', baseDto)).rejects.toBeInstanceOf(
+      await expect(creation.createOrder('user-1', baseDto)).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -206,7 +227,7 @@ describe('OrdersService', () => {
         status: VendorStatus.ACTIVE,
         isOpen: false,
       });
-      await expect(service.createOrder('user-1', baseDto)).rejects.toMatchObject({
+      await expect(creation.createOrder('user-1', baseDto)).rejects.toMatchObject({
         response: { code: 'vendor_closed' },
       });
     });
@@ -222,7 +243,7 @@ describe('OrdersService', () => {
         // i-2 missing from the find result → server can't resolve it → reject.
       ]);
 
-      await expect(service.createOrder('user-1', baseDto)).rejects.toBeInstanceOf(
+      await expect(creation.createOrder('user-1', baseDto)).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
@@ -237,7 +258,7 @@ describe('OrdersService', () => {
         { id: 'i-1', name: 'A', priceXAF: 2000, isAvailable: true, isInStock: true },
         { id: 'i-2', name: 'Ndolé', priceXAF: 500, isAvailable: true, isInStock: false },
       ]);
-      await expect(service.createOrder('user-1', baseDto)).rejects.toMatchObject({
+      await expect(creation.createOrder('user-1', baseDto)).rejects.toMatchObject({
         response: { code: 'item_out_of_stock' },
       });
     });
@@ -246,7 +267,7 @@ describe('OrdersService', () => {
       const existing = { id: 'order-existing', items: [] };
       prisma.order.findUnique.mockResolvedValue(existing);
 
-      const result = await service.createOrder('user-1', baseDto, 'client-uuid-123');
+      const result = await creation.createOrder('user-1', baseDto, 'client-uuid-123');
 
       expect(result).toBe(existing);
       expect(prisma.vendor.findUnique).not.toHaveBeenCalled();
@@ -272,9 +293,9 @@ describe('OrdersService', () => {
             updatedAt: new Date(Date.now() - 60_000),
           },
         ]);
-        const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+        const warnSpy = jest.spyOn(creation['logger'], 'warn').mockImplementation(() => undefined);
 
-        await service.createOrder('user-1', baseDto);
+        await creation.createOrder('user-1', baseDto);
 
         // PinoLogger structured-fields API: warn(fields, message).
         // Look for the call whose `event` field is the flip-race code.
@@ -304,9 +325,9 @@ describe('OrdersService', () => {
           { id: 'i-1', name: 'Ndolé', isAvailable: true, isInStock: true, updatedAt: new Date() },
           { id: 'i-2', name: 'Bissap', isAvailable: true, isInStock: true, updatedAt: new Date() },
         ]);
-        const warnSpy = jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
+        const warnSpy = jest.spyOn(creation['logger'], 'warn').mockImplementation(() => undefined);
 
-        await service.createOrder('user-1', baseDto);
+        await creation.createOrder('user-1', baseDto);
 
         const flippedWarn = warnSpy.mock.calls.find(
           (c) => (c[0] as { event?: string })?.event === 'order_item_flip_race',
@@ -325,7 +346,7 @@ describe('OrdersService', () => {
         // committed; the throw must not propagate.
         prisma.item.findMany.mockRejectedValueOnce(new Error('DB connection lost'));
 
-        await expect(service.createOrder('user-1', baseDto)).resolves.toBeDefined();
+        await expect(creation.createOrder('user-1', baseDto)).resolves.toBeDefined();
       });
     });
 
@@ -349,7 +370,7 @@ describe('OrdersService', () => {
       it('rejects when scheduledFor is set but vendor does not accept pre-orders', async () => {
         readyHappyPath({ acceptsPreOrders: false });
         await expect(
-          service.createOrder('user-1', { ...baseDto, scheduledFor: inFiveHours }),
+          creation.createOrder('user-1', { ...baseDto, scheduledFor: inFiveHours }),
         ).rejects.toMatchObject({
           response: { code: 'pre_orders_not_accepted_by_this_vendor' },
         });
@@ -359,7 +380,7 @@ describe('OrdersService', () => {
       it('rejects when scheduledFor is less than 4h away (too soon)', async () => {
         readyHappyPath({ acceptsPreOrders: true });
         await expect(
-          service.createOrder('user-1', {
+          creation.createOrder('user-1', {
             ...baseDto,
             scheduledFor: new Date(Date.now() + 30 * 60_000), // 30 min away
           }),
@@ -369,14 +390,14 @@ describe('OrdersService', () => {
       it('rejects when scheduledFor is past (negative lead time)', async () => {
         readyHappyPath({ acceptsPreOrders: true });
         await expect(
-          service.createOrder('user-1', { ...baseDto, scheduledFor: farInThePast }),
+          creation.createOrder('user-1', { ...baseDto, scheduledFor: farInThePast }),
         ).rejects.toMatchObject({ response: { code: 'pre_order_too_soon' } });
       });
 
       it('rejects when scheduledFor is more than 24h away (v1.1 day-ahead cap)', async () => {
         readyHappyPath({ acceptsPreOrders: true });
         await expect(
-          service.createOrder('user-1', { ...baseDto, scheduledFor: farInTheFuture }),
+          creation.createOrder('user-1', { ...baseDto, scheduledFor: farInTheFuture }),
         ).rejects.toMatchObject({ response: { code: 'pre_order_too_far_in_future' } });
       });
 
@@ -390,7 +411,7 @@ describe('OrdersService', () => {
           { id: 'i-1', name: 'Ndolé', isAvailable: true, isInStock: true, updatedAt: new Date() },
           { id: 'i-2', name: 'Bissap', isAvailable: true, isInStock: true, updatedAt: new Date() },
         ]);
-        await service.createOrder('user-1', { ...baseDto, scheduledFor: tomorrowSameTime });
+        await creation.createOrder('user-1', { ...baseDto, scheduledFor: tomorrowSameTime });
         const data = prisma.order.create.mock.calls[0][0].data;
         expect(data.scheduledFor).toEqual(tomorrowSameTime);
       });
@@ -406,14 +427,14 @@ describe('OrdersService', () => {
           { id: 'i-1', name: 'Ndolé', isAvailable: true, isInStock: true, updatedAt: new Date() },
           { id: 'i-2', name: 'Bissap', isAvailable: true, isInStock: true, updatedAt: new Date() },
         ]);
-        await service.createOrder('user-1', { ...baseDto, scheduledFor: inFiveHours });
+        await creation.createOrder('user-1', { ...baseDto, scheduledFor: inFiveHours });
         const data = prisma.order.create.mock.calls[0][0].data;
         expect(data.scheduledFor).toEqual(inFiveHours);
       });
 
       it('persists scheduledFor=null for an immediate order (omitted in DTO)', async () => {
         readyHappyPath();
-        await service.createOrder('user-1', baseDto);
+        await creation.createOrder('user-1', baseDto);
         const data = prisma.order.create.mock.calls[0][0].data;
         expect(data.scheduledFor).toBeNull();
       });
@@ -422,14 +443,14 @@ describe('OrdersService', () => {
     describe('commission snapshot (ADR-0005)', () => {
       it('snapshots the vendor commissionRate onto the Order at creation', async () => {
         readyHappyPath({ commissionRate: 0.06 });
-        await service.createOrder('user-1', baseDto);
+        await creation.createOrder('user-1', baseDto);
         const data = prisma.order.create.mock.calls[0][0].data;
         expect(Number(data.commissionRate)).toBe(0.06);
       });
 
       it('captures whatever rate the vendor has — pilot 17% restaurant', async () => {
         readyHappyPath({ commissionRate: 0.17, type: VendorType.RESTAURANT });
-        await service.createOrder('user-1', baseDto);
+        await creation.createOrder('user-1', baseDto);
         const data = prisma.order.create.mock.calls[0][0].data;
         expect(Number(data.commissionRate)).toBe(0.17);
       });
@@ -538,7 +559,11 @@ describe('OrdersService', () => {
     it('cancels an ACCEPTED pre-order: updateMany guard, refund pending, penalty row, ORDER_CANCELLED', async () => {
       preOrderInState(OrderStatus.ACCEPTED);
 
-      const result = await service.vendorCancelPreOrder('order-1', 'user-vendor', 'Pas de courant');
+      const result = await vendorActions.vendorCancelPreOrder(
+        'order-1',
+        'user-vendor',
+        'Pas de courant',
+      );
 
       expect(prisma.order.updateMany).toHaveBeenCalledWith({
         where: {
@@ -570,7 +595,7 @@ describe('OrdersService', () => {
 
     it('cancels an IN_PREP pre-order — same path applies', async () => {
       preOrderInState(OrderStatus.IN_PREP);
-      await service.vendorCancelPreOrder('order-1', 'user-vendor');
+      await vendorActions.vendorCancelPreOrder('order-1', 'user-vendor');
       expect(prisma.order.updateMany).toHaveBeenCalled();
       expect(prisma.vendorPenalty.create).toHaveBeenCalled();
     });
@@ -584,7 +609,9 @@ describe('OrdersService', () => {
         paymentStatus: PaymentStatus.PAID,
         scheduledFor: null,
       });
-      await expect(service.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toMatchObject({
+      await expect(
+        vendorActions.vendorCancelPreOrder('order-1', 'user-vendor'),
+      ).rejects.toMatchObject({
         response: { code: 'not_a_pre_order' },
       });
       expect(prisma.vendorPenalty.create).not.toHaveBeenCalled();
@@ -592,7 +619,9 @@ describe('OrdersService', () => {
 
     it('rejects when status is PENDING/CONFIRMED (use refuseOrder for pre-acceptance — no penalty)', async () => {
       preOrderInState(OrderStatus.CONFIRMED);
-      await expect(service.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toMatchObject({
+      await expect(
+        vendorActions.vendorCancelPreOrder('order-1', 'user-vendor'),
+      ).rejects.toMatchObject({
         response: { code: 'pre_order_not_in_cancellable_state' },
       });
       expect(prisma.vendorPenalty.create).not.toHaveBeenCalled();
@@ -600,7 +629,9 @@ describe('OrdersService', () => {
 
     it('rejects when status has progressed past IN_PREP (READY_PICKUP)', async () => {
       preOrderInState(OrderStatus.READY_PICKUP);
-      await expect(service.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toMatchObject({
+      await expect(
+        vendorActions.vendorCancelPreOrder('order-1', 'user-vendor'),
+      ).rejects.toMatchObject({
         response: { code: 'pre_order_not_in_cancellable_state' },
       });
     });
@@ -609,7 +640,9 @@ describe('OrdersService', () => {
       preOrderInState(OrderStatus.ACCEPTED);
       prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(service.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toMatchObject({
+      await expect(
+        vendorActions.vendorCancelPreOrder('order-1', 'user-vendor'),
+      ).rejects.toMatchObject({
         response: { code: 'order_state_changed' },
       });
       expect(prisma.vendorPenalty.create).not.toHaveBeenCalled();
@@ -619,7 +652,7 @@ describe('OrdersService', () => {
     it('writes paired ledger entries (VENDOR_PAYABLE debit + PLATFORM_REVENUE credit) using penalty.id as eventId (ADR-0005 / #194)', async () => {
       preOrderInState(OrderStatus.ACCEPTED);
 
-      await service.vendorCancelPreOrder('order-1', 'user-vendor');
+      await vendorActions.vendorCancelPreOrder('order-1', 'user-vendor');
 
       expect(ledger.recordTransaction).toHaveBeenCalledTimes(1);
       const [input, tx] = ledger.recordTransaction.mock.calls[0];
@@ -649,7 +682,7 @@ describe('OrdersService', () => {
       preOrderInState(OrderStatus.ACCEPTED);
       ledger.recordTransaction.mockRejectedValueOnce(new Error('ledger boom'));
 
-      await expect(service.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toThrow(
+      await expect(vendorActions.vendorCancelPreOrder('order-1', 'user-vendor')).rejects.toThrow(
         'ledger boom',
       );
       // The ORDER_CANCELLED event must NOT have fired — the transaction
@@ -671,7 +704,7 @@ describe('OrdersService', () => {
         totalXAF: 4949,
         scheduledFor: new Date(Date.now() + 6 * 3600_000),
       });
-      await service.vendorCancelPreOrder('order-1', 'user-vendor');
+      await vendorActions.vendorCancelPreOrder('order-1', 'user-vendor');
       expect(prisma.vendorPenalty.create).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ amountXAF: 450 }) }),
       );
@@ -691,7 +724,7 @@ describe('OrdersService', () => {
 
     it('flips CONFIRMED → ACCEPTED + emits order.accepted (with status-guarded update)', async () => {
       vendorOrder(OrderStatus.CONFIRMED);
-      await service.acceptOrder('order-1', 'user-1');
+      await vendorActions.acceptOrder('order-1', 'user-1');
       expect(prisma.order.updateMany).toHaveBeenCalledWith({
         where: {
           id: 'order-1',
@@ -704,13 +737,13 @@ describe('OrdersService', () => {
 
     it('also accepts PENDING (cash flow) → ACCEPTED', async () => {
       vendorOrder(OrderStatus.PENDING);
-      await service.acceptOrder('order-1', 'user-1');
+      await vendorActions.acceptOrder('order-1', 'user-1');
       expect(prisma.order.updateMany).toHaveBeenCalled();
     });
 
     it('refuses when order is already in a non-decidable state', async () => {
       vendorOrder(OrderStatus.READY_PICKUP);
-      await expect(service.acceptOrder('order-1', 'user-1')).rejects.toMatchObject({
+      await expect(vendorActions.acceptOrder('order-1', 'user-1')).rejects.toMatchObject({
         response: { code: 'order_not_pending' },
       });
     });
@@ -722,7 +755,7 @@ describe('OrdersService', () => {
         vendorId: 'v-OTHER',
         status: OrderStatus.CONFIRMED,
       });
-      await expect(service.acceptOrder('order-1', 'user-1')).rejects.toBeInstanceOf(
+      await expect(vendorActions.acceptOrder('order-1', 'user-1')).rejects.toBeInstanceOf(
         NotFoundException,
       );
     });
@@ -734,7 +767,7 @@ describe('OrdersService', () => {
       // row to REFUSED. updateMany matches zero rows.
       prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(service.acceptOrder('order-1', 'user-1')).rejects.toMatchObject({
+      await expect(vendorActions.acceptOrder('order-1', 'user-1')).rejects.toMatchObject({
         response: { code: 'order_state_changed' },
       });
       // Critical: no event must fire — the consumer already got the auto-refuse
@@ -757,7 +790,7 @@ describe('OrdersService', () => {
     it('flips CONFIRMED → REFUSED with reason label (status-guarded update)', async () => {
       vendorOrder(OrderStatus.CONFIRMED);
 
-      await service.refuseOrder('order-1', 'user-1', {
+      await vendorActions.refuseOrder('order-1', 'user-1', {
         reason: RefusalReason.POWER_OUTAGE,
         note: 'Pas de courant depuis 30 min',
       });
@@ -784,7 +817,7 @@ describe('OrdersService', () => {
       prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
 
       await expect(
-        service.refuseOrder('order-1', 'user-1', { reason: RefusalReason.CLOSED }),
+        vendorActions.refuseOrder('order-1', 'user-1', { reason: RefusalReason.CLOSED }),
       ).rejects.toMatchObject({ response: { code: 'order_state_changed' } });
       // No second ORDER_REFUSED event — the cron already emitted one with the
       // EXPIRED reason; we cannot double-fire with the vendor's reason or the
@@ -882,7 +915,7 @@ describe('OrdersService', () => {
     it('flips PENDING → CONFIRMED + PAID with status-guarded updateMany and 60s acceptance deadline', async () => {
       pendingOrder();
 
-      await service.onPaymentSucceeded({
+      await paymentLifecycle.onPaymentSucceeded({
         orderId: 'order-1',
         providerReference: 'campay-123',
         payerPhone: '+237670000000',
@@ -907,7 +940,10 @@ describe('OrdersService', () => {
 
     it('emits ORDER_PAID + ORDER_CREATED on success — ORDER_CREATED is what triggers vendor push (#178)', async () => {
       pendingOrder();
-      await service.onPaymentSucceeded({ orderId: 'order-1', providerReference: 'campay-123' });
+      await paymentLifecycle.onPaymentSucceeded({
+        orderId: 'order-1',
+        providerReference: 'campay-123',
+      });
       const emitted = events.emit.mock.calls.map((c) => c[0]);
       expect(emitted).toContain(DomainEvents.ORDER_PAID);
       expect(emitted).toContain(DomainEvents.ORDER_CREATED);
@@ -919,7 +955,10 @@ describe('OrdersService', () => {
         paymentStatus: PaymentStatus.PAID,
       });
 
-      await service.onPaymentSucceeded({ orderId: 'order-1', providerReference: 'campay-123' });
+      await paymentLifecycle.onPaymentSucceeded({
+        orderId: 'order-1',
+        providerReference: 'campay-123',
+      });
 
       expect(prisma.order.updateMany).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
@@ -931,7 +970,10 @@ describe('OrdersService', () => {
       // between findUnique and updateMany. Our update matches zero rows.
       prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await service.onPaymentSucceeded({ orderId: 'order-1', providerReference: 'campay-123' });
+      await paymentLifecycle.onPaymentSucceeded({
+        orderId: 'order-1',
+        providerReference: 'campay-123',
+      });
 
       // Critical: NO event must fire — the other webhook already emitted
       // ORDER_PAID + ORDER_CREATED. Double-emit would double-notify the
@@ -945,7 +987,7 @@ describe('OrdersService', () => {
       it('computes commissionXAF + riderShareXAF + platformFeeXAF from the snapshotted rate AND writes PAYMENT_RECEIVED ledger entries (7.1a)', async () => {
         pendingOrder(); // subtotal 4500, fee 400, commissionRate 0.06, total 4900
 
-        await service.onPaymentSucceeded({
+        await paymentLifecycle.onPaymentSucceeded({
           orderId: 'order-1',
           providerReference: 'campay-1',
         });
@@ -985,7 +1027,7 @@ describe('OrdersService', () => {
           commissionRate: new Prisma.Decimal(0.17),
         });
 
-        await service.onPaymentSucceeded({
+        await paymentLifecycle.onPaymentSucceeded({
           orderId: 'order-1',
           providerReference: 'campay-2',
         });
@@ -1004,7 +1046,7 @@ describe('OrdersService', () => {
       it('pre-order payment: flips PAID + emits ORDER_PAID but NOT ORDER_CREATED, NO acceptanceDeadlineAt', async () => {
         pendingOrder({ scheduledFor: new Date(Date.now() + 6 * 3600_000) });
 
-        await service.onPaymentSucceeded({
+        await paymentLifecycle.onPaymentSucceeded({
           orderId: 'order-1',
           providerReference: 'campay-123',
         });
@@ -1036,7 +1078,7 @@ describe('OrdersService', () => {
       { id: 'i-1', name: 'X', priceXAF: 2000, isAvailable: true, isInStock: true },
       { id: 'i-2', name: 'Y', priceXAF: 500, isAvailable: true, isInStock: true },
     ]);
-    await service.createOrder('user-1', baseDto);
+    await creation.createOrder('user-1', baseDto);
     expect(events.emit).not.toHaveBeenCalled();
   });
 
@@ -1097,7 +1139,7 @@ describe('OrdersService', () => {
 
     it('first prepared item flips ACCEPTED → IN_PREP', async () => {
       setup(OrderStatus.ACCEPTED, [{ preparedAt: new Date() }, { preparedAt: null }]);
-      const result = await service.setItemPrepared('order-1', 'oi-1', 'user-1', true);
+      const result = await vendorActions.setItemPrepared('order-1', 'oi-1', 'user-1', true);
       expect(result.status).toBe(OrderStatus.IN_PREP);
       expect(result.preparedAt).toBeInstanceOf(Date);
       expect(prisma.order.update).toHaveBeenCalledWith(
@@ -1107,14 +1149,14 @@ describe('OrdersService', () => {
 
     it('last unprepared toggle flips IN_PREP → ACCEPTED', async () => {
       setup(OrderStatus.IN_PREP, [{ preparedAt: null }, { preparedAt: null }]);
-      const result = await service.setItemPrepared('order-1', 'oi-1', 'user-1', false);
+      const result = await vendorActions.setItemPrepared('order-1', 'oi-1', 'user-1', false);
       expect(result.status).toBe(OrderStatus.ACCEPTED);
       expect(result.preparedAt).toBeNull();
     });
 
     it('keeps IN_PREP when only some items are prepared', async () => {
       setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: null }]);
-      const result = await service.setItemPrepared('order-1', 'oi-1', 'user-1', true);
+      const result = await vendorActions.setItemPrepared('order-1', 'oi-1', 'user-1', true);
       expect(result.status).toBe(OrderStatus.IN_PREP);
       expect(prisma.order.update).not.toHaveBeenCalled();
     });
@@ -1122,7 +1164,7 @@ describe('OrdersService', () => {
     it('refuses when order has already moved past the preparation phase', async () => {
       setup(OrderStatus.READY_PICKUP, []);
       await expect(
-        service.setItemPrepared('order-1', 'oi-1', 'user-1', true),
+        vendorActions.setItemPrepared('order-1', 'oi-1', 'user-1', true),
       ).rejects.toMatchObject({
         response: expect.objectContaining({ code: 'order_not_in_prep_phase' }),
       });
@@ -1132,7 +1174,7 @@ describe('OrdersService', () => {
       setup(OrderStatus.IN_PREP, []);
       prisma.orderItem.findUnique.mockResolvedValue({ id: 'oi-1', orderId: 'order-other' });
       await expect(
-        service.setItemPrepared('order-1', 'oi-1', 'user-1', true),
+        vendorActions.setItemPrepared('order-1', 'oi-1', 'user-1', true),
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
@@ -1150,7 +1192,7 @@ describe('OrdersService', () => {
 
     it('flips to READY_PICKUP + emits ORDER_READY when every item is prepared', async () => {
       setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: new Date() }]);
-      const result = await service.markOrderReady('order-1', 'user-1');
+      const result = await vendorActions.markOrderReady('order-1', 'user-1');
       expect(result.status).toBe(OrderStatus.READY_PICKUP);
       expect(prisma.order.updateMany).toHaveBeenCalledWith({
         where: {
@@ -1167,7 +1209,7 @@ describe('OrdersService', () => {
 
     it('refuses when at least one item is still unprepared', async () => {
       setup(OrderStatus.IN_PREP, [{ preparedAt: new Date() }, { preparedAt: null }]);
-      await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
+      await expect(vendorActions.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
         response: expect.objectContaining({ code: 'items_not_all_prepared' }),
       });
       expect(events.emit).not.toHaveBeenCalled();
@@ -1175,7 +1217,7 @@ describe('OrdersService', () => {
 
     it('refuses when order is no longer in the preparation phase', async () => {
       setup(OrderStatus.READY_PICKUP, [{ preparedAt: new Date() }]);
-      await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
+      await expect(vendorActions.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
         response: expect.objectContaining({ code: 'order_not_in_prep_phase' }),
       });
     });
@@ -1186,7 +1228,7 @@ describe('OrdersService', () => {
       // — e.g. an admin cancellation. updateMany matches zero rows.
       prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
 
-      await expect(service.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
+      await expect(vendorActions.markOrderReady('order-1', 'user-1')).rejects.toMatchObject({
         response: expect.objectContaining({ code: 'order_state_changed' }),
       });
       expect(events.emit).not.toHaveBeenCalled();

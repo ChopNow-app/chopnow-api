@@ -4,6 +4,9 @@ import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
+import { OrderCreationService } from './order-creation.service';
+import { OrderVendorActionsService } from './order-vendor-actions.service';
+import { OrderPaymentLifecycleService } from './order-payment-lifecycle.service';
 import { OrdersExpiryService } from './orders-expiry.service';
 import { StuckPickupDetectorService } from './stuck-pickup-detector.service';
 import { OrderNotificationsService } from './order-notifications.service';
@@ -37,6 +40,9 @@ import { PreOrderPromotionService } from './pre-order-promotion.service';
   controllers: [OrdersController],
   providers: [
     OrdersService,
+    OrderCreationService,
+    OrderVendorActionsService,
+    OrderPaymentLifecycleService,
     OrdersExpiryService,
     OrderNotificationsService,
     OrderNotificationsProcessor,
