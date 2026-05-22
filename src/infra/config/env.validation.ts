@@ -31,7 +31,16 @@ export const envSchema = Joi.object({
   CAMPAY_API_URL: Joi.string().uri().optional(),
   CAMPAY_USERNAME: Joi.string().optional(),
   CAMPAY_PASSWORD: Joi.string().optional(),
-  CAMPAY_WEBHOOK_SECRET: Joi.string().optional(),
+  // Required in production (the webhook guard hard-fails any request whose
+  // signature can't be verified against this secret — a missing secret in
+  // prod means all real Campay webhooks would be rejected, so we'd rather
+  // fail at boot). Optional in dev/test so contributors don't need a real
+  // Campay account just to start the API.
+  CAMPAY_WEBHOOK_SECRET: Joi.string().min(16).when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional(),
+  }),
 
   VAPID_PUBLIC_KEY: Joi.string().optional(),
   VAPID_PRIVATE_KEY: Joi.string().optional(),

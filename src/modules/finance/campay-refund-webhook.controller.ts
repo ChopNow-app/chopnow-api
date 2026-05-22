@@ -1,19 +1,23 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../shared/decorators/public.decorator';
+import { CampayWebhookGuard } from '../payments/guards/campay-webhook.guard';
 import { FinanceService } from './finance.service';
 
 // S3 / chopnow-api#90 — Campay refund settlement webhook.
 //
-// Separate route so the persistence-layer dedup keys cleanly on
-// (eventType=REFUND, reference) without colliding with COLLECT or
-// TRANSFER references.
+// Authenticated by CampayWebhookGuard (same primitive as the payment and
+// transfer webhooks): every request must carry a valid HS256 JWT in
+// body.signature signed with CAMPAY_WEBHOOK_SECRET. The guard runs
+// before the handler — unsigned/forged requests never reach
+// FinanceService.handleRefundWebhook and never mutate refund state.
 @ApiTags('webhooks')
 @Controller('webhooks/campay/refund')
 export class CampayRefundWebhookController {
   constructor(private readonly finance: FinanceService) {}
 
   @Public()
+  @UseGuards(CampayWebhookGuard)
   @Post()
   @HttpCode(200)
   @ApiOperation({ summary: 'Campay refund status webhook' })
