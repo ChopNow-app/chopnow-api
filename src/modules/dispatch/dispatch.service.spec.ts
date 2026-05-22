@@ -1,7 +1,9 @@
 import { Test } from '@nestjs/testing';
+import { getQueueToken } from '@nestjs/bullmq';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { RiderVehicleType } from '@prisma/client';
 import { DispatchService } from './dispatch.service';
+import { DISPATCH_RETRY_QUEUE } from './dispatch-retry.constants';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
@@ -15,6 +17,7 @@ describe('DispatchService', () => {
     $queryRaw: jest.Mock;
   };
   let events: { emit: jest.Mock };
+  let retryQueue: { add: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -29,12 +32,14 @@ describe('DispatchService', () => {
       $queryRaw: jest.fn(),
     };
     events = { emit: jest.fn() };
+    retryQueue = { add: jest.fn().mockResolvedValue({}) };
     const module = await Test.createTestingModule({
       providers: [
         DispatchService,
         pinoLoggerProvider(DispatchService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: events },
+        { provide: getQueueToken(DISPATCH_RETRY_QUEUE), useValue: retryQueue },
       ],
     }).compile();
     service = module.get(DispatchService);
@@ -107,13 +112,27 @@ describe('DispatchService', () => {
     expect(cutoffDate!.getTime()).toBeGreaterThanOrEqual(before - 61_000);
   });
 
-  describe('onOrderAccepted retry + expire (Story 4.14)', () => {
-    beforeEach(() => jest.useFakeTimers());
-    afterEach(() => jest.useRealTimers());
+  describe('onOrderAccepted retry + expire (Story 4.14 — BullMQ-backed)', () => {
+    /**
+     * The queue.add mock immediately re-invokes runRetry, simulating
+     * "delayed job fires + worker calls back into the service". This lets us
+     * exercise the full N-attempt retry chain in one test without any timers
+     * — we just need the service's `attempt < MAX_RETRIES - 1` decision to
+     * behave correctly.
+     */
+    function chainRetriesIntoWorker() {
+      retryQueue.add.mockImplementation(async (_jobName: string, data: unknown) => {
+        const { orderId, vendorId, attempt } = data as {
+          orderId: string;
+          vendorId: string;
+          attempt: number;
+        };
+        await service.runRetry(orderId, vendorId, attempt);
+        return {};
+      });
+    }
 
     function neverDispatchable() {
-      // Both the pre-dispatch state check AND the inner dispatchOrder() call
-      // hit findUnique; both should see "no rider yet, not cancelled".
       prisma.order.findUnique.mockResolvedValue({
         id: 'order-1',
         riderId: null,
@@ -125,13 +144,28 @@ describe('DispatchService', () => {
       prisma.$queryRaw.mockResolvedValue([]); // never any rider
     }
 
-    it('after MAX_RETRIES failures, expires the order and emits ORDER_CANCELLED with refundRequired', async () => {
+    it('schedules a delayed retry job (attempt 1, 30s delay) when the first attempt finds no rider', async () => {
       neverDispatchable();
-
+      // Don't chain — we want to verify a single enqueue.
       await service.onOrderAccepted({ orderId: 'order-1', vendorId: 'v-1' });
 
-      // 9 retries * 30s = 270s. Advance past all of them.
-      await jest.advanceTimersByTimeAsync(10 * 30_000);
+      expect(retryQueue.add).toHaveBeenCalledTimes(1);
+      expect(retryQueue.add).toHaveBeenCalledWith(
+        'tryDispatch',
+        { orderId: 'order-1', vendorId: 'v-1', attempt: 1 },
+        expect.objectContaining({
+          delay: 30_000,
+          jobId: 'order-1:1',
+          attempts: 1,
+        }),
+      );
+    });
+
+    it('after MAX_RETRIES failures, expires the order and emits ORDER_CANCELLED with refundRequired', async () => {
+      neverDispatchable();
+      chainRetriesIntoWorker();
+
+      await service.onOrderAccepted({ orderId: 'order-1', vendorId: 'v-1' });
 
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 'order-1' },
@@ -150,6 +184,9 @@ describe('DispatchService', () => {
           refundRequired: true,
         }),
       );
+      // 9 retries enqueued (attempts 1..9); attempt 9's worker pass calls
+      // expireForNoRider rather than enqueuing a 10th.
+      expect(retryQueue.add).toHaveBeenCalledTimes(9);
     });
 
     it('does not flip paymentStatus when the cash order expires (no refund needed)', async () => {
@@ -162,9 +199,9 @@ describe('DispatchService', () => {
         userId: 'u-1',
       });
       prisma.$queryRaw.mockResolvedValue([]);
+      chainRetriesIntoWorker();
 
       await service.onOrderAccepted({ orderId: 'order-1', vendorId: 'v-1' });
-      await jest.advanceTimersByTimeAsync(10 * 30_000);
 
       expect(prisma.order.update).toHaveBeenCalledWith({
         where: { id: 'order-1' },
@@ -177,21 +214,21 @@ describe('DispatchService', () => {
     });
 
     it('stops retrying as soon as the order is no longer assignable (e.g. consumer cancelled)', async () => {
-      // First call: assignable. Second (next retry): order is now CANCELLED.
+      // First call: assignable, no rider → enqueue retry.
+      // Second call (worker fires retry): order now CANCELLED → bail.
       prisma.order.findUnique
         .mockResolvedValueOnce({ riderId: null, status: 'ACCEPTED' })
         .mockResolvedValueOnce({ riderId: null, status: 'CANCELLED' });
-      prisma.$queryRaw.mockResolvedValue([]); // first attempt: no rider
+      prisma.$queryRaw.mockResolvedValue([]);
+      chainRetriesIntoWorker();
 
       await service.onOrderAccepted({ orderId: 'order-1', vendorId: 'v-1' });
-      // First retry fires 30s later, sees CANCELLED, bails.
-      await jest.advanceTimersByTimeAsync(30_000);
-      // Advance way past the remaining retry window — no more dispatch attempts should run.
-      await jest.advanceTimersByTimeAsync(20 * 30_000);
 
       // expire() never called because the abort happened first.
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
+      // One retry was enqueued before the cancellation was observed.
+      expect(retryQueue.add).toHaveBeenCalledTimes(1);
     });
   });
 

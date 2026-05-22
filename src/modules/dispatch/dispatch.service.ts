@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
 import {
   DispatchOutcome,
@@ -7,9 +8,15 @@ import {
   RiderStatus,
   RiderVehicleType,
 } from '@prisma/client';
+import { Queue } from 'bullmq';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
+import {
+  DISPATCH_RETRY_JOB,
+  DISPATCH_RETRY_QUEUE,
+  type DispatchRetryJobData,
+} from './dispatch-retry.constants';
 
 // Story 4.1 — dispatch radius per vehicle. Hard-coded for MVP; the spec
 // asks for admin-configurable per-vehicle settings (Story 6.6 territory).
@@ -46,22 +53,26 @@ interface CandidateRow {
 
 @Injectable()
 export class DispatchService {
-  /**
-   * In-process retry timers, keyed by orderId. Lives on a single API node —
-   * fine for MVP since we run one instance. When we scale horizontally,
-   * swap for Bull MQ (a job per retry survives node restart + balances).
-   */
-  private readonly retryTimers = new Map<string, NodeJS.Timeout>();
-
   constructor(
     @InjectPinoLogger(DispatchService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
+    @InjectQueue(DISPATCH_RETRY_QUEUE) private readonly retryQueue: Queue<DispatchRetryJobData>,
   ) {}
 
   @OnEvent(DomainEvents.ORDER_ACCEPTED)
   async onOrderAccepted(payload: { orderId: string; vendorId: string }) {
     await this.tryDispatch(payload.orderId, payload.vendorId, 0);
+  }
+
+  /**
+   * Entry point used by the BullMQ worker when a delayed retry job fires.
+   * Kept as a thin public wrapper around `tryDispatch` so the queue
+   * processor doesn't reach into a private. Idempotent: `tryDispatch`
+   * re-checks the order state before doing anything.
+   */
+  async runRetry(orderId: string, vendorId: string, attempt: number): Promise<void> {
+    await this.tryDispatch(orderId, vendorId, attempt);
   }
 
   /**
@@ -115,64 +126,54 @@ export class DispatchService {
    */
   private async tryDispatch(orderId: string, vendorId: string, attempt: number): Promise<void> {
     // Defensive: don't retry an order that's already been canceled or
-    // expired by another code path.
+    // expired by another code path. A BullMQ retry job that fires after
+    // the order was assigned via a parallel path just no-ops here.
     const current = await this.prisma.order.findUnique({
       where: { id: orderId },
       select: { status: true, riderId: true },
     });
     if (!current) return;
-    if (current.riderId) {
-      this.clearRetry(orderId);
-      return;
-    }
-    if (current.status === OrderStatus.CANCELLED || current.status === OrderStatus.EXPIRED) {
-      this.clearRetry(orderId);
-      return;
-    }
+    if (current.riderId) return;
+    if (current.status === OrderStatus.CANCELLED || current.status === OrderStatus.EXPIRED) return;
 
     // attempt arg is 0-indexed; DispatchEvent.attempt is 1-indexed for
     // human-readability in the admin UI ("attempt 1, 2, 3…").
     const result = await this.dispatchOrder(orderId, vendorId, attempt + 1);
-    if (result) {
-      // Found a rider — kill any pending retry.
-      this.clearRetry(orderId);
-      return;
-    }
+    if (result) return;
 
     // No rider this round.
     if (attempt < MAX_RETRIES - 1) {
+      const nextAttempt = attempt + 1;
       this.logger.info(
         {
           event: 'dispatch_retry_scheduled',
           orderId,
           vendorId,
-          attempt: attempt + 1,
+          attempt: nextAttempt,
           maxAttempts: MAX_RETRIES,
           retryInSeconds: RETRY_INTERVAL_MS / 1000,
         },
         'Dispatch retry scheduled — no rider this round',
       );
-      const timer = setTimeout(() => {
-        void this.tryDispatch(orderId, vendorId, attempt + 1);
-      }, RETRY_INTERVAL_MS);
-      // Unref so a pending timer doesn't keep the node process alive on
-      // shutdown — Nest's graceful shutdown will let the timer be dropped.
-      timer.unref();
-      this.retryTimers.set(orderId, timer);
+      // Job ID locks duplicate enqueues for the same (order, attempt) —
+      // if two concurrent dispatchers both decided to schedule attempt N,
+      // only one job ends up in Redis.
+      await this.retryQueue.add(
+        DISPATCH_RETRY_JOB,
+        { orderId, vendorId, attempt: nextAttempt },
+        {
+          delay: RETRY_INTERVAL_MS,
+          jobId: `${orderId}:${nextAttempt}`,
+          attempts: 1,
+          removeOnComplete: true,
+          removeOnFail: { count: 1000 }, // keep last 1000 failures for inspection
+        },
+      );
       return;
     }
 
     // Last attempt failed — give up. Mark EXPIRED + refund.
     await this.expireForNoRider(orderId);
-    this.clearRetry(orderId);
-  }
-
-  private clearRetry(orderId: string): void {
-    const t = this.retryTimers.get(orderId);
-    if (t) {
-      clearTimeout(t);
-      this.retryTimers.delete(orderId);
-    }
   }
 
   /**
