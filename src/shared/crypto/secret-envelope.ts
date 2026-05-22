@@ -22,6 +22,11 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_BYTES = 12;
+// GCM auth tag length. Pinned to 16 bytes (128 bits) — the maximum the
+// spec allows, and the standard for production use. Pinning explicitly
+// at decipher time defends against a tampered envelope where someone
+// truncated the tag to a shorter value the API might otherwise accept.
+const AUTH_TAG_LENGTH = 16;
 
 function deriveKey(passphrase: string): Buffer {
   if (!passphrase) {
@@ -33,7 +38,7 @@ function deriveKey(passphrase: string): Buffer {
 export function encryptSecret(plaintext: string, passphrase: string): string {
   const key = deriveKey(passphrase);
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, key, iv);
+  const cipher = createCipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const authTag = cipher.getAuthTag();
   return `${iv.toString('hex')}.${authTag.toString('hex')}.${ciphertext.toString('hex')}`;
@@ -48,8 +53,14 @@ export function decryptSecret(envelope: string, passphrase: string): string {
   const key = deriveKey(passphrase);
   const iv = Buffer.from(ivHex, 'hex');
   const authTag = Buffer.from(authTagHex, 'hex');
+  if (authTag.length !== AUTH_TAG_LENGTH) {
+    // Reject truncated / oversized tags before they reach setAuthTag.
+    // Belt-and-suspenders with the `authTagLength` option on createDecipheriv
+    // — if either layer flags the mismatch, decryption fails closed.
+    throw new Error('invalid auth tag length');
+  }
   const ciphertext = Buffer.from(ciphertextHex, 'hex');
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: AUTH_TAG_LENGTH });
   decipher.setAuthTag(authTag);
   const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
   return plaintext.toString('utf8');
