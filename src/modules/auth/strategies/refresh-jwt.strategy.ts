@@ -6,11 +6,23 @@ import { EnvService } from '../../../infra/config/env.service';
 import { JwtRevocationService } from '../jwt-revocation.service';
 import { JwtPayload } from './jwt.strategy';
 
-// Pulls the refresh token out of the JSON body. The access strategy reads from
-// the Authorization header, but /auth/refresh is the one route where the token
-// lives in the body (the client might be sending an *expired* access in the
-// header at the same time, which we deliberately ignore here).
-function extractFromBody(req: Request): string | null {
+/**
+ * Phase B1 — prefer the HttpOnly cookie, fall back to the JSON body.
+ *
+ * Cookie path: production clients send the refresh token via the
+ * `chopnow_rt` cookie set at login / on previous refresh. JavaScript
+ * cannot read it (HttpOnly), so XSS can't exfiltrate.
+ *
+ * Body path: retained for backwards compatibility while the consumer PWA
+ * cuts over from `localStorage` storage to the cookie model. Once the
+ * frontend ships its paired PR + cookie-only is the default everywhere,
+ * the body extractor can be removed.
+ */
+function extractRefreshToken(req: Request): string | null {
+  const cookieValue = (req?.cookies as { chopnow_rt?: unknown } | undefined)?.chopnow_rt;
+  if (typeof cookieValue === 'string' && cookieValue.length > 0) {
+    return cookieValue;
+  }
   const body = req?.body as { refreshToken?: unknown } | undefined;
   return typeof body?.refreshToken === 'string' && body.refreshToken.length > 0
     ? body.refreshToken
@@ -24,7 +36,7 @@ export class RefreshJwtStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
     private readonly revocation: JwtRevocationService,
   ) {
     super({
-      jwtFromRequest: extractFromBody,
+      jwtFromRequest: extractRefreshToken,
       ignoreExpiration: false,
       secretOrKey: env.jwtRefreshSecret,
       passReqToCallback: true,
@@ -32,9 +44,9 @@ export class RefreshJwtStrategy extends PassportStrategy(Strategy, 'jwt-refresh'
   }
 
   async validate(req: Request, payload: JwtPayload) {
-    // Re-read the body — passport already used it via the extractor, but
-    // validate() is where we forward it to the service (req.user).
-    const refreshToken = extractFromBody(req);
+    // Re-read — passport already used the extractor; validate() forwards
+    // it onto req.user for the service.
+    const refreshToken = extractRefreshToken(req);
     if (!refreshToken) {
       // Should be unreachable (extractor would have produced null and passport
       // would have rejected before reaching validate), but belt-and-braces.

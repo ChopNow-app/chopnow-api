@@ -329,6 +329,67 @@ export class AuthService {
    * impersonate the phone number's account, so a predictable code is a
    * direct path to account takeover.
    */
+  /**
+   * Phase B1 — single-device logout. Revokes the refresh-token row that
+   * matches the presented raw token (argon2 verify against the hashes,
+   * same scan-then-match pattern as `refresh`). Returns silently if the
+   * token doesn't match any row — the cookie still gets cleared by the
+   * controller so the client ends up logged out either way.
+   *
+   * Note: this does NOT call `JwtRevocationService.revokeUser` because
+   * that's a wider hammer (logs the user out of every device). Standard
+   * logout intent is "this device only" — invalidate one refresh row and
+   * let the 15-min access token age out.
+   */
+  async logout(rawRefreshToken: string): Promise<void> {
+    // Decode-only — no signature check needed; we're not authorizing, just
+    // looking up which row to revoke. A bogus token finds nothing and
+    // no-ops.
+    let userId: string;
+    try {
+      const decoded = await this.jwt.verifyAsync<{ sub: string }>(rawRefreshToken, {
+        secret: this.env.jwtRefreshSecret,
+      });
+      userId = decoded.sub;
+    } catch (err) {
+      // Expired or malformed token — nothing to revoke; cookie clears on
+      // the controller side anyway.
+      this.logger.debug(
+        { event: 'auth_logout_verify_failed', error: String(err) },
+        'Logout received an unverifiable refresh token — clearing cookie only',
+      );
+      return;
+    }
+
+    const candidates = await this.prisma.refreshToken.findMany({
+      where: { userId, revokedAt: null },
+    });
+    for (const row of candidates) {
+      if (await argon2.verify(row.tokenHash, rawRefreshToken)) {
+        await this.prisma.refreshToken.update({
+          where: { id: row.id },
+          data: { revokedAt: new Date() },
+        });
+        this.logger.info(
+          { event: 'auth_logout', userId, tokenId: row.id },
+          'Refresh token revoked on logout',
+        );
+        return;
+      }
+    }
+  }
+
+  /**
+   * Cookie Max-Age in seconds — derived from JWT_REFRESH_TTL so the
+   * cookie expiry matches the JWT expiry. Used by the controller to
+   * set the chopnow_rt cookie. Parsed from the env string at boot
+   * (parseDurationMs is the same helper signTokens uses).
+   */
+  refreshCookieMaxAgeSeconds(): number {
+    const ttl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    return Math.floor(parseDurationMs(ttl) / 1000);
+  }
+
   private generateCode(): string {
     if (this.env.nodeEnv === 'test') return '000000';
     const n = randomInt(0, 1_000_000);
