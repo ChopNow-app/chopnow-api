@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { UpdateAvailabilityDto, UpdateHoursDto } from './dto/availability.dto';
+import type { UpdateAvailabilityDto, UpdateHoursDto } from './dto/availability.dto';
 
 type DayKey = 'sun' | 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat';
 const DAY_KEYS: DayKey[] = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];

@@ -9,7 +9,7 @@ import { OrderStatus, PaymentStatus, VendorStatus } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
-import { CreateOrderDto } from './dto/create-order.dto';
+import type { CreateOrderDto } from './dto/create-order.dto';
 import {
   MIN_ORDER_XAF,
   PRE_ORDER_MAX_LEAD_HOURS,

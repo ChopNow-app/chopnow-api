@@ -7,8 +7,8 @@ import {
 import { Prisma, StockLevel, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
-import { UpsertItemDto, UpdateItemStockDto } from './dto/item.dto';
-import { UpsertCategoryDto } from './dto/menu-category.dto';
+import type { UpsertItemDto, UpdateItemStockDto } from './dto/item.dto';
+import type { UpsertCategoryDto } from './dto/menu-category.dto';
 
 // Story 2.2 — informal vendors are capped at 15 items / 2 categories
 // (deliberate simplicity for cuisinières who only have a phone). Restaurants

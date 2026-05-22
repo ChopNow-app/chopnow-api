@@ -19,9 +19,9 @@ import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 import { LedgerService } from '../finance/ledger.service';
-import { RiderAvailabilityDto, RiderHeartbeatDto } from './dto/rider-availability.dto';
-import { SubmitRiderDto } from './dto/submit-rider.dto';
-import { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
+import type { RiderAvailabilityDto, RiderHeartbeatDto } from './dto/rider-availability.dto';
+import type { SubmitRiderDto } from './dto/submit-rider.dto';
+import type { UpdateRiderProfileDto } from './dto/update-rider-profile.dto';
 
 // Statuses that allow re-submission. A pending or already-rejected rider can
 // re-upload corrected docs; an ACTIVE or SUSPENDED rider cannot — those go
