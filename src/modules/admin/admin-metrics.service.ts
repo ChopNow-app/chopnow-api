@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { OrderStatus, Prisma } from '@prisma/client';
+import { DispatchOutcome, OrderStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
 export interface PilotMetrics {
@@ -8,6 +8,20 @@ export interface PilotMetrics {
   completionRate: { delivered: number; total: number; percent: number };
   avgDeliveryTimeMs: number | null;
   avgVendorAcceptTimeMs: number | null;
+  dispatchFunnel: DispatchFunnel;
+}
+
+export interface DispatchFunnel {
+  /** Orders that produced at least one ASSIGNED DispatchEvent in window. */
+  ordersAssigned: number;
+  /** Orders whose first ASSIGNED happened on attempt 1 (the happy path). */
+  assignedOnFirstAttempt: number;
+  /** Orders with no ASSIGNED event in window AND a NO_CANDIDATE at attempt 10 (gave up). */
+  expiredNoRider: number;
+  /** Avg number of attempts before assignment, across orders that got assigned. */
+  avgAttemptsToAssign: number | null;
+  /** Per-rider offer counts — flags the "starved rider" anti-pattern when one rider has >70% of offers. */
+  topRiders: Array<{ riderId: string; offers: number }>;
 }
 
 @Injectable()
@@ -63,6 +77,8 @@ export class AdminMetricsService {
       ),
     ]);
 
+    const dispatchFunnel = await this.computeDispatchFunnel(from, to);
+
     return {
       window: { from: from.toISOString(), to: to.toISOString() },
       reorderRate: {
@@ -77,6 +93,77 @@ export class AdminMetricsService {
       },
       avgDeliveryTimeMs: deliveryRow[0]?.avg_ms ?? null,
       avgVendorAcceptTimeMs: acceptRow[0]?.avg_ms ?? null,
+      dispatchFunnel,
+    };
+  }
+
+  /**
+   * Dispatch funnel from the DispatchEvent log. Powers the admin tile
+   * that answers "is dispatch healthy?" and surfaces the two anti-
+   * patterns we care about most at pilot scale:
+   *
+   *   - Orders that needed multiple attempts (a sign rider density is
+   *     thin in some quartier-vendor pairs)
+   *   - One rider getting >70 % of offers (the "starved rider"
+   *     pathology — fix is operational, not engineering: bring a
+   *     second rider online in that zone)
+   */
+  private async computeDispatchFunnel(from: Date, to: Date): Promise<DispatchFunnel> {
+    const where = { createdAt: { gte: from, lt: to } };
+
+    const [assignedRows, expiredCount, topRiderRows] = await Promise.all([
+      // Per-order: smallest attempt# at which we saw ASSIGNED.
+      this.prisma.$queryRaw<Array<{ order_id: string; first_assigned_attempt: number }>>(
+        Prisma.sql`
+          SELECT "orderId" AS order_id, MIN("attempt") AS first_assigned_attempt
+          FROM "dispatch_events"
+          WHERE "outcome" = 'ASSIGNED'
+            AND "createdAt" >= ${from} AND "createdAt" < ${to}
+          GROUP BY "orderId"
+        `,
+      ),
+      // Orders that hit a NO_CANDIDATE at attempt = MAX_RETRIES (10) AND
+      // never got an ASSIGNED. Heuristic: gave up.
+      this.prisma.$queryRaw<[{ c: number }]>(
+        Prisma.sql`
+          SELECT COUNT(DISTINCT e."orderId")::int AS c
+          FROM "dispatch_events" e
+          WHERE e."outcome" = 'NO_CANDIDATE'
+            AND e."attempt" >= 10
+            AND e."createdAt" >= ${from} AND e."createdAt" < ${to}
+            AND NOT EXISTS (
+              SELECT 1 FROM "dispatch_events" e2
+              WHERE e2."orderId" = e."orderId" AND e2."outcome" = 'ASSIGNED'
+            )
+        `,
+      ),
+      // Per-rider offer counts (descending). Top 5 — the admin UI flags
+      // the leader if they have >70% of all offers, a sign that one
+      // rider is bearing the load and the others are idle/offline.
+      this.prisma.dispatchEvent.groupBy({
+        by: ['riderId'],
+        where: { ...where, outcome: DispatchOutcome.ASSIGNED, riderId: { not: null } },
+        _count: { _all: true },
+        orderBy: { _count: { riderId: 'desc' } },
+        take: 5,
+      }),
+    ]);
+
+    const ordersAssigned = assignedRows.length;
+    const assignedOnFirstAttempt = assignedRows.filter(
+      (r) => r.first_assigned_attempt === 1,
+    ).length;
+    const totalAttempts = assignedRows.reduce((sum, r) => sum + r.first_assigned_attempt, 0);
+    const avgAttemptsToAssign = ordersAssigned === 0 ? null : totalAttempts / ordersAssigned;
+
+    return {
+      ordersAssigned,
+      assignedOnFirstAttempt,
+      expiredNoRider: expiredCount[0]?.c ?? 0,
+      avgAttemptsToAssign,
+      topRiders: topRiderRows
+        .filter((r): r is typeof r & { riderId: string } => r.riderId !== null)
+        .map((r) => ({ riderId: r.riderId, offers: r._count._all })),
     };
   }
 }

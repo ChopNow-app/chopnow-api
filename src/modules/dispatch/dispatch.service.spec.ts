@@ -10,6 +10,8 @@ describe('DispatchService', () => {
   let prisma: {
     order: { findUnique: jest.Mock; updateMany: jest.Mock; update: jest.Mock };
     vendor: { findUnique: jest.Mock };
+    rider: { update: jest.Mock };
+    dispatchEvent: { create: jest.Mock };
     $queryRaw: jest.Mock;
   };
   let events: { emit: jest.Mock };
@@ -22,6 +24,8 @@ describe('DispatchService', () => {
         update: jest.fn().mockResolvedValue({}),
       },
       vendor: { findUnique: jest.fn().mockResolvedValue({ id: 'v-1' }) },
+      rider: { update: jest.fn().mockResolvedValue({}) },
+      dispatchEvent: { create: jest.fn().mockResolvedValue({}) },
       $queryRaw: jest.fn(),
     };
     events = { emit: jest.fn() };
@@ -188,6 +192,100 @@ describe('DispatchService', () => {
       // expire() never called because the abort happened first.
       expect(prisma.order.update).not.toHaveBeenCalled();
       expect(events.emit).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('dispatch observability (DispatchEvent log + round-robin)', () => {
+    it('writes a DispatchEvent ASSIGNED row + bumps Rider.lastAssignedAt on success', async () => {
+      prisma.order.findUnique.mockResolvedValue({ riderId: null });
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          rider_id: 'r-near',
+          distance_m: 800,
+          vehicle_type: RiderVehicleType.MOTO,
+          reliability_score: 85,
+        },
+      ]);
+
+      await service.dispatchOrder('order-1', 'v-1', 1);
+
+      // Audit row written
+      expect(prisma.dispatchEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          orderId: 'order-1',
+          vendorId: 'v-1',
+          attempt: 1,
+          outcome: 'ASSIGNED',
+          riderId: 'r-near',
+          vehicleType: RiderVehicleType.MOTO,
+          distanceM: 800,
+        }),
+      });
+      // Round-robin tie-breaker stamped for next dispatch
+      expect(prisma.rider.update).toHaveBeenCalledWith({
+        where: { id: 'r-near' },
+        data: { lastAssignedAt: expect.any(Date) },
+      });
+    });
+
+    it('writes a NO_CANDIDATE row when nobody is in radius (no rider stamp)', async () => {
+      prisma.order.findUnique.mockResolvedValue({ riderId: null });
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await service.dispatchOrder('order-1', 'v-1', 3);
+
+      expect(prisma.dispatchEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          orderId: 'order-1',
+          vendorId: 'v-1',
+          attempt: 3,
+          outcome: 'NO_CANDIDATE',
+          riderId: null,
+        }),
+      });
+      // No rider was chosen, so no lastAssignedAt bump
+      expect(prisma.rider.update).not.toHaveBeenCalled();
+    });
+
+    it('writes a RACE_LOST row when another dispatcher claimed the order first', async () => {
+      prisma.order.findUnique.mockResolvedValue({ riderId: null });
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          rider_id: 'r-near',
+          distance_m: 600,
+          vehicle_type: RiderVehicleType.MOTO,
+          reliability_score: 85,
+        },
+      ]);
+      // Simulate the race — atomic update finds the order already assigned
+      prisma.order.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await service.dispatchOrder('order-1', 'v-1', 1);
+
+      expect(prisma.dispatchEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          orderId: 'order-1',
+          attempt: 1,
+          outcome: 'RACE_LOST',
+          riderId: 'r-near',
+        }),
+      });
+      // Race lost = we don't own the assignment, so we don't bump lastAssignedAt
+      expect(prisma.rider.update).not.toHaveBeenCalled();
+    });
+
+    it('SQL includes the round-robin tie-breaker `lastAssignedAt ASC NULLS FIRST`', async () => {
+      prisma.order.findUnique.mockResolvedValue({ riderId: null });
+      prisma.$queryRaw.mockResolvedValue([]);
+      await service.dispatchOrder('order-1', 'v-1', 1);
+
+      // Inspect the template-literal SQL that Prisma.raw was given. The
+      // text segments include the ORDER BY clause; we just want to
+      // confirm the tie-breaker arrives in the right place.
+      const call = prisma.$queryRaw.mock.calls[0][0];
+      const sql = Array.isArray(call) ? call.join(' ') : String(call);
+      expect(sql).toMatch(/ORDER BY/);
+      expect(sql).toMatch(/"lastAssignedAt"\s+ASC\s+NULLS\s+FIRST/);
     });
   });
 });
