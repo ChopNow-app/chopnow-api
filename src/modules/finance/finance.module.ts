@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CampayModule } from '../../infra/campay/campay.module';
 import { PrismaModule } from '../../infra/prisma/prisma.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { CampayRefundWebhookController } from './campay-refund-webhook.controller';
 import { CampayTransferWebhookController } from './campay-transfer-webhook.controller';
 import { FinanceService } from './finance.service';
@@ -21,7 +22,7 @@ import { VendorPayoutCronService } from './vendor-payout-cron.service';
  * into onPaymentSucceeded, refund flow, payout crons.
  */
 @Module({
-  imports: [PrismaModule, CampayModule],
+  imports: [PrismaModule, CampayModule, PaymentsModule],
   controllers: [CampayTransferWebhookController, CampayRefundWebhookController],
   providers: [
     LedgerService,

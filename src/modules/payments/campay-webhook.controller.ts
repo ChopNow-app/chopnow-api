@@ -1,23 +1,21 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CampayWebhookPayload } from '../../infra/campay/campay.service';
 import { Public } from '../../shared/decorators/public.decorator';
+import { CampayWebhookGuard } from './guards/campay-webhook.guard';
 import { PaymentsService } from './payments.service';
 
 /**
- * Story 3.3 / 3.14 — Campay webhook receiver.
+ * Story 3.3 / 3.14 — Campay payment-status webhook receiver.
  *
- * Public route (webhook caller has no JWT) — defense is structural:
- *   - Production: nginx whitelists Campay's IP range; this controller
- *     is unreachable from the public internet (deferred — needs Hetzner
- *     prod box).
- *   - Body: structural validation only. We don't trust amounts from
- *     the webhook; we just observe the state transition.
- *   - Idempotency: PaymentsService.handleWebhook uses a Redis lock per
- *     reference + an order-status check before flipping.
+ * Authenticated by `CampayWebhookGuard`: every request must carry a valid
+ * HS256 JWT in `body.signature` signed with `CAMPAY_WEBHOOK_SECRET`. The
+ * guard runs BEFORE this method body, so an unsigned/forged request never
+ * reaches `handleWebhook` and never writes a dedup row.
  *
- * Returns 200 + `{ received: true }` for every well-formed POST so Campay
- * doesn't retry forever — even if we couldn't reconcile the reference.
+ * Returns 200 + `{ received: true }` for every signed + well-formed POST
+ * so Campay doesn't retry forever — even if we couldn't reconcile the
+ * reference.
  */
 @ApiTags('webhooks')
 @Controller('webhooks/campay')
@@ -25,6 +23,7 @@ export class CampayWebhookController {
   constructor(private readonly payments: PaymentsService) {}
 
   @Public()
+  @UseGuards(CampayWebhookGuard)
   @Post()
   @HttpCode(200)
   @ApiOperation({ summary: 'Campay payment status webhook' })
