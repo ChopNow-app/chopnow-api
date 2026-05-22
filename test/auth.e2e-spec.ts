@@ -33,6 +33,9 @@ describe('Auth flow (e2e)', () => {
     process.env.JWT_REFRESH_SECRET = 'b'.repeat(64);
     process.env.JWT_ACCESS_TTL = '24h';
     process.env.JWT_REFRESH_TTL = '30d';
+    // Phase A1 — AES-256-GCM envelope key for admin TOTP secrets at rest.
+    // Not exercised by these tests but required by env validation now.
+    process.env.APP_SECRET_ENVELOPE_KEY = 'c'.repeat(64);
     process.env.CORS_ORIGINS = 'http://localhost:3000';
     process.env.MAIL_FROM = 'ChopNow <test@local>';
     process.env.THROTTLE_TTL_SECONDS = '60';
