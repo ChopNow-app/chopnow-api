@@ -8,6 +8,7 @@ import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminAuditService } from './admin-audit.service';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
+import { AdminTotpService } from './admin-totp.service';
 import { AdminFinanceController } from './admin-finance.controller';
 import { AdminMetricsController } from './admin-metrics.controller';
 import { AdminMetricsService } from './admin-metrics.service';
@@ -43,6 +44,7 @@ import { AdminValidationService } from './admin-validation.service';
   ],
   providers: [
     AdminAuthService,
+    AdminTotpService,
     AdminValidationService,
     AdminMetricsService,
     AdminRiderFraudService,
@@ -51,6 +53,7 @@ import { AdminValidationService } from './admin-validation.service';
   ],
   exports: [
     AdminAuthService,
+    AdminTotpService,
     AdminValidationService,
     AdminMetricsService,
     AdminRiderFraudService,

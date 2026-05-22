@@ -27,6 +27,16 @@ export class EnvService {
   get isProduction(): boolean {
     return this.nodeEnv === 'production';
   }
+
+  /**
+   * Passphrase for at-rest envelope encryption of TOTP shared secrets
+   * (and any future secret we need to decrypt at runtime). Generate with
+   * `openssl rand -hex 32`. Rotating this key invalidates every existing
+   * ciphertext — affected admins must re-enroll via recovery codes.
+   */
+  get secretEnvelopeKey(): string {
+    return this.raw.getOrThrow('APP_SECRET_ENVELOPE_KEY');
+  }
   get corsOrigins(): string[] {
     return this.raw
       .getOrThrow<string>('CORS_ORIGINS')
