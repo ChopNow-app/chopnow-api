@@ -1,8 +1,19 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Req,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminRiderFraudService } from './admin-rider-fraud.service';
 import { ResolveRiderFraudDto } from './dto/resolve-rider-fraud.dto';
 
@@ -10,6 +21,7 @@ const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as
 
 @ApiTags('admin-rider-fraud')
 @ApiBearerAuth()
+@UseInterceptors(AdminAuditInterceptor)
 @Controller('admin/orders')
 export class AdminRiderFraudController {
   constructor(private readonly riderFraud: AdminRiderFraudService) {}

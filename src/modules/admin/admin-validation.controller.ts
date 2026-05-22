@@ -1,7 +1,18 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { AdminValidationService } from './admin-validation.service';
 import { AdminDecisionDto } from './dto/admin-decision.dto';
 import { SetVendorPreOrdersDto } from './dto/set-vendor-pre-orders.dto';
@@ -12,6 +23,7 @@ const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN] as const;
 
 @ApiTags('admin-validation')
 @ApiBearerAuth()
+@UseInterceptors(AdminAuditInterceptor)
 @Controller('admin')
 export class AdminValidationController {
   constructor(private readonly validation: AdminValidationService) {}
