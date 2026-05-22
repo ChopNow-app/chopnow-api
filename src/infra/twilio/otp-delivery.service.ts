@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { OtpChannel } from '@prisma/client';
+import { OtpChannel, OtpStatus } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { EnvService } from '../config/env.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { TwilioService } from './twilio.service';
 
 export interface OtpDeliveryResult {
@@ -22,6 +23,7 @@ export class OtpDeliveryService {
     @InjectPinoLogger(OtpDeliveryService.name) private readonly logger: PinoLogger,
     private readonly twilio: TwilioService,
     private readonly env: EnvService,
+    private readonly prisma: PrismaService,
   ) {}
 
   async sendOtp(phone: string, code: string): Promise<OtpDeliveryResult> {
@@ -61,6 +63,67 @@ export class OtpDeliveryService {
     // SMS fallback
     const sid = await this.twilio.sendSms(e164, body, statusCallback);
     return { channel: OtpChannel.SMS, providerMessageId: sid };
+  }
+
+  /**
+   * Reconcile an OtpLog row to its terminal state when Twilio reports
+   * the real delivery outcome via the status callback webhook. Called
+   * from `TwilioWebhookController.onStatus`.
+   *
+   * State machine:
+   *   - delivered / read → OtpStatus.DELIVERED
+   *   - failed / undelivered → OtpStatus.FAILED with a `failedReason`
+   *   - any other status (queued, sent, sending) → no-op
+   *
+   * Guards:
+   *   - Unknown SID (not one of our OTPs): drop silently.
+   *   - Row already VERIFIED or FAILED: do not downgrade. Twilio
+   *     sometimes retries callbacks; a late "failed" must not flip a
+   *     row the user already verified.
+   */
+  async handleTwilioStatus(
+    sid: string,
+    status: string,
+    errorMessage?: string,
+    errorCode?: string,
+  ): Promise<void> {
+    const log = await this.prisma.otpLog.findUnique({ where: { providerMessageId: sid } });
+    if (!log) {
+      // Could be a non-OTP Twilio message (e.g. if we later route other messages
+      // through the same callback URL). Drop silently.
+      this.logger.debug(
+        { event: 'twilio_status_unknown_sid', sid, status },
+        'Twilio status callback for unknown SID',
+      );
+      return;
+    }
+
+    // Don't downgrade a row that's already VERIFIED or in a terminal state.
+    if (log.status === OtpStatus.VERIFIED || log.status === OtpStatus.FAILED) return;
+
+    switch (status) {
+      case 'delivered':
+      case 'read':
+        await this.prisma.otpLog.update({
+          where: { id: log.id },
+          data: { status: OtpStatus.DELIVERED, deliveredAt: new Date() },
+        });
+        return;
+
+      case 'failed':
+      case 'undelivered': {
+        const reason = errorMessage || `twilio_error_${errorCode ?? 'unknown'}`;
+        await this.prisma.otpLog.update({
+          where: { id: log.id },
+          data: { status: OtpStatus.FAILED, failedReason: reason },
+        });
+        return;
+      }
+
+      // 'queued' / 'sent' / 'sending' — intermediate, no DB change.
+      default:
+        return;
+    }
   }
 
   private isTwilioConfigured(): boolean {
