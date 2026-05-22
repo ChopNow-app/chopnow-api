@@ -399,6 +399,137 @@ describe('Auth flow (e2e)', () => {
     });
   });
 
+  // ─── Phase C1+C2 — device fingerprint + revoke-all ─────────────────
+  describe('Phase C1+C2 — device fingerprint + revoke-all sessions', () => {
+    it('verify-otp sets a chopnow_did cookie + creates a Device row linked to the refresh token', async () => {
+      const phone = '670000020';
+      const canonical = '+237670000020';
+      const server = app.getHttpServer();
+      const prisma = new prismaModule.PrismaClient({
+        datasources: { db: { url: pgCtx.url } },
+      });
+
+      try {
+        await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+        const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+
+        const verifyRes = await request(server)
+          .post('/api/v1/auth/verify-otp')
+          .set('User-Agent', 'Mozilla/5.0 (iPhone) Safari/604.1')
+          .send({ phone, code })
+          .expect(200);
+
+        const setCookie = verifyRes.headers['set-cookie'] as unknown as string[];
+        const deviceCookie = setCookie.find((c) => c.startsWith('chopnow_did='))!;
+        expect(deviceCookie).toBeDefined();
+        expect(deviceCookie.toLowerCase()).toContain('httponly');
+        expect(deviceCookie.toLowerCase()).toContain('samesite=strict');
+        const deviceId = decodeURIComponent(deviceCookie.split(';')[0].split('=')[1]);
+
+        const user = await prisma.user.findUnique({ where: { phone: canonical } });
+        const devices = await prisma.device.findMany({ where: { userId: user!.id } });
+        expect(devices).toHaveLength(1);
+        expect(devices[0].id).toBe(deviceId);
+        expect(devices[0].userAgentLabel).toBe('Safari sur iPhone/iPad');
+
+        const tokens = await prisma.refreshToken.findMany({
+          where: { userId: user!.id, revokedAt: null },
+        });
+        expect(tokens).toHaveLength(1);
+        expect(tokens[0].deviceId).toBe(deviceId);
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    it('refresh keeps the same Device row when chopnow_did is sent back', async () => {
+      const phone = '670000021';
+      const canonical = '+237670000021';
+      const server = app.getHttpServer();
+      const prisma = new prismaModule.PrismaClient({
+        datasources: { db: { url: pgCtx.url } },
+      });
+
+      try {
+        await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+        const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+        const verifyRes = await request(server)
+          .post('/api/v1/auth/verify-otp')
+          .send({ phone, code })
+          .expect(200);
+
+        const setCookie = verifyRes.headers['set-cookie'] as unknown as string[];
+        const cookieHeader = setCookie
+          .map((c) => c.split(';')[0])
+          .filter((c) => c.startsWith('chopnow_rt=') || c.startsWith('chopnow_did='))
+          .join('; ');
+
+        await request(server)
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', cookieHeader)
+          .send({})
+          .expect(200);
+
+        const user = await prisma.user.findUnique({ where: { phone: canonical } });
+        const devices = await prisma.device.findMany({ where: { userId: user!.id } });
+        // Same chopnow_did was presented → still exactly one Device row.
+        expect(devices).toHaveLength(1);
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    it('POST /auth/sessions/revoke-all kills every active refresh row for the user', async () => {
+      const phone = '670000022';
+      const canonical = '+237670000022';
+      const server = app.getHttpServer();
+      const prisma = new prismaModule.PrismaClient({
+        datasources: { db: { url: pgCtx.url } },
+      });
+
+      try {
+        await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+        const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+        const verifyRes = await request(server)
+          .post('/api/v1/auth/verify-otp')
+          .send({ phone, code })
+          .expect(200);
+        const accessToken = verifyRes.body.accessToken as string;
+
+        // Open a "second device" by verifying again without the cookie.
+        await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+        const code2: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+        await request(server)
+          .post('/api/v1/auth/verify-otp')
+          .send({ phone, code: code2 })
+          .expect(200);
+
+        const user = await prisma.user.findUnique({ where: { phone: canonical } });
+        const before = await prisma.refreshToken.count({
+          where: { userId: user!.id, revokedAt: null },
+        });
+        expect(before).toBe(2);
+
+        await request(server)
+          .post('/api/v1/auth/sessions/revoke-all')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(204);
+
+        const after = await prisma.refreshToken.count({
+          where: { userId: user!.id, revokedAt: null },
+        });
+        expect(after).toBe(0);
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    it('POST /auth/sessions/revoke-all requires a valid access token', async () => {
+      const server = app.getHttpServer();
+      await request(server).post('/api/v1/auth/sessions/revoke-all').expect(401);
+    });
+  });
+
   // ─── Story 1.2 AC#5 — suspension forces a structured 401 ────────────
   it('blocks refresh with user_suspended when user.isActive=false', async () => {
     const phone = '670000004';

@@ -8,12 +8,19 @@ import { Public } from '../../shared/decorators/public.decorator';
 import { PhoneRateLimit } from '../../shared/decorators/phone-rate-limit.decorator';
 import { PhoneRateLimitGuard } from '../../shared/guards/phone-rate-limit.guard';
 import { AuthService } from './auth.service';
+import type { DeviceMeta } from './device.service';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RequestOtpDto } from './dto/request-otp.dto';
 import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 
 const REFRESH_COOKIE_NAME = 'chopnow_rt';
+// Phase C1 — long-lived (10y) HttpOnly cookie carrying the Device row's
+// id. The cookie is wider-pathed than chopnow_rt (`/api/v1/auth` vs the
+// whole app) because we want it on every refresh/verify, never on any
+// other endpoint — same scope as the refresh cookie is fine.
+const DEVICE_COOKIE_NAME = 'chopnow_did';
+const DEVICE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10; // ~10 years
 /**
  * Phase B1 — refresh-cookie attributes. `Path` is scoped to the auth
  * routes that actually need it (refresh + logout); other endpoints
@@ -80,10 +87,15 @@ export class AuthController {
       'compatibility while the consumer PWA cuts over from localStorage to cookie storage; ' +
       'new clients should ignore the body and rely on the cookie.',
   })
-  async verifyOtp(@Body() dto: VerifyOtpDto, @Res({ passthrough: true }) res: Response) {
-    const tokens = await this.auth.verifyOtp(dto.phone, dto.code);
+  async verifyOtp(
+    @Body() dto: VerifyOtpDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const tokens = await this.auth.verifyOtp(dto.phone, dto.code, this.readDeviceMeta(req));
     this.setRefreshCookie(res, tokens.refreshToken);
-    return tokens;
+    this.setDeviceCookie(res, tokens.deviceId);
+    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
   }
 
   // @Public skips the global access-token guard — by design. The whole point
@@ -110,9 +122,15 @@ export class AuthController {
   ) {
     // _dto is here only so class-validator rejects empty bodies with a 400.
     // The actual values come from req.user (populated by RefreshJwtStrategy).
-    const tokens = await this.auth.refresh(req.user.id, req.user.role, req.user.refreshToken);
+    const tokens = await this.auth.refresh(
+      req.user.id,
+      req.user.role,
+      req.user.refreshToken,
+      this.readDeviceMeta(req),
+    );
     this.setRefreshCookie(res, tokens.refreshToken);
-    return tokens;
+    this.setDeviceCookie(res, tokens.deviceId);
+    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken };
   }
 
   /**
@@ -141,6 +159,44 @@ export class AuthController {
       httpOnly: true,
       secure: this.env.isProduction,
     });
+    // chopnow_did is kept on logout — it identifies the device, not the
+    // session. The user might log back in on the same browser tomorrow
+    // and we DON'T want that to fire a "new device" alert.
+  }
+
+  /**
+   * Phase C2 — "log out everywhere." Revokes every active refresh-token
+   * row for this user (i.e. every active session across all devices) so
+   * a compromised refresh cookie cannot be replayed. Targeted by the
+   * "Ce n'était pas toi&nbsp;?" link in new-device alert emails — the
+   * link is account-scoped (no email-token magic-link yet), so the
+   * user must be already authenticated to call it.
+   *
+   * The current device's access token survives until its 15-min TTL
+   * expires; if it's the legitimate user revoking their own sessions
+   * that's fine, and if it's the attacker doing it (e.g. they're the
+   * one viewing the alert email mistakenly delivered to them) they
+   * still cut their own session short on the next /refresh.
+   */
+  @Post('sessions/revoke-all')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Revoke all refresh tokens for the authenticated user',
+    description:
+      "Phase C2 — 'log out of every device.' Idempotent. Auth required " +
+      '(global access-token guard). Returns 204 with no body.',
+  })
+  async revokeAllSessions(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const userId = (req.user as { id: string }).id;
+    await this.auth.revokeAllSessions(userId);
+    // Also clear cookies on the calling device — there's no refresh row
+    // left for it, so the chopnow_rt cookie is now meaningless.
+    res.clearCookie(REFRESH_COOKIE_NAME, {
+      path: '/api/v1/auth',
+      sameSite: 'strict',
+      httpOnly: true,
+      secure: this.env.isProduction,
+    });
   }
 
   private setRefreshCookie(res: Response, refreshToken: string): void {
@@ -151,6 +207,17 @@ export class AuthController {
     );
   }
 
+  private setDeviceCookie(res: Response, deviceId: string): void {
+    if (!deviceId) return;
+    res.cookie(DEVICE_COOKIE_NAME, deviceId, {
+      httpOnly: true,
+      secure: this.env.isProduction,
+      sameSite: 'strict',
+      path: '/api/v1/auth',
+      maxAge: DEVICE_COOKIE_MAX_AGE_SECONDS * 1000,
+    });
+  }
+
   private readRefreshFromRequest(req: Request): string | null {
     const cookie = (req.cookies as { chopnow_rt?: unknown } | undefined)?.chopnow_rt;
     if (typeof cookie === 'string' && cookie.length > 0) return cookie;
@@ -158,5 +225,18 @@ export class AuthController {
     return typeof body?.refreshToken === 'string' && body.refreshToken.length > 0
       ? body.refreshToken
       : null;
+  }
+
+  private readDeviceMeta(req: Request): DeviceMeta {
+    const cookieRaw = (req.cookies as { chopnow_did?: unknown } | undefined)?.chopnow_did;
+    const deviceCookie = typeof cookieRaw === 'string' && cookieRaw.length > 0 ? cookieRaw : null;
+    const userAgentRaw = req.headers['user-agent'];
+    const userAgent =
+      typeof userAgentRaw === 'string' && userAgentRaw.length > 0 ? userAgentRaw : null;
+    // express's `req.ip` honors the `trust proxy` setting and falls back
+    // to the socket address. Behind Caddy on the DO droplet this is the
+    // forwarded client IP; in tests / dev it's the loopback address.
+    const ipAddress = typeof req.ip === 'string' && req.ip.length > 0 ? req.ip : null;
+    return { deviceCookie, userAgent, ipAddress };
   }
 }
