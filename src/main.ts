@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import * as express from 'express';
 import { writeFileSync } from 'fs';
@@ -23,6 +24,14 @@ async function bootstrap() {
   // 1 MB is plenty for any auth / order / vendor payload. Image uploads go to R2 directly.
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+  // --- Cookies (Phase B1) ---
+  // Used for HttpOnly refresh-token storage on /auth/refresh + /auth/logout.
+  // Parses `Cookie` header into `req.cookies`. No secret/signing — refresh
+  // tokens are signed JWTs verified server-side, so the cookie value itself
+  // doesn't need additional integrity protection beyond HttpOnly + Secure +
+  // SameSite=Strict at issue time.
+  app.use(cookieParser());
 
   // --- CORS allow-list ---
   app.enableCors({
