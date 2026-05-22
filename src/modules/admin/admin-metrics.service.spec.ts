@@ -7,6 +7,7 @@ describe('AdminMetricsService', () => {
   let service: AdminMetricsService;
   let prisma: {
     order: { groupBy: jest.Mock; count: jest.Mock };
+    dispatchEvent: { groupBy: jest.Mock };
     $queryRaw: jest.Mock;
   };
 
@@ -16,12 +17,20 @@ describe('AdminMetricsService', () => {
         groupBy: jest.fn(),
         count: jest.fn(),
       },
+      // Dispatch funnel reads — default to empty results; per-test override
+      // when a case wants to exercise the funnel math.
+      dispatchEvent: {
+        groupBy: jest.fn().mockResolvedValue([]),
+      },
       $queryRaw: jest.fn(),
     };
     const module = await Test.createTestingModule({
       providers: [AdminMetricsService, { provide: PrismaService, useValue: prisma }],
     }).compile();
     service = module.get(AdminMetricsService);
+    // Default for the dispatch-funnel $queryRaw calls so tests focused on
+    // reorder/completion don't need to mock them explicitly.
+    prisma.$queryRaw.mockImplementation(() => Promise.resolve([{ avg_ms: null, c: 0 }]));
   });
 
   const from = new Date('2026-05-08T00:00:00Z');

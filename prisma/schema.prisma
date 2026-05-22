@@ -365,6 +365,7 @@ model Vendor {
   penalties       VendorPenalty[]
   payouts         VendorPayout[]
   cashoutRequests VendorCashoutRequest[]
+  dispatchEvents  DispatchEvent[]
 
   @@index([status])
   @@index([type])
@@ -530,9 +531,10 @@ model Order {
   // create a duplicate. Scoped per user (composite uniqueness below).
   idempotencyKey String?
 
-  items   OrderItem[]
-  rating  OrderRating?
-  penalty VendorPenalty?
+  items          OrderItem[]
+  rating         OrderRating?
+  penalty        VendorPenalty?
+  dispatchEvents DispatchEvent[]
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -648,6 +650,11 @@ model Rider {
   isOnline         Boolean                                @default(false)
   lastLocation     Unsupported("geography(Point, 4326)")?
   lastSeenAt       DateTime?
+  // Round-robin tie-breaker for dispatch. When two riders are equally
+  // close to a vendor, the one who was assigned longer ago wins —
+  // prevents the closest rider from soaking up every order in a zone.
+  // Updated atomically in the same UPDATE that sets Order.riderId.
+  lastAssignedAt   DateTime?
   // Validation lifecycle
   submittedAt      DateTime                               @default(now())
   validatedAt      DateTime?
@@ -656,13 +663,58 @@ model Rider {
   createdAt        DateTime                               @default(now())
   updatedAt        DateTime                               @updatedAt
 
-  orders  Order[]
-  payouts RiderPayout[]
+  orders         Order[]
+  payouts        RiderPayout[]
+  dispatchEvents DispatchEvent[]
 
   @@index([status])
   @@index([vehicleType])
   @@index([isOnline])
   @@map("riders")
+}
+
+// =====================================================================
+// Dispatch observability (V1 — built for the pilot)
+// =====================================================================
+// Every dispatch attempt writes one row. Powers:
+//   - Admin "dispatch funnel" tile (today: offered vs assigned vs no-rider)
+//   - Per-rider audit ("is one rider getting all the orders?")
+//   - Post-pilot analysis to inform the score-based dispatch v2
+//
+// Append-only — never updated after insert.
+
+enum DispatchOutcome {
+  // Atomic UPDATE succeeded — order.riderId set to this rider.
+  ASSIGNED
+  // PostGIS query returned no eligible rider in range. Retry will fire
+  // (or order will expire on the 10th attempt).
+  NO_CANDIDATE
+  // PostGIS query returned a candidate but the atomic UPDATE found the
+  // order already had a riderId (another dispatcher won). Rare.
+  RACE_LOST
+}
+
+model DispatchEvent {
+  id          String           @id @default(uuid())
+  orderId     String
+  order       Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  vendorId    String
+  vendor      Vendor           @relation(fields: [vendorId], references: [id], onDelete: Restrict)
+  // 1-indexed. attempt=1 is the initial dispatch, 2..10 are retries.
+  attempt     Int
+  outcome     DispatchOutcome
+  // Set on ASSIGNED + RACE_LOST. Null on NO_CANDIDATE.
+  riderId     String?
+  rider       Rider?           @relation(fields: [riderId], references: [id], onDelete: SetNull)
+  vehicleType RiderVehicleType?
+  // Meters, as returned by PostGIS ST_Distance.
+  distanceM   Float?
+  createdAt   DateTime         @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([riderId, createdAt])
+  @@index([createdAt])
+  @@map("dispatch_events")
 }
 
 // =====================================================================

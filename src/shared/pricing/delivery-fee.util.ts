@@ -14,7 +14,11 @@
 
 export const DELIVERY_BASE_FEE_XAF = 250;
 export const DELIVERY_PER_KM_XAF = 100; // moto baseline; Story 3.19 v2 per-vehicle
-export const DELIVERY_FEE_FLOOR_XAF = 350; // v2 raised from 300 — < 350 isn't profitable for the rider
+// Rider-sustainability floor. At 350 the rider got 227 FCFA on a sub-1km
+// trip — below per-minute operating cost. 500 floor → rider gets 325 FCFA,
+// which sustains short trips and prevents rider attrition during the pilot.
+// Worth revisiting after the pilot when there's actual margin data.
+export const DELIVERY_FEE_FLOOR_XAF = 500;
 export const DELIVERY_FEE_CAP_XAF = 1500;
 export const ROUND_TO_XAF = 50;
 

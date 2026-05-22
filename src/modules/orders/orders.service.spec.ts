@@ -129,11 +129,11 @@ describe('OrdersService', () => {
       const order = await service.createOrder('user-1', baseDto);
 
       // Subtotal = 2*2000 + 1*500 = 4500
-      // Fee: 1.5km → 250 + 150 = 400 (multiple of 50, above 350 floor)
-      // Total = 4900
+      // Fee: 1.5km → 250 + 150 = 400 → floor=500
+      // Total = 5000
       expect(order.subtotalXAF).toBe(4500);
-      expect(order.deliveryFeeXAF).toBe(400);
-      expect(order.totalXAF).toBe(4900);
+      expect(order.deliveryFeeXAF).toBe(500);
+      expect(order.totalXAF).toBe(5000);
       expect(order.status).toBe(OrderStatus.PENDING);
       expect(order.paymentStatus).toBe(PaymentStatus.PENDING);
       expect(order.code).toMatch(/^TC-[A-Z0-9]{5}$/);

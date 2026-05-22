@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { EventEmitter2, OnEvent } from '@nestjs/event-emitter';
-import { OrderStatus, PaymentStatus, RiderStatus, RiderVehicleType } from '@prisma/client';
+import {
+  DispatchOutcome,
+  OrderStatus,
+  PaymentStatus,
+  RiderStatus,
+  RiderVehicleType,
+} from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
@@ -59,6 +65,44 @@ export class DispatchService {
   }
 
   /**
+   * Append-only audit row for every dispatchOrder() call's outcome.
+   * Powers the admin "dispatch funnel" tile + per-rider audits + the
+   * signal we'll need to design score-based dispatch v2 post-pilot.
+   *
+   * Swallows insert errors deliberately — a logging failure must not
+   * break the dispatch path itself. We log the swallowed error so the
+   * gap shows up in the structured logs.
+   */
+  private async logDispatchEvent(input: {
+    orderId: string;
+    vendorId: string;
+    attempt: number;
+    outcome: DispatchOutcome;
+    riderId?: string | null;
+    vehicleType?: RiderVehicleType | null;
+    distanceM?: number | null;
+  }): Promise<void> {
+    try {
+      await this.prisma.dispatchEvent.create({
+        data: {
+          orderId: input.orderId,
+          vendorId: input.vendorId,
+          attempt: input.attempt,
+          outcome: input.outcome,
+          riderId: input.riderId ?? null,
+          vehicleType: input.vehicleType ?? null,
+          distanceM: input.distanceM ?? null,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(
+        { event: 'dispatch_event_log_failed', orderId: input.orderId, err: String(err) },
+        'Failed to write DispatchEvent row — dispatch continues',
+      );
+    }
+  }
+
+  /**
    * Story 4.14 — single dispatch attempt + schedule next retry on failure.
    *
    * Each attempt either:
@@ -86,7 +130,9 @@ export class DispatchService {
       return;
     }
 
-    const result = await this.dispatchOrder(orderId, vendorId);
+    // attempt arg is 0-indexed; DispatchEvent.attempt is 1-indexed for
+    // human-readability in the admin UI ("attempt 1, 2, 3…").
+    const result = await this.dispatchOrder(orderId, vendorId, attempt + 1);
     if (result) {
       // Found a rider — kill any pending retry.
       this.clearRetry(orderId);
@@ -187,7 +233,11 @@ export class DispatchService {
     });
   }
 
-  async dispatchOrder(orderId: string, vendorId: string): Promise<{ riderId: string } | null> {
+  async dispatchOrder(
+    orderId: string,
+    vendorId: string,
+    attempt: number = 1,
+  ): Promise<{ riderId: string } | null> {
     // Skip if already assigned (defensive against duplicate events).
     const order = await this.prisma.order.findUnique({
       where: { id: orderId },
@@ -206,6 +256,11 @@ export class DispatchService {
     // vehicle has a different distance cap, so the query unions per
     // vehicle type with its own ST_DWithin filter. Vendor.location and
     // Rider.lastLocation are both `geography`; ST_Distance returns meters.
+    //
+    // ORDER BY: proximity is the primary sort. lastAssignedAt is the
+    // tie-breaker so two riders at the same distance alternate instead
+    // of the same one getting hammered. NULLS FIRST so a rider who has
+    // never been assigned ranks ahead of one who was assigned recently.
     const staleCutoff = new Date(Date.now() - STALE_HEARTBEAT_SECONDS * 1000);
     const candidates = await this.prisma.$queryRaw<CandidateRow[]>`
       SELECT
@@ -231,34 +286,67 @@ export class DispatchService {
             WHEN 'CAR'      THEN ${RADIUS_KM_BY_VEHICLE.CAR * 1000}
           END
         )
-      ORDER BY distance_m ASC
+      ORDER BY distance_m ASC, r."lastAssignedAt" ASC NULLS FIRST
       LIMIT 1
     `;
 
     if (candidates.length === 0) {
       this.logger.warn(
-        { event: 'dispatch_no_online_rider', orderId, vendorId },
+        { event: 'dispatch_no_online_rider', orderId, vendorId, attempt },
         'No online rider in range for vendor — will retry',
       );
+      await this.logDispatchEvent({
+        orderId,
+        vendorId,
+        attempt,
+        outcome: DispatchOutcome.NO_CANDIDATE,
+      });
       return null;
     }
 
     const chosen = candidates[0];
+    const now = new Date();
 
     // Conditional update — protects against two simultaneous dispatches
     // (e.g. duplicate event) trying to claim the same rider. The WHERE
     // riderId IS NULL clause is the locking primitive.
     const result = await this.prisma.order.updateMany({
       where: { id: orderId, riderId: null },
-      data: { riderId: chosen.rider_id, assignedAt: new Date() },
+      data: { riderId: chosen.rider_id, assignedAt: now },
     });
     if (result.count === 0) {
       this.logger.warn(
-        { event: 'dispatch_already_assigned', orderId },
+        { event: 'dispatch_already_assigned', orderId, attempt },
         'Order was already assigned by a concurrent dispatch (race short-circuit)',
       );
+      await this.logDispatchEvent({
+        orderId,
+        vendorId,
+        attempt,
+        outcome: DispatchOutcome.RACE_LOST,
+        riderId: chosen.rider_id,
+        vehicleType: chosen.vehicle_type,
+        distanceM: chosen.distance_m,
+      });
       return null;
     }
+
+    // Stamp lastAssignedAt on the rider for the next dispatch's round-
+    // robin tie-breaker. Fire-and-forget — a failure here just means
+    // the rider's tie-breaker stays at its previous value (slightly
+    // unfair to them, never to others) and is logged for visibility.
+    void this.prisma.rider
+      .update({ where: { id: chosen.rider_id }, data: { lastAssignedAt: now } })
+      .catch((err) =>
+        this.logger.warn(
+          {
+            event: 'rider_last_assigned_update_failed',
+            riderId: chosen.rider_id,
+            err: String(err),
+          },
+          'Failed to bump Rider.lastAssignedAt — round-robin will be slightly off',
+        ),
+      );
 
     this.logger.info(
       {
@@ -267,9 +355,19 @@ export class DispatchService {
         riderId: chosen.rider_id,
         distanceKm: Number((chosen.distance_m / 1000).toFixed(2)),
         vehicleType: chosen.vehicle_type,
+        attempt,
       },
       'Rider assigned to order',
     );
+    await this.logDispatchEvent({
+      orderId,
+      vendorId,
+      attempt,
+      outcome: DispatchOutcome.ASSIGNED,
+      riderId: chosen.rider_id,
+      vehicleType: chosen.vehicle_type,
+      distanceM: chosen.distance_m,
+    });
     return { riderId: chosen.rider_id };
   }
 }
