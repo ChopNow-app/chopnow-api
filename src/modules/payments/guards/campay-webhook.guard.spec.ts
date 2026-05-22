@@ -3,6 +3,8 @@ import { ExecutionContext } from '@nestjs/common';
 import jwt from 'jsonwebtoken';
 import { CampayWebhookGuard } from './campay-webhook.guard';
 
+// Test-only secret; the JWT sign() calls below are in fixtures, not production code.
+// nosemgrep: javascript.jsonwebtoken.security.jwt-hardcode.hardcoded-jwt-secret
 const SECRET = 'guard-test-secret-9876543210';
 
 const logger = {
@@ -21,6 +23,7 @@ function makeCtx(body: unknown, ip = '1.2.3.4'): ExecutionContext {
 }
 
 function signValid(claims: object): string {
+  // nosemgrep: javascript.jsonwebtoken.security.jwt-hardcode.hardcoded-jwt-secret
   return jwt.sign(claims, SECRET, { algorithm: 'HS256' });
 }
 
@@ -53,6 +56,7 @@ describe('CampayWebhookGuard', () => {
   });
 
   it('rejects when body.signature was signed with a different secret', () => {
+    // nosemgrep: javascript.jsonwebtoken.security.jwt-hardcode.hardcoded-jwt-secret
     const forged = jwt.sign({ status: 'SUCCESSFUL' }, 'wrong-secret', { algorithm: 'HS256' });
     expect(() => guard.canActivate(makeCtx({ reference: 'TC-X', signature: forged }))).toThrow(
       UnauthorizedException,

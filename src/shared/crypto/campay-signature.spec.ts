@@ -37,6 +37,7 @@ describe('verifyCampayJwtSignature', () => {
   it('rejects a JWT whose algorithm header is "none" (alg-confusion attack)', () => {
     // jsonwebtoken does NOT allow alg=none by default; this asserts behaviour
     // even if someone tampered with the lib config.
+    // nosemgrep: javascript.jsonwebtoken.security.jwt-hardcode.hardcoded-jwt-secret
     const sig = jwt.sign({ status: 'SUCCESSFUL' }, '', { algorithm: 'none' });
     expect(verifyCampayJwtSignature(sig, SECRET)).toBe(false);
   });
