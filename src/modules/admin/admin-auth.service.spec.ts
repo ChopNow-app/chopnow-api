@@ -4,6 +4,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { UserRole } from '@prisma/client';
 import { AdminAuthService } from './admin-auth.service';
+import { AdminTotpService } from './admin-totp.service';
 import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
@@ -15,10 +16,16 @@ describe('AdminAuthService', () => {
   let redis: {
     get: jest.Mock;
     incrWithTTL: jest.Mock;
+    setWithTTL: jest.Mock;
     del: jest.Mock;
     client: { set: jest.Mock };
   };
   let jwt: { signAsync: jest.Mock };
+  let totp: {
+    isEnrolled: jest.Mock;
+    verifyCode: jest.Mock;
+    consumeRecoveryCode: jest.Mock;
+  };
 
   const password = 'StrongPwd!2026';
   let passwordHash: string;
@@ -32,10 +39,18 @@ describe('AdminAuthService', () => {
     redis = {
       get: jest.fn().mockResolvedValue(null),
       incrWithTTL: jest.fn().mockResolvedValue(1),
+      setWithTTL: jest.fn().mockResolvedValue('OK'),
       del: jest.fn().mockResolvedValue(0),
       client: { set: jest.fn().mockResolvedValue('OK') },
     };
     jwt = { signAsync: jest.fn().mockResolvedValue('access-token') };
+    totp = {
+      // Default: admin has NOT enrolled, login returns access token immediately
+      // (legacy / first-login path).
+      isEnrolled: jest.fn().mockResolvedValue(false),
+      verifyCode: jest.fn().mockResolvedValue(false),
+      consumeRecoveryCode: jest.fn().mockResolvedValue(false),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -48,13 +63,14 @@ describe('AdminAuthService', () => {
           provide: EnvService,
           useValue: { jwtAccessSecret: 'a'.repeat(64) },
         },
+        { provide: AdminTotpService, useValue: totp },
       ],
     }).compile();
 
     service = module.get(AdminAuthService);
   });
 
-  it('issues an 8h access token on valid credentials', async () => {
+  it('issues an 8h access token on valid credentials (no TOTP enrolled)', async () => {
     prisma.user.findUnique.mockResolvedValue({
       id: 'admin-1',
       email: 'admin@chopnow.app',
@@ -65,6 +81,7 @@ describe('AdminAuthService', () => {
     const result = await service.login('Admin@ChopNow.App', password);
 
     expect(result).toEqual({
+      stage: 'success',
       accessToken: 'access-token',
       role: UserRole.SUPER_ADMIN,
       email: 'admin@chopnow.app',
@@ -177,6 +194,82 @@ describe('AdminAuthService', () => {
     );
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'admin@chopnow.app' },
+    });
+  });
+
+  describe('Phase A1 — TOTP 2FA flow', () => {
+    // Factory not constant — `passwordHash` is set in `beforeAll`, which runs
+    // AFTER object literals in describe-block scope are evaluated.
+    const enrolledAdmin = () => ({
+      id: 'admin-1',
+      email: 'admin@chopnow.app',
+      passwordHash,
+      role: UserRole.SUPER_ADMIN,
+    });
+
+    it('returns a totp_required challenge when the admin has confirmed enrollment', async () => {
+      prisma.user.findUnique.mockResolvedValue(enrolledAdmin());
+      totp.isEnrolled.mockResolvedValue(true);
+
+      const result = await service.login('admin@chopnow.app', password);
+
+      expect(result.stage).toBe('totp_required');
+      expect((result as { challenge: string }).challenge).toMatch(/^[A-Za-z0-9_-]{20,}$/);
+      // No JWT issued yet — second factor pending.
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+      // Challenge persisted in Redis with 5-min TTL.
+      expect(redis.setWithTTL).toHaveBeenCalledWith(
+        expect.stringMatching(/^admin:2fa-challenge:/),
+        'admin-1',
+        5 * 60,
+      );
+    });
+
+    it('verifyTotpChallenge issues an access token on a valid code', async () => {
+      // Pre-seed Redis with the challenge → userId mapping.
+      const challenge = 'test-challenge-token-abc123';
+      redis.get.mockResolvedValueOnce('admin-1');
+      totp.verifyCode.mockResolvedValueOnce(true);
+      prisma.user.findUnique.mockResolvedValueOnce(enrolledAdmin());
+
+      const result = await service.verifyTotpChallenge(challenge, '123456');
+
+      expect(result.stage).toBe('success');
+      expect((result as { accessToken: string }).accessToken).toBe('access-token');
+      // Challenge consumed on success
+      expect(redis.del).toHaveBeenCalledWith(expect.stringContaining(challenge));
+    });
+
+    it('verifyTotpChallenge rejects with totp_challenge_expired when the challenge is unknown', async () => {
+      redis.get.mockResolvedValueOnce(null);
+      await expect(service.verifyTotpChallenge('expired-token', '123456')).rejects.toMatchObject({
+        response: { code: 'totp_challenge_expired' },
+      });
+      expect(totp.verifyCode).not.toHaveBeenCalled();
+    });
+
+    it('verifyTotpChallenge rejects with totp_invalid_code WITHOUT consuming the challenge (stale code retry)', async () => {
+      redis.get.mockResolvedValueOnce('admin-1');
+      totp.verifyCode.mockResolvedValueOnce(false);
+
+      await expect(service.verifyTotpChallenge('challenge-1', '000000')).rejects.toMatchObject({
+        response: { code: 'totp_invalid_code' },
+      });
+      // Critical: a wrong code does NOT consume the challenge — the admin
+      // can retry within the 5-min TTL without restarting from password.
+      expect(redis.del).not.toHaveBeenCalled();
+    });
+
+    it('verifyTotpChallenge accepts a single-use recovery code when isRecoveryCode=true', async () => {
+      redis.get.mockResolvedValueOnce('admin-1');
+      totp.consumeRecoveryCode.mockResolvedValueOnce(true);
+      prisma.user.findUnique.mockResolvedValueOnce(enrolledAdmin());
+
+      const result = await service.verifyTotpChallenge('challenge-1', 'ABCD-EFGH', true);
+
+      expect(result.stage).toBe('success');
+      expect(totp.consumeRecoveryCode).toHaveBeenCalledWith('admin-1', 'ABCD-EFGH');
+      expect(totp.verifyCode).not.toHaveBeenCalled();
     });
   });
 });

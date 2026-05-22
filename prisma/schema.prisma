@@ -157,6 +157,8 @@ model User {
   orders            Order[]
   orderRatings      OrderRating[]
   passwordResets    AdminPasswordReset[]
+  adminTotpSecret   AdminTotpSecret?
+  adminRecoveryCodes AdminRecoveryCode[]
   adminAuditLogs    AdminAuditLog[]
 
   @@index([phone])
@@ -242,6 +244,38 @@ model AdminPasswordReset {
 
   @@index([userId])
   @@map("admin_password_resets")
+}
+
+// Phase A1 — TOTP shared secret per enrolled admin. One row per admin
+// (PK on userId). `secret` is the RFC 6238 base32 secret stored AES-256-GCM
+// encrypted with APP_TOTP_KEY (envelope: <iv>.<authTag>.<ciphertext>, hex).
+// `confirmedAt` is null between enrollment start (QR shown) and the first
+// successful code verify — incomplete enrollments don't gate login.
+model AdminTotpSecret {
+  userId      String    @id
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  secret      String
+  confirmedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("admin_totp_secrets")
+}
+
+// Phase A1 — single-use recovery codes shown ONCE at enrollment confirmation.
+// argon2id hash at rest (same primitive as OTP / refresh-token storage).
+// 10 codes minted per enrollment; consuming one stamps consumedAt and that
+// row can never be used again. Lost-device recovery flow.
+model AdminRecoveryCode {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash   String
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, consumedAt])
+  @@map("admin_recovery_codes")
 }
 
 // Story 1.11: Web Push subscriptions (VAPID)
