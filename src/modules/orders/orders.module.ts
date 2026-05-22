@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BullModule } from '@nestjs/bullmq';
 import { FinanceModule } from '../finance/finance.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersController } from './orders.controller';
@@ -6,6 +7,8 @@ import { OrdersService } from './orders.service';
 import { OrdersExpiryService } from './orders-expiry.service';
 import { StuckPickupDetectorService } from './stuck-pickup-detector.service';
 import { OrderNotificationsService } from './order-notifications.service';
+import { OrderNotificationsProcessor } from './order-notifications.processor';
+import { ORDER_NOTIFICATIONS_QUEUE } from './order-notifications.constants';
 import { PreOrderPromotionService } from './pre-order-promotion.service';
 
 /**
@@ -22,12 +25,17 @@ import { PreOrderPromotionService } from './pre-order-promotion.service';
  * (PaymentStatus.PAID) — single side-effect path from the payments module.
  */
 @Module({
-  imports: [NotificationsModule, FinanceModule],
+  imports: [
+    NotificationsModule,
+    FinanceModule,
+    BullModule.registerQueue({ name: ORDER_NOTIFICATIONS_QUEUE }),
+  ],
   controllers: [OrdersController],
   providers: [
     OrdersService,
     OrdersExpiryService,
     OrderNotificationsService,
+    OrderNotificationsProcessor,
     PreOrderPromotionService,
     StuckPickupDetectorService,
   ],
