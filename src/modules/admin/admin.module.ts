@@ -3,6 +3,9 @@ import { JwtModule } from '@nestjs/jwt';
 import { CampayModule } from '../../infra/campay/campay.module';
 import { AuthModule } from '../auth/auth.module';
 import { FinanceModule } from '../finance/finance.module';
+import { AdminAuditController } from './admin-audit.controller';
+import { AdminAuditInterceptor } from './admin-audit.interceptor';
+import { AdminAuditService } from './admin-audit.service';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminTotpService } from './admin-totp.service';
@@ -37,6 +40,7 @@ import { AdminValidationService } from './admin-validation.service';
     AdminMetricsController,
     AdminFinanceController,
     AdminRiderFraudController,
+    AdminAuditController,
   ],
   providers: [
     AdminAuthService,
@@ -44,6 +48,8 @@ import { AdminValidationService } from './admin-validation.service';
     AdminValidationService,
     AdminMetricsService,
     AdminRiderFraudService,
+    AdminAuditService,
+    AdminAuditInterceptor,
   ],
   exports: [
     AdminAuthService,
@@ -51,6 +57,7 @@ import { AdminValidationService } from './admin-validation.service';
     AdminValidationService,
     AdminMetricsService,
     AdminRiderFraudService,
+    AdminAuditService,
   ],
 })
 export class AdminModule {}
