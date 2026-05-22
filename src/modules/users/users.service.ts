@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { UpdateUserProfileDto } from './dto/update-user-profile.dto';
+import type { UpdateUserProfileDto } from './dto/update-user-profile.dto';
 
 const PROFILE_SELECT = {
   id: true,

@@ -11,8 +11,9 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { R2Service } from '../../infra/r2/r2.service';
 import { TwilioService } from '../../infra/twilio/twilio.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
-import { CAPACITY_TO_INT, SubmitVendorDto } from './dto/submit-vendor.dto';
-import { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
+import { CAPACITY_TO_INT } from './dto/submit-vendor.dto';
+import type { SubmitVendorDto } from './dto/submit-vendor.dto';
+import type { UpdateVendorProfileDto } from './dto/update-vendor-profile.dto';
 import { COMMISSION_RATE_BY_TYPE } from '../finance/commission.constants';
 
 // Default pickup point for newly-submitted vendors. Story 2.15 (landmarks)

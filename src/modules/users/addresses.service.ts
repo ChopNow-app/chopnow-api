@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
-import { UpsertAddressDto } from './dto/upsert-address.dto';
+import type { UpsertAddressDto } from './dto/upsert-address.dto';
 
 // Story 3.2 — max 3 saved addresses per consumer (spec).
 const MAX_SAVED_ADDRESSES = 3;
