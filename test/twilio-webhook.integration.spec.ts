@@ -9,6 +9,7 @@ import express from 'express';
 // major bump, the test will fail loudly — fix here, no production impact.
 import { getExpectedTwilioSignature } from 'twilio/lib/webhooks/webhooks';
 import { TwilioWebhookController } from '../src/infra/twilio/twilio-webhook.controller';
+import { TwilioWebhookGuard } from '../src/infra/twilio/guards/twilio-webhook.guard';
 import { pinoLoggerProvider } from '../src/shared/testing/pino-mock';
 import { PrismaService } from '../src/infra/prisma/prisma.service';
 import { EnvService } from '../src/infra/config/env.service';
@@ -46,11 +47,14 @@ describe('POST /twilio/status (integration)', () => {
       controllers: [TwilioWebhookController],
       providers: [
         pinoLoggerProvider(TwilioWebhookController.name),
+        pinoLoggerProvider(TwilioWebhookGuard.name),
+        TwilioWebhookGuard,
         { provide: PrismaService, useValue: prisma },
         {
           provide: EnvService,
           useValue: {
             nodeEnv: 'development',
+            appUrl: 'https://api.example.com',
             twilio: {},
             ...env,
           },
@@ -224,7 +228,12 @@ describe('POST /twilio/status (integration)', () => {
 
   describe('production mode (signature enforced — TD-4)', () => {
     const authToken = 'test-twilio-auth-token';
-    const callbackUrl = 'https://api.example.com/api/twilio/status';
+    // The guard reconstructs the signing URL as `${env.appUrl}${req.originalUrl}`.
+    // appUrl is set in the shared buildApp fixture above; originalUrl in
+    // supertest hits the controller route directly (no global /api prefix
+    // applied), so this is the URL Twilio's signer needs to produce a
+    // matching signature.
+    const callbackUrl = 'https://api.example.com/twilio/status';
 
     beforeEach(async () => {
       app = await buildApp({

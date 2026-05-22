@@ -9,10 +9,12 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Request } from 'express';
+import { TwilioWebhookGuard } from '../../infra/twilio/guards/twilio-webhook.guard';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { VoiceProxyService, type CallTarget } from './voice-proxy.service';
@@ -79,7 +81,14 @@ export class VoiceProxyController {
 
   // Twilio POSTs (or GETs) this after the originating leg answers. The
   // ?to= query picks which party to dial — consumer, vendor, or rider.
+  //
+  // Authentication: `TwilioWebhookGuard` verifies X-Twilio-Signature
+  // against TWILIO_AUTH_TOKEN. An attacker who knows or guesses an
+  // orderId (e.g. from a shared /t/[orderId] tracking link) but lacks
+  // the Twilio auth token cannot invoke the bridge — closing the
+  // raw-phone-number PII leak via the TwiML <Number> element.
   @Public()
+  @UseGuards(TwilioWebhookGuard)
   @Post('webhooks/twilio/voice/bridge')
   @Header('Content-Type', 'text/xml')
   @ApiOperation({ summary: 'TwiML bridge (Twilio Voice webhook)' })
@@ -88,6 +97,7 @@ export class VoiceProxyController {
   }
 
   @Public()
+  @UseGuards(TwilioWebhookGuard)
   @Get('webhooks/twilio/voice/bridge')
   @Header('Content-Type', 'text/xml')
   @ApiOperation({ summary: 'TwiML bridge (GET fallback for Twilio Voice)' })
