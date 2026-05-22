@@ -10,6 +10,8 @@ import {
   Query,
   Req,
   UseGuards,
+  VERSION_NEUTRAL,
+  Version,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -87,8 +89,13 @@ export class VoiceProxyController {
   // orderId (e.g. from a shared /t/[orderId] tracking link) but lacks
   // the Twilio auth token cannot invoke the bridge — closing the
   // raw-phone-number PII leak via the TwiML <Number> element.
+  // Per-method @Version(VERSION_NEUTRAL): the bridge URL is registered with
+  // Twilio at call-initiation time and stays at `/api/webhooks/twilio/voice/bridge`
+  // (not `/api/v1/...`). Versioning these would break in-flight calls during
+  // any v2 rollout.
   @Public()
   @UseGuards(TwilioWebhookGuard)
+  @Version(VERSION_NEUTRAL)
   @Post('webhooks/twilio/voice/bridge')
   @Header('Content-Type', 'text/xml')
   @ApiOperation({ summary: 'TwiML bridge (Twilio Voice webhook)' })
@@ -98,6 +105,7 @@ export class VoiceProxyController {
 
   @Public()
   @UseGuards(TwilioWebhookGuard)
+  @Version(VERSION_NEUTRAL)
   @Get('webhooks/twilio/voice/bridge')
   @Header('Content-Type', 'text/xml')
   @ApiOperation({ summary: 'TwiML bridge (GET fallback for Twilio Voice)' })

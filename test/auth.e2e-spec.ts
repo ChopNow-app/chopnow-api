@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
 import express from 'express';
 import request from 'supertest';
 import { OtpChannel, OtpStatus, UserRole } from '@prisma/client';
@@ -78,6 +78,7 @@ describe('Auth flow (e2e)', () => {
       }),
     );
     app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
+    app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
     await app.init();
   }, 60_000);
@@ -94,7 +95,7 @@ describe('Auth flow (e2e)', () => {
 
     // ── Step 1: request OTP ──────────────────────────────────────────
     const requestRes = await request(server)
-      .post('/api/auth/request-otp')
+      .post('/api/v1/auth/request-otp')
       .send({ phone })
       .expect(200);
 
@@ -120,7 +121,7 @@ describe('Auth flow (e2e)', () => {
 
       // ── Step 2: verify OTP ─────────────────────────────────────────
       const verifyRes = await request(server)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({ phone, code })
         .expect(200);
 
@@ -139,7 +140,7 @@ describe('Auth flow (e2e)', () => {
 
       // ── Step 3: authenticated call to /users/me ────────────────────
       const meRes = await request(server)
-        .get('/api/users/me')
+        .get('/api/v1/users/me')
         .set('Authorization', `Bearer ${verifyRes.body.accessToken}`)
         .expect(200);
 
@@ -151,7 +152,7 @@ describe('Auth flow (e2e)', () => {
 
       // Without the Authorization header the same route must reject —
       // proves the global JwtAuthGuard is wired and /users/me is not @Public.
-      await request(server).get('/api/users/me').expect(401);
+      await request(server).get('/api/v1/users/me').expect(401);
     } finally {
       await prisma.$disconnect();
     }
@@ -166,10 +167,10 @@ describe('Auth flow (e2e)', () => {
 
     try {
       // Sign up.
-      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
       const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
       const verifyRes = await request(server)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({ phone, code })
         .expect(200);
       const pairA = verifyRes.body as { accessToken: string; refreshToken: string };
@@ -182,7 +183,7 @@ describe('Auth flow (e2e)', () => {
 
       // ── Happy path: rotate ─────────────────────────────────────────
       const refreshRes = await request(server)
-        .post('/api/auth/refresh')
+        .post('/api/v1/auth/refresh')
         .send({ refreshToken: pairA.refreshToken })
         .expect(200);
       const pairB = refreshRes.body as { accessToken: string; refreshToken: string };
@@ -202,13 +203,13 @@ describe('Auth flow (e2e)', () => {
 
       // pairB.accessToken authorizes /users/me.
       await request(server)
-        .get('/api/users/me')
+        .get('/api/v1/users/me')
         .set('Authorization', `Bearer ${pairB.accessToken}`)
         .expect(200);
 
       // ── Reuse detection: replay pairA → 401 + family revoke ────────
       const reuseRes = await request(server)
-        .post('/api/auth/refresh')
+        .post('/api/v1/auth/refresh')
         .send({ refreshToken: pairA.refreshToken })
         .expect(401);
       expect(reuseRes.body.code).toBe('refresh_reuse_detected');
@@ -220,7 +221,7 @@ describe('Auth flow (e2e)', () => {
 
       // pairB now also fails — its row was revoked by the family wipe.
       const followupRes = await request(server)
-        .post('/api/auth/refresh')
+        .post('/api/v1/auth/refresh')
         .send({ refreshToken: pairB.refreshToken })
         .expect(401);
       // Could be reuse_detected (if it matches a revoked row) — both codes
@@ -242,10 +243,10 @@ describe('Auth flow (e2e)', () => {
 
     try {
       // First signup.
-      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
       const code1: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
       const verify1 = await request(server)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({ phone, code: code1 })
         .expect(200);
 
@@ -254,10 +255,10 @@ describe('Auth flow (e2e)', () => {
       expect(userCount1).toBe(1);
 
       // Second flow on the same phone — must reuse the user row.
-      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
       const code2: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
       const verify2 = await request(server)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({ phone, code: code2 })
         .expect(200);
 
@@ -288,10 +289,10 @@ describe('Auth flow (e2e)', () => {
     const prisma = new prismaModule.PrismaClient({ datasources: { db: { url: pgCtx.url } } });
 
     try {
-      await request(server).post('/api/auth/request-otp').send({ phone }).expect(200);
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
       const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
       const verifyRes = await request(server)
-        .post('/api/auth/verify-otp')
+        .post('/api/v1/auth/verify-otp')
         .send({ phone, code })
         .expect(200);
       const { refreshToken } = verifyRes.body as { refreshToken: string };
@@ -299,7 +300,7 @@ describe('Auth flow (e2e)', () => {
       await prisma.user.update({ where: { phone: canonical }, data: { isActive: false } });
 
       const refreshRes = await request(server)
-        .post('/api/auth/refresh')
+        .post('/api/v1/auth/refresh')
         .send({ refreshToken })
         .expect(401);
       expect(refreshRes.body.code).toBe('user_suspended');
