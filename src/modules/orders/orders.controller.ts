@@ -20,13 +20,19 @@ import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
 import { SetItemPreparedDto } from './dto/set-item-prepared.dto';
 import { VendorCancelPreOrderDto } from './dto/vendor-cancel-pre-order.dto';
+import { OrderCreationService } from './order-creation.service';
+import { OrderVendorActionsService } from './order-vendor-actions.service';
 import { OrdersService } from './orders.service';
 
 @ApiTags('orders')
 @ApiBearerAuth()
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly orders: OrdersService) {}
+  constructor(
+    private readonly orders: OrdersService,
+    private readonly creation: OrderCreationService,
+    private readonly vendorActions: OrderVendorActionsService,
+  ) {}
 
   // ── consumer routes ────────────────────────────────────────────────
 
@@ -45,7 +51,7 @@ export class OrdersController {
     @Body() dto: CreateOrderDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.orders.createOrder((req.user as { id: string }).id, dto, idempotencyKey);
+    return this.creation.createOrder((req.user as { id: string }).id, dto, idempotencyKey);
   }
 
   @Get()
@@ -132,7 +138,7 @@ export class OrdersController {
   @Patch(':orderId/accept')
   @ApiOperation({ summary: 'Vendor accepts an order (Story 3.7)' })
   accept(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
-    return this.orders.acceptOrder(orderId, (req.user as { id: string }).id);
+    return this.vendorActions.acceptOrder(orderId, (req.user as { id: string }).id);
   }
 
   @Roles(UserRole.VENDOR)
@@ -147,7 +153,7 @@ export class OrdersController {
     @Param('orderId', new ParseUUIDPipe()) orderId: string,
     @Body() dto: RefuseOrderDto,
   ) {
-    return this.orders.refuseOrder(orderId, (req.user as { id: string }).id, dto);
+    return this.vendorActions.refuseOrder(orderId, (req.user as { id: string }).id, dto);
   }
 
   @Roles(UserRole.VENDOR)
@@ -161,7 +167,7 @@ export class OrdersController {
     @Param('itemId', new ParseUUIDPipe()) itemId: string,
     @Body() dto: SetItemPreparedDto,
   ) {
-    return this.orders.setItemPrepared(
+    return this.vendorActions.setItemPrepared(
       orderId,
       itemId,
       (req.user as { id: string }).id,
@@ -175,7 +181,7 @@ export class OrdersController {
     summary: 'Vendor marks an order ready for pickup — all items must be prepared first',
   })
   markReady(@Req() req: Request, @Param('orderId', new ParseUUIDPipe()) orderId: string) {
-    return this.orders.markOrderReady(orderId, (req.user as { id: string }).id);
+    return this.vendorActions.markOrderReady(orderId, (req.user as { id: string }).id);
   }
 
   @Roles(UserRole.VENDOR)
@@ -193,6 +199,10 @@ export class OrdersController {
     @Param('orderId', new ParseUUIDPipe()) orderId: string,
     @Body() dto: VendorCancelPreOrderDto,
   ) {
-    return this.orders.vendorCancelPreOrder(orderId, (req.user as { id: string }).id, dto.note);
+    return this.vendorActions.vendorCancelPreOrder(
+      orderId,
+      (req.user as { id: string }).id,
+      dto.note,
+    );
   }
 }
