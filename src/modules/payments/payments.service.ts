@@ -48,7 +48,9 @@ export class PaymentsService {
    *
    * Pre-conditions:
    *   - Order belongs to the calling user.
-   *   - Order.paymentMethod is MTN_MOMO or ORANGE_MONEY (cash never hits here).
+   *   - Order.paymentMethod is MTN_MOMO or ORANGE_MONEY (the only payment
+   *     methods the pilot supports; runtime guard kept against future
+   *     enum expansion).
    *   - Order.status is PENDING (not yet paid / cancelled / etc.).
    *   - paymentStatus ∈ {PENDING, FAILED} — allows retry of a failed attempt.
    *
@@ -66,7 +68,7 @@ export class PaymentsService {
     if (!MOMO_METHODS.has(order.paymentMethod)) {
       throw new BadRequestException({
         code: 'payment_method_not_momo',
-        message: 'This order was not placed with MoMo. Pay in cash on delivery.',
+        message: 'This payment method does not go through MoMo.',
       });
     }
     if (!PAYABLE_STATUSES.has(order.status)) {

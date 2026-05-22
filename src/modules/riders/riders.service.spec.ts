@@ -512,11 +512,6 @@ describe('RidersService', () => {
       expect(ledger.recordTransaction).not.toHaveBeenCalled();
     });
 
-    // The legacy "markDelivered flips CASH paymentStatus=PAID" path was
-    // removed per issue #177 — pilot is MoMo-only, MoMo orders are already
-    // PAID by the time the rider marks delivery (Campay webhook fired
-    // earlier). The MoMo case above is now the only path.
-
     it('markDelivered rejects wrong delivery code', async () => {
       riderOrder(OrderStatus.PICKED_UP);
       await expect(service.markDelivered('user-1', 'o-1', '0000')).rejects.toMatchObject({

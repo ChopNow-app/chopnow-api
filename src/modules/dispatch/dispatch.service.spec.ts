@@ -189,13 +189,16 @@ describe('DispatchService', () => {
       expect(retryQueue.add).toHaveBeenCalledTimes(9);
     });
 
-    it('does not flip paymentStatus when the cash order expires (no refund needed)', async () => {
+    it('does not flip paymentStatus when an unpaid order expires (no refund needed)', async () => {
+      // Order reached ACCEPTED before payment landed (rare but possible
+      // race). When dispatch gives up, no payment ever cleared so there
+      // is nothing to refund — paymentStatus should NOT flip to REFUNDED.
       prisma.order.findUnique.mockResolvedValue({
         id: 'order-1',
         riderId: null,
         status: 'ACCEPTED',
         paymentStatus: 'PENDING',
-        paymentMethod: 'CASH',
+        paymentMethod: 'MTN_MOMO',
         userId: 'u-1',
       });
       prisma.$queryRaw.mockResolvedValue([]);
