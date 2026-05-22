@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CampayWebhookPayload } from '../../infra/campay/campay.service';
 import { Public } from '../../shared/decorators/public.decorator';
@@ -18,7 +18,7 @@ import { PaymentsService } from './payments.service';
  * reference.
  */
 @ApiTags('webhooks')
-@Controller('webhooks/campay')
+@Controller({ path: 'webhooks/campay', version: VERSION_NEUTRAL })
 export class CampayWebhookController {
   constructor(private readonly payments: PaymentsService) {}
 

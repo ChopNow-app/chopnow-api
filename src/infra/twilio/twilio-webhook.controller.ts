@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { Public } from '../../shared/decorators/public.decorator';
@@ -21,7 +21,7 @@ import { OtpDeliveryService } from './otp-delivery.service';
  * https://www.twilio.com/docs/usage/webhooks/messaging-webhooks#http-status-callback-requests
  */
 @ApiExcludeController()
-@Controller('twilio')
+@Controller({ path: 'twilio', version: VERSION_NEUTRAL })
 export class TwilioWebhookController {
   constructor(
     @InjectPinoLogger(TwilioWebhookController.name) private readonly logger: PinoLogger,

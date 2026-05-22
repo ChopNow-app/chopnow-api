@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
@@ -44,6 +44,16 @@ async function bootstrap() {
   // inject PinoLogger for structured 5xx logs.
 
   app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
+
+  // URI versioning — every consumer-facing route gets `/api/v1/*`. Routes
+  // that must stay at unversioned paths (machine-to-machine webhooks where
+  // an external party has the URL registered, infra probes) opt out per
+  // controller / per method with `@Version(VERSION_NEUTRAL)`. Future v2 can
+  // be added per-controller via `@Version('2')` without disturbing v1.
+  app.enableVersioning({
+    type: VersioningType.URI,
+    defaultVersion: '1',
+  });
 
   // --- OpenAPI / Swagger ---
   // Built when available; failures during introspection (e.g. circular enum
