@@ -1,21 +1,20 @@
-import { Body, Controller, ForbiddenException, HttpCode, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
 import { ApiExcludeController } from '@nestjs/swagger';
 import { OtpStatus } from '@prisma/client';
-import type { Request } from 'express';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { validateRequest } from 'twilio';
 import { Public } from '../../shared/decorators/public.decorator';
-import { EnvService } from '../config/env.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TwilioWebhookGuard } from './guards/twilio-webhook.guard';
 
 /**
  * Twilio POSTs delivery status updates here once the WhatsApp/SMS message reaches
  * (or fails to reach) the recipient. Reconciles the OtpLog row that was marked
  * SENT in AuthService.requestOtp to its real terminal state — DELIVERED or FAILED.
  *
- * In dev (NODE_ENV=development) signature validation is skipped so the endpoint
- * can be exercised with curl. In prod the signature is enforced; an attacker
- * forging this would otherwise be able to flip any OtpLog row to DELIVERED.
+ * Authentication: `TwilioWebhookGuard` verifies X-Twilio-Signature against
+ * TWILIO_AUTH_TOKEN. In `nodeEnv !== 'production'` the guard is a no-op so the
+ * endpoint can be exercised with curl + integration tests don't have to mint
+ * Twilio signatures.
  *
  * Webhook payload reference:
  * https://www.twilio.com/docs/usage/webhooks/messaging-webhooks#http-status-callback-requests
@@ -26,15 +25,13 @@ export class TwilioWebhookController {
   constructor(
     @InjectPinoLogger(TwilioWebhookController.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
-    private readonly env: EnvService,
   ) {}
 
   @Post('status')
   @Public()
+  @UseGuards(TwilioWebhookGuard)
   @HttpCode(204)
-  async onStatus(@Req() req: Request, @Body() body: Record<string, string>): Promise<void> {
-    if (this.env.nodeEnv === 'production') this.assertTwilioSignature(req);
-
+  async onStatus(@Body() body: Record<string, string>): Promise<void> {
     const sid = body.MessageSid;
     const status = body.MessageStatus;
     if (!sid || !status) {
@@ -82,20 +79,5 @@ export class TwilioWebhookController {
       default:
         return;
     }
-  }
-
-  private assertTwilioSignature(req: Request): void {
-    const { authToken, statusCallbackUrl } = this.env.twilio;
-    if (!authToken || !statusCallbackUrl) {
-      throw new ForbiddenException('webhook not configured');
-    }
-    const signature = req.header('x-twilio-signature') ?? '';
-    const valid = validateRequest(
-      authToken,
-      signature,
-      statusCallbackUrl,
-      req.body as Record<string, string>,
-    );
-    if (!valid) throw new ForbiddenException('invalid twilio signature');
   }
 }
