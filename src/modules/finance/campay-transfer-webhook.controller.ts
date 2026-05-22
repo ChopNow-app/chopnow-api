@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from '../../shared/decorators/public.decorator';
 import { CampayWebhookGuard } from '../payments/guards/campay-webhook.guard';
@@ -12,7 +12,7 @@ import { FinanceService } from './finance.service';
 // reach FinanceService.handleTransferWebhook and never mutate payout
 // state.
 @ApiTags('webhooks')
-@Controller('webhooks/campay/transfer')
+@Controller({ path: 'webhooks/campay/transfer', version: VERSION_NEUTRAL })
 export class CampayTransferWebhookController {
   constructor(private readonly finance: FinanceService) {}
 

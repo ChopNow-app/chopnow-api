@@ -1,4 +1,12 @@
-import { Controller, Get, Header, NotFoundException, Param, Res } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  NotFoundException,
+  Param,
+  Res,
+  VERSION_NEUTRAL,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { Response } from 'express';
@@ -20,7 +28,10 @@ const MEDIA_CACHE = 'public, max-age=86400, immutable';
  * for a catalogue grid (each vendor card = 1 image) and stingy enough to
  * deter scraping.
  */
-@Controller('media')
+// VERSION_NEUTRAL: media proxy is an internal infra concern. The Next.js
+// rewrite at /r2/:path → /api/media/:path stores object keys (not API
+// paths) in the DB, so versioning this would just add ceremony.
+@Controller({ path: 'media', version: VERSION_NEUTRAL })
 export class MediaController {
   private _client: S3Client | null = null;
 
