@@ -1,120 +1,77 @@
 import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
 import { OnEvent } from '@nestjs/event-emitter';
+import { Queue } from 'bullmq';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { PrismaService } from '../../infra/prisma/prisma.service';
-import { TwilioService } from '../../infra/twilio/twilio.service';
-import { WebPushService } from '../notifications/web-push.service';
 import { DomainEvents } from '../../shared/events/domain-events';
-import { OrdersExpiryService } from './orders-expiry.service';
+import {
+  CONSUMER_ORDER_REFUSED_JOB,
+  ORDER_NOTIFICATIONS_QUEUE,
+  VENDOR_NEW_ORDER_JOB,
+  type OrderNotificationJobData,
+} from './order-notifications.constants';
 
 /**
- * Fans out order-lifecycle events to interested parties via WhatsApp.
+ * Listens to domain events and enqueues notification jobs onto the
+ * `order-notifications` BullMQ queue. The actual WhatsApp + Web Push
+ * delivery lives in `OrderNotificationsProcessor`.
  *
- * Two listeners today:
- *   - ORDER_CREATED → pings the VENDOR ("you have a new order, you have 60s")
- *   - ORDER_REFUSED → pings the CONSUMER ("restaurant couldn't take it")
+ * Why a queue: the previous in-process path silently lost the
+ * notification on transient failure (Twilio 5xx, push transport blip).
+ * Symptom was "vendor didn't get the order → cron auto-refuses 60s later
+ * → consumer sees 'restaurant didn't reply'." With a queue + retries we
+ * get 3 chances at delivery before giving up, and permanent failures
+ * land in the BullMQ failed lane for ops inspection.
  *
- * The pilot uses the Twilio WhatsApp sandbox (no Meta template approval yet).
- * That's fine because both vendor and consumer authenticate via OTP, which
- * opens a 24h sandbox session per phone. Both audiences re-OTP frequently
- * enough that the 24h window stays warm.
- *
- * Accept-side noise hurts more than it helps for the pilot: the consumer is
- * already watching /orders/[id] and sees ACCEPTED → IN_PREP move within
- * seconds. Refuse is the painful case (60s of silence followed by a
- * "didn't reply" timeline entry), so we ping them so they know to try
- * someone else.
+ * Two job types today:
+ *   - vendor-new-order   ← ORDER_CREATED
+ *   - consumer-order-refused ← ORDER_REFUSED
  */
 @Injectable()
 export class OrderNotificationsService {
+  /**
+   * Retry policy applied to every enqueued notification:
+   *   - attempts: 3
+   *   - backoff: exponential starting at 5s → ~5s, 25s, 125s
+   * Covers transient Twilio 5xx + push transport errors. Past 3 attempts
+   * the job stops retrying; it sits in the failed lane (kept by
+   * removeOnFail.count) for inspection.
+   */
+  private static readonly DEFAULT_JOB_OPTS = {
+    attempts: 3,
+    backoff: { type: 'exponential' as const, delay: 5000 },
+    removeOnComplete: true,
+    removeOnFail: { count: 1000 },
+  };
+
   constructor(
     @InjectPinoLogger(OrderNotificationsService.name) private readonly logger: PinoLogger,
-    private readonly prisma: PrismaService,
-    private readonly twilio: TwilioService,
-    private readonly webPush: WebPushService,
+    @InjectQueue(ORDER_NOTIFICATIONS_QUEUE)
+    private readonly notificationsQueue: Queue<OrderNotificationJobData>,
   ) {}
 
-  /**
-   * Pings the vendor the moment a new order is created.
-   *
-   * Two-channel cascade, push-first:
-   *   1. Web Push to every active subscription (PWA installed, permission granted).
-   *      Wakes the device with an OS notification that deep-links to
-   *      /vendor/commande/<id>. If the dashboard is already foregrounded,
-   *      the SW additionally postMessages focused clients → in-app chime
-   *      + dashboard refresh (no SSE needed; one channel covers both states).
-   *   2. WhatsApp fallback — fires ONLY when push reached zero subscriptions
-   *      (vendor hasn't installed the PWA, denied permission, or all their
-   *      endpoints expired). Mutually exclusive so we never double-ping a
-   *      vendor who's already getting the native notification.
-   *
-   * Without either, the vendor's only signal is the dashboard's 10s poll
-   * — a vendor cooking on the line misses the 60s acceptance window and
-   * the cron auto-refuses, surfacing as "restaurant didn't reply" to the
-   * consumer.
-   */
   @OnEvent(DomainEvents.ORDER_CREATED)
-  async onOrderCreated(payload: {
-    orderId: string;
-    code?: string;
-    vendorId?: string;
-    userId?: string;
-    paymentMethod?: string;
-  }): Promise<void> {
+  async onOrderCreated(payload: { orderId: string }): Promise<void> {
     try {
-      const order = await this.prisma.order.findUnique({
-        where: { id: payload.orderId },
-        select: {
-          code: true,
-          totalXAF: true,
-          paymentMethod: true,
-          items: { select: { quantity: true } },
-          vendor: { select: { whatsappPhone: true, name: true, userId: true } },
-        },
-      });
-      if (!order) return;
-
-      const itemCount = order.items.reduce((sum, i) => sum + i.quantity, 0);
-      // Pilot is MoMo-only — payment has already confirmed by the time this
-      // event fires (it's emitted from onPaymentSucceeded, not createOrder).
-      // The label distinguishes MTN vs Orange Money so the vendor knows
-      // which provider the consumer used.
-      const paymentLabel =
-        order.paymentMethod === 'ORANGE_MONEY' ? 'Payé via Orange Money' : 'Payé via MTN MoMo';
-      const totalLabel = `${order.totalXAF.toLocaleString('fr-FR')} FCFA`;
-
-      // 1. Web Push first.
-      const pushResult = await this.webPush.sendToUser(order.vendor.userId, {
-        title: `🍲 Nouvelle commande ${order.code}`,
-        body: `${itemCount} plat${itemCount > 1 ? 's' : ''} · ${totalLabel} · ${paymentLabel}`,
-        data: {
-          kind: 'ORDER_CREATED',
-          orderId: payload.orderId,
-          deepLink: `/vendor/commande/${payload.orderId}`,
-        },
-      });
-
-      if (pushResult.sent > 0) return; // vendor got the native notification
-
-      // 2. WhatsApp fallback — only when push had no reachable subscriptions.
-      if (!order.vendor.whatsappPhone) return;
-      const body =
-        `🍲 Nouvelle commande ${order.code}\n` +
-        `${itemCount} plat${itemCount > 1 ? 's' : ''} · ${totalLabel} · ${paymentLabel}\n\n` +
-        `Tu as 60 secondes pour accepter :\n` +
-        `tchopnow.app/vendor/commande/${payload.orderId}`;
-      await this.twilio.sendWhatsApp(order.vendor.whatsappPhone, body);
+      // Job ID = orderId so duplicate ORDER_CREATED emits (defensive — the
+      // event is emitted once today, but a retry-on-the-emitter path would
+      // otherwise enqueue twice) collapse to a single job.
+      await this.notificationsQueue.add(
+        VENDOR_NEW_ORDER_JOB,
+        { orderId: payload.orderId },
+        { ...OrderNotificationsService.DEFAULT_JOB_OPTS, jobId: `vno:${payload.orderId}` },
+      );
     } catch (err) {
-      // Best-effort. A push-service outage or stale Twilio sandbox window
-      // must not feed back into the order pipeline — the order is already
-      // committed.
+      // The enqueue itself failing (Redis unreachable) is logged but never
+      // feeds back into the order pipeline — the order is already committed.
       this.logger.warn(
         {
-          event: 'order_created_notification_failed',
+          event: 'order_notification_enqueue_failed',
+          jobName: VENDOR_NEW_ORDER_JOB,
           orderId: payload.orderId,
           error: (err as Error).message,
         },
-        'Order creation notification failed (push + WhatsApp)',
+        'Failed to enqueue vendor new-order notification — order still proceeds',
       );
     }
   }
@@ -122,54 +79,21 @@ export class OrderNotificationsService {
   @OnEvent(DomainEvents.ORDER_REFUSED)
   async onOrderRefused(payload: { orderId: string; reason: string }): Promise<void> {
     try {
-      const order = await this.prisma.order.findUnique({
-        where: { id: payload.orderId },
-        select: {
-          code: true,
-          user: { select: { phone: true } },
-          vendor: { select: { name: true } },
-        },
-      });
-      if (!order?.user.phone) return;
-
-      const reasonLine = humanizeReason(payload.reason);
-      const body =
-        `Bonjour 👋 Désolé, ${order.vendor.name} n'a pas pu prendre ta commande ${order.code}.\n` +
-        `${reasonLine}\n` +
-        `Aucun montant débité. Tu peux réessayer avec un autre restaurant : tchopnow.app/restaurants 🍲`;
-
-      await this.twilio.sendWhatsApp(order.user.phone, body);
+      await this.notificationsQueue.add(
+        CONSUMER_ORDER_REFUSED_JOB,
+        { orderId: payload.orderId, reason: payload.reason },
+        { ...OrderNotificationsService.DEFAULT_JOB_OPTS, jobId: `cor:${payload.orderId}` },
+      );
     } catch (err) {
-      // Notifications are best-effort — never let a delivery failure feed back
-      // into the order pipeline. Log so ops can investigate if delivery
-      // becomes systematically broken.
       this.logger.warn(
         {
-          event: 'order_refusal_whatsapp_failed',
+          event: 'order_notification_enqueue_failed',
+          jobName: CONSUMER_ORDER_REFUSED_JOB,
           orderId: payload.orderId,
           error: (err as Error).message,
         },
-        'Order refusal WhatsApp failed',
+        'Failed to enqueue consumer refusal notification',
       );
     }
   }
-}
-
-// Same mapping as the consumer-side OrderTimeline.humanizeRefusal — duplicated
-// rather than imported because they live in different repos and the strings
-// need to be edited by hand in both anyway.
-function humanizeReason(reason: string): string {
-  const [code, ...rest] = reason.split(':');
-  const note = rest.join(':').trim();
-  const map: Record<string, string> = {
-    ITEM_OUT_OF_STOCK: 'Le plat commandé est épuisé.',
-    CLOSED: 'Le restaurant est actuellement fermé.',
-    TOO_MANY_ORDERS: 'Le restaurant est trop chargé pour le moment.',
-    POWER_OUTAGE: 'Le restaurant fait face à une coupure de courant.',
-    OTHER: "Autre motif (voir détail dans l'app).",
-    [OrdersExpiryService.EXPIRED_REASON]:
-      "Le restaurant n'a pas répondu dans le temps imparti — il était probablement très occupé.",
-  };
-  const label = map[code.trim()] ?? 'La commande a été refusée.';
-  return note ? `${label} (${note})` : label;
 }
