@@ -7,16 +7,18 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { DomainEvents } from '../../shared/events/domain-events';
 
 /**
- * Auto-refuse expired vendor decisions.
+ * Auto-refuse expired vendor decisions — SAFETY NET.
  *
- * The vendor has `ACCEPTANCE_TTL_SECONDS` to accept or refuse a new order
- * (Order.acceptanceDeadlineAt). After that, the cron flips the order to
- * REFUSED with the synthetic reason EXPIRED_NO_VENDOR_RESPONSE — same
- * effect as a human Refuse but accounted separately for vendor
- * reliability metrics.
+ * Since PR #235 the precise path is a BullMQ delayed job scheduled at
+ * `Order.acceptanceDeadlineAt` by `OrderLifecycleScheduler`. This cron
+ * stays as a safety net for the rare cases where Redis lost the job
+ * (e.g. a redeploy wiped Docker volumes). Both paths share the same
+ * status-guarded updateMany so whichever fires first wins; the other
+ * matches zero rows and no-ops.
  *
  * Runs every 10s. The partial index orders_pending_deadline_idx makes the
- * scan ~O(expired-count) regardless of total order volume.
+ * scan ~O(expired-count) regardless of total order volume; in normal
+ * operation that count is 0 because the queue caught everything first.
  */
 @Injectable()
 export class OrdersExpiryService {

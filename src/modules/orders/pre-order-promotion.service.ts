@@ -8,7 +8,14 @@ import { DomainEvents } from '../../shared/events/domain-events';
 import { ACCEPTANCE_TTL_SECONDS, PRE_ORDER_NOTIFICATION_LEAD_MINUTES } from './orders.service';
 
 /**
- * Pre-order promotion cron (#187 — v1).
+ * Pre-order promotion cron (#187 — v1) — SAFETY NET.
+ *
+ * Since PR #235 the precise path is a BullMQ delayed job scheduled at
+ * `scheduledFor - PRE_ORDER_NOTIFICATION_LEAD_MINUTES` by
+ * `OrderLifecycleScheduler.schedulePreOrderPromotion()`. This cron stays
+ * as a safety net for the rare cases where Redis lost the job. Both paths
+ * share the same `WHERE acceptanceDeadlineAt: null` guard so the second
+ * one to fire matches zero rows and no-ops.
  *
  * Runs every minute. Finds pre-orders where:
  *   - paymentStatus is PAID (consumer paid, order is locked in)
