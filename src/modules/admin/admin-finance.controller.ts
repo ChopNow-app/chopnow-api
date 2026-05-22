@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   Req,
+  UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -16,6 +17,7 @@ import { Roles } from '../../shared/decorators/roles.decorator';
 import { CampayCircuitBreakerService } from '../../infra/campay/campay-circuit-breaker.service';
 import { FinanceService } from '../finance/finance.service';
 import { PayoutEscalationService } from '../finance/payout-escalation.service';
+import { AdminAuditInterceptor } from './admin-audit.interceptor';
 import { ListCashoutRequestsDto, RejectCashoutRequestDto } from './dto/cashout.dto';
 import {
   ListRefundQueueDto,
@@ -28,6 +30,7 @@ const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as
 
 @ApiTags('admin-finance')
 @ApiBearerAuth()
+@UseInterceptors(AdminAuditInterceptor)
 @Controller('admin')
 export class AdminFinanceController {
   constructor(

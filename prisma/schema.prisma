@@ -157,6 +157,7 @@ model User {
   orders            Order[]
   orderRatings      OrderRating[]
   passwordResets    AdminPasswordReset[]
+  adminAuditLogs    AdminAuditLog[]
 
   @@index([phone])
   @@index([role])
@@ -201,6 +202,32 @@ model RefreshToken {
   @@index([userId])
   @@index([tokenHash])
   @@map("refresh_tokens")
+}
+
+// Phase A2 — admin audit log. Append-only record of every admin write
+// request. `action` is derived from `controller.method` (e.g.
+// "vendor.approve", "rider.suspend", "cashout.reject"). `payload` is the
+// request body with sensitive keys redacted (password, code, token, ...).
+// `outcome` is "success" or "error"; errorCode is the exception's body.code
+// when present.
+model AdminAuditLog {
+  id         String   @id @default(uuid())
+  adminId    String
+  admin      User     @relation(fields: [adminId], references: [id], onDelete: Restrict)
+  action     String
+  targetType String?
+  targetId   String?
+  payload    Json?
+  ip         String?
+  userAgent  String?
+  outcome    String
+  errorCode  String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([targetType, targetId])
+  @@index([action, createdAt])
+  @@map("admin_audit_logs")
 }
 
 // Story 1.12: Admin password reset (one-time tokens)
