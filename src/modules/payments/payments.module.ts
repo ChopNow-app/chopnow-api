@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CampayModule } from '../../infra/campay/campay.module';
 import { CampayWebhookController } from './campay-webhook.controller';
+import { CampayWebhookGuard } from './guards/campay-webhook.guard';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 
@@ -22,7 +23,7 @@ import { PaymentsService } from './payments.service';
 @Module({
   imports: [CampayModule],
   controllers: [PaymentsController, CampayWebhookController],
-  providers: [PaymentsService],
-  exports: [PaymentsService],
+  providers: [PaymentsService, CampayWebhookGuard],
+  exports: [PaymentsService, CampayWebhookGuard],
 })
 export class PaymentsModule {}
