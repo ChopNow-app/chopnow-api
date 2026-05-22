@@ -10,6 +10,8 @@ import express from 'express';
 import { getExpectedTwilioSignature } from 'twilio/lib/webhooks/webhooks';
 import { TwilioWebhookController } from '../src/infra/twilio/twilio-webhook.controller';
 import { TwilioWebhookGuard } from '../src/infra/twilio/guards/twilio-webhook.guard';
+import { OtpDeliveryService } from '../src/infra/twilio/otp-delivery.service';
+import { TwilioService } from '../src/infra/twilio/twilio.service';
 import { pinoLoggerProvider } from '../src/shared/testing/pino-mock';
 import { PrismaService } from '../src/infra/prisma/prisma.service';
 import { EnvService } from '../src/infra/config/env.service';
@@ -48,7 +50,12 @@ describe('POST /twilio/status (integration)', () => {
       providers: [
         pinoLoggerProvider(TwilioWebhookController.name),
         pinoLoggerProvider(TwilioWebhookGuard.name),
+        pinoLoggerProvider(OtpDeliveryService.name),
         TwilioWebhookGuard,
+        OtpDeliveryService,
+        // OtpDeliveryService injects TwilioService (used only for sendOtp,
+        // not for handleTwilioStatus) — provide an unused stub so DI resolves.
+        { provide: TwilioService, useValue: {} },
         { provide: PrismaService, useValue: prisma },
         {
           provide: EnvService,
