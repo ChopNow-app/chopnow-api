@@ -96,6 +96,32 @@ describe('AuthService', () => {
     service = module.get(AuthService);
   });
 
+  describe('generateCode (security regression — must not use Math.random)', () => {
+    /**
+     * If a future change reintroduces Math.random() into the OTP path,
+     * an attacker who observes a handful of own-phone OTPs can predict
+     * the V8 PRNG state and forge the next OTP for any victim phone.
+     * Lock the contract here in addition to the ESLint guard.
+     */
+    it('does NOT call Math.random when generating an OTP', async () => {
+      const mathRandomSpy = jest.spyOn(Math, 'random');
+      // Drop the test-env short-circuit so the real generation path runs.
+      type Internal = { generateCode: () => string; env: { nodeEnv: string } };
+      const internal = service as unknown as Internal;
+      internal.env.nodeEnv = 'development';
+      try {
+        for (let i = 0; i < 100; i++) {
+          const code = internal.generateCode();
+          expect(code).toMatch(/^\d{6}$/);
+        }
+        expect(mathRandomSpy).not.toHaveBeenCalled();
+      } finally {
+        internal.env.nodeEnv = 'test';
+        mathRandomSpy.mockRestore();
+      }
+    });
+  });
+
   describe('requestOtp', () => {
     it('normalizes a Cameroon-local phone before persisting', async () => {
       await service.requestOtp('670000000');

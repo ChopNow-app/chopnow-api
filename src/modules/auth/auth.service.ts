@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
@@ -320,9 +320,18 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
+  /**
+   * Generate a 6-digit OTP using the OS CSPRNG. `randomInt` reads from
+   * /dev/urandom (Linux) / BCryptGenRandom (Windows) via Node's `crypto`
+   * module — unpredictable even with arbitrarily many prior outputs
+   * observed. Math.random (V8 xorshift128+) is NOT acceptable here:
+   * successful OTP verification issues a JWT pair and lets the caller
+   * impersonate the phone number's account, so a predictable code is a
+   * direct path to account takeover.
+   */
   private generateCode(): string {
     if (this.env.nodeEnv === 'test') return '000000';
-    const n = Math.floor(Math.random() * 1_000_000);
+    const n = randomInt(0, 1_000_000);
     return n.toString().padStart(6, '0');
   }
 }
