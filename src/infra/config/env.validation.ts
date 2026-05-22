@@ -15,7 +15,12 @@ export const envSchema = Joi.object({
 
   JWT_ACCESS_SECRET: Joi.string().min(32).required(),
   JWT_REFRESH_SECRET: Joi.string().min(32).required(),
-  JWT_ACCESS_TTL: Joi.string().default('24h'),
+  // Phase B1 — cut from 24h → 15m. Access tokens now live in PWA memory
+  // (not localStorage), refresh tokens live in an HttpOnly cookie. A 15-min
+  // access TTL bounds the XSS-stolen access token window; the refresh
+  // cookie does the long-lived authentication. Worst case the user's API
+  // call gets a 401 every 15 min and the client refreshes silently.
+  JWT_ACCESS_TTL: Joi.string().default('15m'),
   JWT_REFRESH_TTL: Joi.string().default('30d'),
 
   // Passphrase for at-rest envelope encryption of TOTP shared secrets

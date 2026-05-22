@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe, VersioningType } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
 import express from 'express';
 import request from 'supertest';
 import { OtpChannel, OtpStatus, UserRole } from '@prisma/client';
@@ -31,7 +32,7 @@ describe('Auth flow (e2e)', () => {
     process.env.DATABASE_URL = pgCtx.url;
     process.env.JWT_ACCESS_SECRET = 'a'.repeat(64);
     process.env.JWT_REFRESH_SECRET = 'b'.repeat(64);
-    process.env.JWT_ACCESS_TTL = '24h';
+    process.env.JWT_ACCESS_TTL = '15m';
     process.env.JWT_REFRESH_TTL = '30d';
     // Phase A1 — AES-256-GCM envelope key for admin TOTP secrets at rest.
     // Not exercised by these tests but required by env validation now.
@@ -72,6 +73,7 @@ describe('Auth flow (e2e)', () => {
     // Mirror main.ts wiring (helmet skipped — adds latency, no value in test).
     app.use(express.json({ limit: '1mb' }));
     app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+    app.use(cookieParser());
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,
@@ -282,6 +284,119 @@ describe('Auth flow (e2e)', () => {
     } finally {
       await prisma.$disconnect();
     }
+  });
+
+  // ─── Phase B1 — refresh cookie + logout ─────────────────────────────
+  describe('Phase B1 — refresh cookie + logout', () => {
+    it('verify-otp sets the chopnow_rt HttpOnly cookie alongside the body refresh token', async () => {
+      const phone = '670000010';
+      const server = app.getHttpServer();
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+      const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+
+      const verifyRes = await request(server)
+        .post('/api/v1/auth/verify-otp')
+        .send({ phone, code })
+        .expect(200);
+
+      const setCookie = verifyRes.headers['set-cookie'] as unknown as string[] | string;
+      const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+      const refreshCookie = cookies.find((c) => c.startsWith('chopnow_rt='));
+      expect(refreshCookie).toBeDefined();
+      expect(refreshCookie!.toLowerCase()).toContain('httponly');
+      expect(refreshCookie!.toLowerCase()).toContain('samesite=strict');
+      expect(refreshCookie!.toLowerCase()).toContain('path=/api/v1/auth');
+      // Cookie value === the body refreshToken (during the cutover both surfaces carry it)
+      const cookieValue = decodeURIComponent(refreshCookie!.split(';')[0].split('=')[1]);
+      expect(cookieValue).toBe(verifyRes.body.refreshToken);
+    });
+
+    it('refresh works with only the cookie — body refreshToken omitted', async () => {
+      const phone = '670000011';
+      const server = app.getHttpServer();
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+      const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+
+      const verifyRes = await request(server)
+        .post('/api/v1/auth/verify-otp')
+        .send({ phone, code })
+        .expect(200);
+
+      const setCookie = verifyRes.headers['set-cookie'] as unknown as string[];
+      const refreshCookie = setCookie.find((c) => c.startsWith('chopnow_rt='))!;
+      const cookieValue = refreshCookie.split(';')[0]; // "chopnow_rt=<token>"
+
+      // Refresh with cookie only — DTO still allows an empty body
+      const refreshRes = await request(server)
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', cookieValue)
+        .send({})
+        .expect(200);
+
+      expect(refreshRes.body.accessToken).toBeDefined();
+      expect(refreshRes.body.refreshToken).toBeDefined();
+      expect(refreshRes.body.refreshToken).not.toBe(verifyRes.body.refreshToken);
+      // New cookie issued (rotation)
+      const newSetCookie = refreshRes.headers['set-cookie'] as unknown as string[];
+      expect(newSetCookie.some((c) => c.startsWith('chopnow_rt='))).toBe(true);
+    });
+
+    it('logout revokes the row + clears the cookie + the token cannot be replayed', async () => {
+      const phone = '670000012';
+      const canonical = '+237670000012';
+      const server = app.getHttpServer();
+      const prisma = new prismaModule.PrismaClient({ datasources: { db: { url: pgCtx.url } } });
+
+      try {
+        await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+        const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+        const verifyRes = await request(server)
+          .post('/api/v1/auth/verify-otp')
+          .send({ phone, code })
+          .expect(200);
+        const refreshToken = verifyRes.body.refreshToken as string;
+
+        const user = await prisma.user.findUnique({ where: { phone: canonical } });
+        const rowsBefore = await prisma.refreshToken.findMany({
+          where: { userId: user!.id, revokedAt: null },
+        });
+        expect(rowsBefore).toHaveLength(1);
+
+        // Logout — 204 No Content, no body
+        const logoutRes = await request(server)
+          .post('/api/v1/auth/logout')
+          .set('Cookie', `chopnow_rt=${refreshToken}`)
+          .expect(204);
+
+        // Clear-Cookie response header
+        const setCookie = logoutRes.headers['set-cookie'] as unknown as string[];
+        const cleared = setCookie.find((c) => c.startsWith('chopnow_rt='))!;
+        // Max-Age=0 or Expires= in the past — either way the browser drops it
+        expect(cleared.toLowerCase()).toMatch(/max-age=0|expires=.+1970/);
+
+        // DB row revoked
+        const rowsAfter = await prisma.refreshToken.findMany({
+          where: { userId: user!.id, revokedAt: null },
+        });
+        expect(rowsAfter).toHaveLength(0);
+
+        // Refresh with the now-revoked token fails 401
+        await request(server).post('/api/v1/auth/refresh').send({ refreshToken }).expect(401);
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    it('logout is idempotent — calling with an unknown/expired token still 204s', async () => {
+      const server = app.getHttpServer();
+      // No Cookie header, no body — still succeeds, still clears
+      await request(server).post('/api/v1/auth/logout').expect(204);
+      // Bogus cookie value — also fine
+      await request(server)
+        .post('/api/v1/auth/logout')
+        .set('Cookie', 'chopnow_rt=not.a.valid.jwt')
+        .expect(204);
+    });
   });
 
   // ─── Story 1.2 AC#5 — suspension forces a structured 401 ────────────
