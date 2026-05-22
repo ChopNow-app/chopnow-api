@@ -9,6 +9,9 @@ import { StuckPickupDetectorService } from './stuck-pickup-detector.service';
 import { OrderNotificationsService } from './order-notifications.service';
 import { OrderNotificationsProcessor } from './order-notifications.processor';
 import { ORDER_NOTIFICATIONS_QUEUE } from './order-notifications.constants';
+import { OrderLifecycleScheduler } from './order-lifecycle.scheduler';
+import { OrderLifecycleProcessor } from './order-lifecycle.processor';
+import { ORDER_LIFECYCLE_QUEUE } from './order-lifecycle.constants';
 import { PreOrderPromotionService } from './pre-order-promotion.service';
 
 /**
@@ -29,6 +32,7 @@ import { PreOrderPromotionService } from './pre-order-promotion.service';
     NotificationsModule,
     FinanceModule,
     BullModule.registerQueue({ name: ORDER_NOTIFICATIONS_QUEUE }),
+    BullModule.registerQueue({ name: ORDER_LIFECYCLE_QUEUE }),
   ],
   controllers: [OrdersController],
   providers: [
@@ -36,6 +40,8 @@ import { PreOrderPromotionService } from './pre-order-promotion.service';
     OrdersExpiryService,
     OrderNotificationsService,
     OrderNotificationsProcessor,
+    OrderLifecycleScheduler,
+    OrderLifecycleProcessor,
     PreOrderPromotionService,
     StuckPickupDetectorService,
   ],

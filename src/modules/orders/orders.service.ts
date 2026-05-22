@@ -24,6 +24,7 @@ import { LedgerService } from '../finance/ledger.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { RateOrderDto } from './dto/rate-order.dto';
 import { RefuseOrderDto } from './dto/vendor-decision.dto';
+import { OrderLifecycleScheduler } from './order-lifecycle.scheduler';
 
 // Story 3.1 — minimum order to protect margin (≤ 1200 FCFA generates ~26 FCFA
 // net, near loss). Hard-coded for MVP; surface as an admin config later.
@@ -94,6 +95,7 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly events: EventEmitter2,
     private readonly ledger: LedgerService,
+    private readonly lifecycleScheduler: OrderLifecycleScheduler,
   ) {}
 
   // ── consumer write path ────────────────────────────────────────────
@@ -1037,9 +1039,16 @@ export class OrdersService {
     this.events.emit(DomainEvents.ORDER_PAID, { orderId: order.id, paidAt: now });
 
     if (isPreOrder) {
-      // Pre-order: vendor isn't notified until PreOrderPromotionService runs.
-      // The order sits CONFIRMED+PAID in the DB; listVendorOrders('preorder')
-      // shows it in the vendor's upcoming queue.
+      // Pre-order: vendor isn't notified until the scheduledFor - lead
+      // window. Fast path = delayed BullMQ job firing exactly at that
+      // moment; PreOrderPromotionService at every-minute cadence stays as
+      // the safety net in case Redis dropped the job.
+      if (order.scheduledFor) {
+        const promoteAt = new Date(
+          order.scheduledFor.getTime() - PRE_ORDER_NOTIFICATION_LEAD_MINUTES * 60_000,
+        );
+        await this.lifecycleScheduler.schedulePreOrderPromotion(order.id, promoteAt);
+      }
       this.logger.info(
         {
           event: 'pre_order_paid_awaiting_promotion',
@@ -1063,6 +1072,17 @@ export class OrdersService {
       userId: order.userId,
       paymentMethod: order.paymentMethod,
     });
+
+    // Schedule the 60s auto-refuse on the delayed-job fast path. The 10s
+    // cron (OrdersExpiryService) stays as a safety net in case Redis lost
+    // the job — but the user-visible deadline now fires on the precise
+    // tick rather than up to 10s late.
+    if (dataPatch.acceptanceDeadlineAt) {
+      await this.lifecycleScheduler.scheduleAcceptanceExpiry(
+        order.id,
+        dataPatch.acceptanceDeadlineAt as Date,
+      );
+    }
   }
 
   // ── helpers ──────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ import {
   VendorType,
 } from '@prisma/client';
 import { OrdersService } from './orders.service';
+import { OrderLifecycleScheduler } from './order-lifecycle.scheduler';
 import { LedgerService } from '../finance/ledger.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -37,6 +38,10 @@ describe('OrdersService', () => {
   };
   let events: { emit: jest.Mock };
   let ledger: { recordTransaction: jest.Mock };
+  let lifecycleScheduler: {
+    scheduleAcceptanceExpiry: jest.Mock;
+    schedulePreOrderPromotion: jest.Mock;
+  };
 
   const baseDto: CreateOrderDto = {
     vendorId: 'v-1',
@@ -92,6 +97,10 @@ describe('OrdersService', () => {
     };
     events = { emit: jest.fn() };
     ledger = { recordTransaction: jest.fn().mockResolvedValue(undefined) };
+    lifecycleScheduler = {
+      scheduleAcceptanceExpiry: jest.fn().mockResolvedValue(undefined),
+      schedulePreOrderPromotion: jest.fn().mockResolvedValue(undefined),
+    };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -100,6 +109,7 @@ describe('OrdersService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: EventEmitter2, useValue: events },
         { provide: LedgerService, useValue: ledger },
+        { provide: OrderLifecycleScheduler, useValue: lifecycleScheduler },
       ],
     }).compile();
     service = module.get(OrdersService);
