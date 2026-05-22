@@ -22,6 +22,12 @@ services:
     image: redis:7-alpine
     container_name: chopnow-redis
     restart: unless-stopped
+    # AOF persistence: every write fsync'd once per second. Loses ≤ 1s of
+    # writes on a hard kill, vs the default RDB-only mode which can lose
+    # minutes. Important because BullMQ stores its delayed-job state here —
+    # losing those means orders missing their auto-expire / pre-order
+    # promotion deadlines until the safety-net cron catches them.
+    command: redis-server --appendonly yes --appendfsync everysec
     ports:
       - '6379:6379'
     volumes:
