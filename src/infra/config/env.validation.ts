@@ -18,6 +18,12 @@ export const envSchema = Joi.object({
   JWT_ACCESS_TTL: Joi.string().default('24h'),
   JWT_REFRESH_TTL: Joi.string().default('30d'),
 
+  // Passphrase for at-rest envelope encryption of TOTP shared secrets
+  // (and any future secret we need to decrypt at runtime). Generate with
+  // `openssl rand -hex 32`. Rotating this key invalidates every existing
+  // ciphertext — affected admins must re-enroll via recovery codes.
+  APP_SECRET_ENVELOPE_KEY: Joi.string().min(32).required(),
+
   TWILIO_ACCOUNT_SID: Joi.string().optional(),
   TWILIO_AUTH_TOKEN: Joi.string().optional(),
   TWILIO_WHATSAPP_FROM: Joi.string().optional(),
