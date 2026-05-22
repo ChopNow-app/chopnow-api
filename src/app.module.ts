@@ -10,6 +10,7 @@ import { envSchema } from './infra/config/env.validation';
 import { AppConfigModule } from './infra/config/config.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { RedisModule } from './infra/redis/redis.module';
+import { QueueModule } from './infra/queue/queue.module';
 import { TwilioModule } from './infra/twilio/twilio.module';
 import { R2Module } from './infra/r2/r2.module';
 import { MailModule } from './infra/mail/mail.module';
@@ -66,6 +67,7 @@ import { RolesGuard } from './shared/guards/roles.guard';
     AppConfigModule,
     PrismaModule,
     RedisModule,
+    QueueModule,
     TwilioModule,
     R2Module,
     MailModule,
