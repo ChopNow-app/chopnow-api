@@ -31,6 +31,15 @@ services:
     image: redis:7-alpine
     container_name: chopnow-staging-redis
     restart: unless-stopped
+    # AOF persistence: every write fsync'd once per second. Loses ≤ 1s of
+    # writes on a hard kill, vs the default RDB-only mode which can lose
+    # minutes. Important because BullMQ stores its delayed-job state here
+    # (dispatch retries, notification fan-out, order-lifecycle scheduling).
+    # Without persistence, every redeploy would lose in-flight jobs and
+    # rely on the polling-cron safety net to catch up.
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - redisdata:/data
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 5s
@@ -70,3 +79,5 @@ services:
 volumes:
   pgdata:
     name: chopnow_staging_pgdata
+  redisdata:
+    name: chopnow_staging_redisdata
