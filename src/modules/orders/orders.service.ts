@@ -76,8 +76,11 @@ function maskPhone(phone: string | null | undefined): string {
 }
 
 const VENDOR_CAN_DECIDE: ReadonlySet<OrderStatus> = new Set([
-  OrderStatus.PENDING, // cash flow lands here before vendor decision
-  OrderStatus.CONFIRMED, // MoMo flow after webhook
+  // PENDING is only briefly visible — the window between order creation
+  // and the Campay webhook flipping it to CONFIRMED. Kept here so a
+  // vendor seeing a stale PENDING row (slow webhook) can still accept it.
+  OrderStatus.PENDING,
+  OrderStatus.CONFIRMED, // MoMo flow after webhook — the normal case
 ]);
 const CONSUMER_CAN_CANCEL: ReadonlySet<OrderStatus> = new Set([
   OrderStatus.PENDING,

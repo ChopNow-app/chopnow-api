@@ -178,10 +178,9 @@ export class DispatchService {
 
   /**
    * Terminal state: no rider found after all retries. Mark the order
-   * EXPIRED with a recognisable refusalReason and emit a refund event for
-   * MoMo orders. CASH orders don't need a refund (no money changed hands)
-   * but we still surface the EXPIRED state to the consumer so they know
-   * to re-order.
+   * EXPIRED with a recognisable refusalReason and emit a refund event
+   * if the consumer already paid (PaymentStatus === PAID). For
+   * not-yet-paid orders the EXPIRED state is enough — no money moved.
    */
   private async expireForNoRider(orderId: string): Promise<void> {
     const order = await this.prisma.order.findUnique({

@@ -95,16 +95,14 @@ enum RiderStatus {
 }
 
 // Epic 3 — order lifecycle.
-// PENDING       — cart submitted, payment not yet completed (cash always
-//                 lands here too until vendor accepts).
+// PENDING       — cart submitted, payment not yet completed.
 // CONFIRMED     — MoMo payment confirmed by Campay webhook; awaiting vendor.
 // ACCEPTED      — vendor accepted the order; dispatch starts.
 // IN_PREP       — vendor toggled "in kitchen" (optional intermediate state).
 // READY_PICKUP  — food ready, rider can collect.
 // PICKED_UP     — rider has the food, en route to client.
 // DELIVERED     — terminal happy state.
-// CANCELLED     — terminal: client cancellation, refund processed (or
-//                 cash never paid).
+// CANCELLED     — terminal: client cancellation, refund processed.
 // REFUSED       — terminal: vendor rejected before accepting; refund processed.
 // EXPIRED       — terminal: vendor never responded within timeout window.
 enum OrderStatus {
@@ -123,11 +121,6 @@ enum OrderStatus {
 enum PaymentMethod {
   MTN_MOMO
   ORANGE_MONEY
-  // @deprecated 2026-05-18 — pilot is MoMo-only, no COD product. Kept in
-  // the enum to avoid a Postgres enum-removal migration during the
-  // pilot launch window; will be dropped in a follow-up once no row
-  // references it. See chopnow-api issue #177.
-  CASH
 }
 
 enum PaymentStatus {

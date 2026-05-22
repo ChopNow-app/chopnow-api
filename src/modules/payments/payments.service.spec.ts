@@ -1,5 +1,5 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OrderStatus, PaymentMethod, PaymentStatus } from '@prisma/client';
 import { PaymentsService } from './payments.service';
@@ -99,19 +99,11 @@ describe('PaymentsService', () => {
       });
     });
 
-    it('rejects when order is not MoMo (cash)', async () => {
-      prisma.order.findUnique.mockResolvedValue({
-        id: 'order-1',
-        userId: 'user-1',
-        paymentMethod: PaymentMethod.CASH,
-        status: OrderStatus.PENDING,
-        paymentStatus: PaymentStatus.PENDING,
-      });
-      await expect(service.initiateMomo('order-1', 'user-1', '670000000')).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
-      expect(campay.initiateCollect).not.toHaveBeenCalled();
-    });
+    // The "rejects when order is not MoMo" test was removed when CASH was
+    // dropped from PaymentMethod — both remaining enum values (MTN_MOMO,
+    // ORANGE_MONEY) hit the MoMo branch by definition. The runtime guard
+    // in initiateMomo stays as defence-in-depth against future enum
+    // expansion but is unreachable from type-checked callers today.
 
     it('rejects when order is no longer PENDING', async () => {
       prisma.order.findUnique.mockResolvedValue({
