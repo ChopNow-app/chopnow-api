@@ -528,6 +528,69 @@ describe('Auth flow (e2e)', () => {
       const server = app.getHttpServer();
       await request(server).post('/api/v1/auth/sessions/revoke-all').expect(401);
     });
+
+    // ─── Phase D2 — auto-revoke on chopnow_did mismatch ───────────────
+    it('Phase D2: refresh with a different chopnow_did 401s + revokes the family', async () => {
+      const phone = '670000023';
+      const canonical = '+237670000023';
+      const server = app.getHttpServer();
+      const prisma = new prismaModule.PrismaClient({
+        datasources: { db: { url: pgCtx.url } },
+      });
+
+      try {
+        // Sign in on "browser A" — get a refresh JWT + chopnow_did cookie.
+        await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+        const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+        const verifyRes = await request(server)
+          .post('/api/v1/auth/verify-otp')
+          .send({ phone, code })
+          .expect(200);
+
+        const setCookie = verifyRes.headers['set-cookie'] as unknown as string[];
+        const rtCookie = setCookie.find((c) => c.startsWith('chopnow_rt='))!.split(';')[0];
+        // Build a "browser B" cookie header: same refresh token (lifted by
+        // an attacker) but a fabricated chopnow_did.
+        const attackerCookie = `${rtCookie}; chopnow_did=dev-attacker-fake`;
+
+        const refreshRes = await request(server)
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', attackerCookie)
+          .send({})
+          .expect(401);
+        expect(refreshRes.body.code).toBe('refresh_device_mismatch');
+
+        // Family wiped — no active refresh rows left for this user.
+        const user = await prisma.user.findUnique({ where: { phone: canonical } });
+        const active = await prisma.refreshToken.count({
+          where: { userId: user!.id, revokedAt: null },
+        });
+        expect(active).toBe(0);
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    it('Phase D2: refresh without chopnow_did still works (exempt when cookie missing)', async () => {
+      const phone = '670000024';
+      const server = app.getHttpServer();
+      await request(server).post('/api/v1/auth/request-otp').send({ phone }).expect(200);
+      const code: string = otpDelivery.sendOtp.mock.calls.at(-1)![1];
+      const verifyRes = await request(server)
+        .post('/api/v1/auth/verify-otp')
+        .send({ phone, code })
+        .expect(200);
+
+      const setCookie = verifyRes.headers['set-cookie'] as unknown as string[];
+      const rtCookieOnly = setCookie.find((c) => c.startsWith('chopnow_rt='))!.split(';')[0];
+
+      // Send only chopnow_rt, no chopnow_did → rotation proceeds.
+      await request(server)
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', rtCookieOnly)
+        .send({})
+        .expect(200);
+    });
   });
 
   // ─── Story 1.2 AC#5 — suspension forces a structured 401 ────────────

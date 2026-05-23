@@ -1,12 +1,12 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { UserRole } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
-import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
+import { AuthService } from '../auth/auth.service';
+import type { DeviceMeta } from '../auth/device.service';
 import { AdminTotpService } from './admin-totp.service';
 
 const ADMIN_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
@@ -19,7 +19,10 @@ const ADMIN_ROLES: ReadonlySet<UserRole> = new Set<UserRole>([
 // Story 1.6 — lockout policy.
 const LOCKOUT_WINDOW_SECONDS = 15 * 60;
 const LOCKOUT_THRESHOLD = 5;
-const ADMIN_SESSION_TTL = '8h';
+// Phase D1 — kept here as a comment for historical reference. The 8h
+// raw-access-token model was replaced by the consumer-style refresh +
+// 15-min access pair. Admin re-authenticates (password + TOTP) when
+// the 24h refresh cookie expires.
 
 // Phase A1 — 2FA challenge. Issued at successful password step, redeemed at
 // the /admin/auth/2fa endpoint. 5-min TTL so a lost browser tab doesn't keep
@@ -39,6 +42,19 @@ export type LoginResult =
   | {
       stage: 'success';
       accessToken: string;
+      /**
+       * Phase D1 — also returned in the body during the frontend cutover
+       * (mirrors the consumer verify-otp shape). The authoritative copy
+       * sits in the HttpOnly `chopnow_rt` cookie set by the controller;
+       * new clients should ignore the body field and rely on the cookie.
+       */
+      refreshToken: string;
+      /**
+       * Phase C1 — the resolved Device row's id. Returned to the
+       * controller so it can set the `chopnow_did` cookie alongside
+       * `chopnow_rt`; never serialized to the response body.
+       */
+      deviceId: string;
       role: UserRole;
       email: string;
       expiresIn: number;
@@ -50,9 +66,8 @@ export class AdminAuthService {
     @InjectPinoLogger(AdminAuthService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
     private readonly redis: RedisService,
-    private readonly jwt: JwtService,
-    private readonly env: EnvService,
     private readonly totp: AdminTotpService,
+    private readonly auth: AuthService,
   ) {}
 
   /**
@@ -66,7 +81,7 @@ export class AdminAuthService {
    * shape as pre-A1) so existing accounts don't break — the controller
    * exposes /admin/auth/2fa/setup to drive enrollment forward.
    */
-  async login(email: string, password: string): Promise<LoginResult> {
+  async login(email: string, password: string, meta: DeviceMeta): Promise<LoginResult> {
     const normalized = email.toLowerCase().trim();
     const user = await this.prisma.user.findUnique({ where: { email: normalized } });
 
@@ -124,8 +139,8 @@ export class AdminAuthService {
       };
     }
 
-    // No TOTP yet — issue access token directly (legacy / first-login path).
-    return this.issueAccessToken(user.id, user.role, normalized);
+    // No TOTP yet — issue tokens directly (legacy / first-login path).
+    return this.issueSession(user.id, user.role, normalized, meta);
   }
 
   /**
@@ -138,6 +153,7 @@ export class AdminAuthService {
     challenge: string,
     code: string,
     isRecoveryCode = false,
+    meta: DeviceMeta = { deviceCookie: null, ipAddress: null, userAgent: null },
   ): Promise<LoginResult> {
     const userId = await this.redis.get(challengeKey(challenge));
     if (!userId) {
@@ -177,29 +193,35 @@ export class AdminAuthService {
       { event: 'admin_login_totp_verified', userId, viaRecovery: isRecoveryCode },
       'Admin TOTP / recovery code verified',
     );
-    return this.issueAccessToken(user.id, user.role, user.email ?? '');
+    return this.issueSession(user.id, user.role, user.email ?? '', meta);
   }
 
-  private async issueAccessToken(
+  /**
+   * Phase D1 — mint an admin session = access JWT (15-min, in-memory on
+   * the PWA) + refresh JWT (24h, HttpOnly cookie set by the controller).
+   * Delegates to `AuthService.issueAdminSession()` which threads the
+   * Device row + admin refresh TTL through `signTokens`.
+   *
+   * The body field `expiresIn` reports the access TTL (in seconds) for
+   * old clients that still poll on it; new clients should rely on the
+   * refresh cookie + boot rehydrate.
+   */
+  private async issueSession(
     userId: string,
     role: UserRole,
     email: string,
+    meta: DeviceMeta,
   ): Promise<LoginResult> {
-    const accessToken = await this.jwt.signAsync(
-      { sub: userId, role },
-      {
-        secret: this.env.jwtAccessSecret,
-        // 8h override — admin sessions are stricter than the 24h consumer default.
-        expiresIn: ADMIN_SESSION_TTL,
-        jwtid: randomUUID(),
-      },
-    );
+    const issued = await this.auth.issueAdminSession(userId, role, meta);
     return {
       stage: 'success',
-      accessToken,
+      accessToken: issued.accessToken,
+      refreshToken: issued.refreshToken,
+      deviceId: issued.deviceId,
       role,
       email,
-      expiresIn: 8 * 3600,
+      // Access TTL in seconds; legacy clients poll on this.
+      expiresIn: 15 * 60,
     };
   }
 

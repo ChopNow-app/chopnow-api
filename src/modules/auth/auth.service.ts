@@ -288,6 +288,53 @@ export class AuthService {
         });
       }
 
+      // Phase D2 — device fingerprint mismatch.
+      //
+      // The refresh JWT was issued for a specific Device (chopnow_did),
+      // recorded on the row at issue time. If the caller now presents a
+      // DIFFERENT chopnow_did, that's a strong compromise signal: an
+      // attacker who lifted the refresh JWT (e.g. via a backup file leak
+      // or a CSP-bypassed XSS that snagged it from a service worker
+      // cache) is rotating it from their own browser.
+      //
+      // Defenses applied:
+      //   1. Revoke the entire active token family (same as reuse).
+      //   2. Send the user an alert email (Phase C2 wiring extended).
+      //   3. Return a structured 401 so the client can surface the
+      //      breach to the user instead of silently bouncing.
+      //
+      // Two narrow exemptions:
+      //   - matched.deviceId is null → pre-C1 row, no fingerprint to
+      //     compare. Treat as legitimate (graceful migration).
+      //   - meta.deviceCookie is null → user cleared cookies but the
+      //     refresh JWT survived (e.g. it's in a service worker cache).
+      //     Allow the rotation, the next response will mint a new
+      //     chopnow_did so the protection is back in place.
+      if (matched.deviceId && meta.deviceCookie && matched.deviceId !== meta.deviceCookie) {
+        await this.prisma.refreshToken.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        this.logger.warn(
+          {
+            event: 'refresh_device_mismatch',
+            userId,
+            role,
+            expectedDeviceId: matched.deviceId,
+            presentedDeviceId: meta.deviceCookie,
+          },
+          'Refresh-token device fingerprint mismatch — token family revoked',
+        );
+        void this.devices.sendDeviceMismatchAlert(userId, {
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        });
+        throw new UnauthorizedException({
+          code: 'refresh_device_mismatch',
+          message: 'Session compromised. Please sign in again.',
+        });
+      }
+
       // Phase C1 — rotate within the same Device. If the cookie was
       // dropped (browser cleared it) or never matched, resolveDevice
       // mints a fresh row — but we deliberately suppress the alert
@@ -308,14 +355,37 @@ export class AuthService {
     }
   }
 
+  /**
+   * Phase D1 — public entry point used by `AdminAuthService.issueSession()`.
+   * Mirrors `verifyOtp`'s post-OTP path: resolve a Device row, fire a
+   * new-device email when first seen, mint a refresh+access pair that
+   * uses the *admin* refresh TTL (24h) instead of the consumer 30d.
+   *
+   * Admin sessions don't go through `/auth/refresh` differently from
+   * consumers — once the cookie is set the existing refresh endpoint
+   * handles rotation. The TTL override here is the only admin-specific
+   * behavior in the session lifecycle.
+   */
+  async issueAdminSession(userId: string, role: UserRole, meta: DeviceMeta): Promise<IssuedTokens> {
+    const resolved = await this.devices.resolveDevice(userId, meta);
+    if (resolved.isNew) {
+      void this.devices.sendNewDeviceAlert(userId, resolved.device);
+    }
+    return this.signTokens(userId, role, undefined, resolved.device.id, {
+      refreshTtl: this.env.jwtAdminRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`,
+    });
+  }
+
   private async signTokens(
     userId: string,
     role: UserRole,
     replacesTokenId?: string,
     deviceId?: string,
+    overrides?: { refreshTtl?: `${number}${'s' | 'm' | 'h' | 'd'}` },
   ): Promise<IssuedTokens> {
     const accessTtl = this.env.jwtAccessTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
-    const refreshTtl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    const refreshTtl =
+      overrides?.refreshTtl ?? (this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`);
     // Unique JWT IDs per token. Without `jti`, two tokens minted in the same
     // second for the same user produce identical signatures (`iat` is second-
     // resolution) — which makes Story 1.2's rotation indistinguishable from
@@ -434,14 +504,20 @@ export class AuthService {
   }
 
   /**
-   * Cookie Max-Age in seconds — derived from JWT_REFRESH_TTL so the
-   * cookie expiry matches the JWT expiry. Used by the controller to
-   * set the chopnow_rt cookie. Parsed from the env string at boot
-   * (parseDurationMs is the same helper signTokens uses).
+   * Cookie Max-Age in seconds — derived from JWT_REFRESH_TTL (consumer
+   * default) so the cookie expiry matches the JWT expiry. The admin
+   * path passes its own TTL override (Phase D1: 24h vs the consumer
+   * 30d) so admin cookies expire in lockstep with the admin refresh
+   * JWT they carry.
    */
-  refreshCookieMaxAgeSeconds(): number {
-    const ttl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+  refreshCookieMaxAgeSeconds(ttlOverride?: string): number {
+    const ttl = (ttlOverride ?? this.env.jwtRefreshTtl) as `${number}${'s' | 'm' | 'h' | 'd'}`;
     return Math.floor(parseDurationMs(ttl) / 1000);
+  }
+
+  /** Phase D1 — the admin refresh TTL, exposed for cookie Max-Age. */
+  adminRefreshTtl(): string {
+    return this.env.jwtAdminRefreshTtl;
   }
 
   private generateCode(): string {

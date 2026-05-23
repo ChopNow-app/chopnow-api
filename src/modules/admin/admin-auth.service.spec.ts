@@ -1,14 +1,15 @@
 import { Test } from '@nestjs/testing';
-import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { UserRole } from '@prisma/client';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminTotpService } from './admin-totp.service';
-import { EnvService } from '../../infra/config/env.service';
+import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
+
+const TEST_META = { deviceCookie: null, ipAddress: '127.0.0.1', userAgent: 'jest' };
 
 describe('AdminAuthService', () => {
   let service: AdminAuthService;
@@ -20,12 +21,12 @@ describe('AdminAuthService', () => {
     del: jest.Mock;
     client: { set: jest.Mock };
   };
-  let jwt: { signAsync: jest.Mock };
   let totp: {
     isEnrolled: jest.Mock;
     verifyCode: jest.Mock;
     consumeRecoveryCode: jest.Mock;
   };
+  let auth: { issueAdminSession: jest.Mock };
 
   const password = 'StrongPwd!2026';
   let passwordHash: string;
@@ -43,13 +44,19 @@ describe('AdminAuthService', () => {
       del: jest.fn().mockResolvedValue(0),
       client: { set: jest.fn().mockResolvedValue('OK') },
     };
-    jwt = { signAsync: jest.fn().mockResolvedValue('access-token') };
     totp = {
       // Default: admin has NOT enrolled, login returns access token immediately
       // (legacy / first-login path).
       isEnrolled: jest.fn().mockResolvedValue(false),
       verifyCode: jest.fn().mockResolvedValue(false),
       consumeRecoveryCode: jest.fn().mockResolvedValue(false),
+    };
+    auth = {
+      issueAdminSession: jest.fn().mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        deviceId: 'dev-admin-1',
+      }),
     };
 
     const module = await Test.createTestingModule({
@@ -58,19 +65,15 @@ describe('AdminAuthService', () => {
         pinoLoggerProvider(AdminAuthService.name),
         { provide: PrismaService, useValue: prisma },
         { provide: RedisService, useValue: redis },
-        { provide: JwtService, useValue: jwt },
-        {
-          provide: EnvService,
-          useValue: { jwtAccessSecret: 'a'.repeat(64) },
-        },
         { provide: AdminTotpService, useValue: totp },
+        { provide: AuthService, useValue: auth },
       ],
     }).compile();
 
     service = module.get(AdminAuthService);
   });
 
-  it('issues an 8h access token on valid credentials (no TOTP enrolled)', async () => {
+  it('issues a 15-min access + 24h refresh pair on valid credentials (no TOTP enrolled)', async () => {
     prisma.user.findUnique.mockResolvedValue({
       id: 'admin-1',
       email: 'admin@chopnow.app',
@@ -78,21 +81,20 @@ describe('AdminAuthService', () => {
       role: UserRole.SUPER_ADMIN,
     });
 
-    const result = await service.login('Admin@ChopNow.App', password);
+    const result = await service.login('Admin@ChopNow.App', password, TEST_META);
 
     expect(result).toEqual({
       stage: 'success',
       accessToken: 'access-token',
+      refreshToken: 'refresh-token',
+      deviceId: 'dev-admin-1',
       role: UserRole.SUPER_ADMIN,
       email: 'admin@chopnow.app',
-      expiresIn: 28800,
+      expiresIn: 15 * 60, // Phase D1 — access TTL in seconds
     });
-    // Signed with 8h expiry override
-    const signOpts = jwt.signAsync.mock.calls[0][1];
-    expect(signOpts.expiresIn).toBe('8h');
-    expect(signOpts.secret).toBe('a'.repeat(64));
-    // jti present so concurrent logins are distinguishable in audit logs
-    expect(signOpts.jwtid).toMatch(/^[0-9a-f-]{36}$/);
+    // Delegates token minting to AuthService.issueAdminSession (which threads
+    // the device fingerprint + admin refresh TTL through signTokens).
+    expect(auth.issueAdminSession).toHaveBeenCalledWith('admin-1', UserRole.SUPER_ADMIN, TEST_META);
     // Counter reset on success — guards against locking a returning admin
     // who got it wrong once an hour ago
     expect(redis.del).toHaveBeenCalledWith('admin:login-attempts:admin-1');
@@ -101,7 +103,7 @@ describe('AdminAuthService', () => {
   it('rejects with invalid_credentials for an unknown email (no enumeration)', async () => {
     prisma.user.findUnique.mockResolvedValue(null);
 
-    await expect(service.login('nope@example.com', password)).rejects.toMatchObject({
+    await expect(service.login('nope@example.com', password, TEST_META)).rejects.toMatchObject({
       response: { code: 'invalid_credentials' },
     });
   });
@@ -114,7 +116,7 @@ describe('AdminAuthService', () => {
       role: UserRole.CONSUMER,
     });
 
-    await expect(service.login('consumer@example.com', password)).rejects.toMatchObject({
+    await expect(service.login('consumer@example.com', password, TEST_META)).rejects.toMatchObject({
       response: { code: 'invalid_credentials' },
     });
   });
@@ -127,7 +129,7 @@ describe('AdminAuthService', () => {
       role: UserRole.SUPER_ADMIN,
     });
 
-    await expect(service.login('admin@chopnow.app', password)).rejects.toMatchObject({
+    await expect(service.login('admin@chopnow.app', password, TEST_META)).rejects.toMatchObject({
       response: { code: 'invalid_credentials' },
     });
   });
@@ -141,11 +143,12 @@ describe('AdminAuthService', () => {
     });
     redis.get.mockResolvedValue('1');
 
-    await expect(service.login('admin@chopnow.app', password)).rejects.toMatchObject({
+    await expect(service.login('admin@chopnow.app', password, TEST_META)).rejects.toMatchObject({
       response: { code: 'account_locked' },
     });
-    // Never even runs argon2 — short-circuit before any expensive crypto
-    expect(jwt.signAsync).not.toHaveBeenCalled();
+    // Never even runs argon2 nor mints a session — short-circuit before
+    // any expensive crypto / DB writes.
+    expect(auth.issueAdminSession).not.toHaveBeenCalled();
   });
 
   it('increments the counter on a wrong password and surfaces invalid_credentials', async () => {
@@ -157,7 +160,9 @@ describe('AdminAuthService', () => {
     });
     redis.incrWithTTL.mockResolvedValue(2);
 
-    await expect(service.login('admin@chopnow.app', 'WrongPwd!2026')).rejects.toMatchObject({
+    await expect(
+      service.login('admin@chopnow.app', 'WrongPwd!2026', TEST_META),
+    ).rejects.toMatchObject({
       response: { code: 'invalid_credentials' },
     });
     expect(redis.incrWithTTL).toHaveBeenCalledWith('admin:login-attempts:admin-1', 15 * 60);
@@ -174,7 +179,9 @@ describe('AdminAuthService', () => {
     });
     redis.incrWithTTL.mockResolvedValue(5);
 
-    await expect(service.login('admin@chopnow.app', 'WrongPwd!2026')).rejects.toMatchObject({
+    await expect(
+      service.login('admin@chopnow.app', 'WrongPwd!2026', TEST_META),
+    ).rejects.toMatchObject({
       response: { code: 'account_locked' },
     });
     // Lock key set with no TTL — only manual unlock clears it
@@ -189,9 +196,9 @@ describe('AdminAuthService', () => {
   it('normalises the email (lowercase + trim) before lookup', async () => {
     prisma.user.findUnique.mockResolvedValue(null);
 
-    await expect(service.login('  Admin@ChopNow.App  ', password)).rejects.toBeInstanceOf(
-      UnauthorizedException,
-    );
+    await expect(
+      service.login('  Admin@ChopNow.App  ', password, TEST_META),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'admin@chopnow.app' },
     });
@@ -211,12 +218,12 @@ describe('AdminAuthService', () => {
       prisma.user.findUnique.mockResolvedValue(enrolledAdmin());
       totp.isEnrolled.mockResolvedValue(true);
 
-      const result = await service.login('admin@chopnow.app', password);
+      const result = await service.login('admin@chopnow.app', password, TEST_META);
 
       expect(result.stage).toBe('totp_required');
       expect((result as { challenge: string }).challenge).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-      // No JWT issued yet — second factor pending.
-      expect(jwt.signAsync).not.toHaveBeenCalled();
+      // No tokens issued yet — second factor pending.
+      expect(auth.issueAdminSession).not.toHaveBeenCalled();
       // Challenge persisted in Redis with 5-min TTL.
       expect(redis.setWithTTL).toHaveBeenCalledWith(
         expect.stringMatching(/^admin:2fa-challenge:/),
@@ -232,7 +239,7 @@ describe('AdminAuthService', () => {
       totp.verifyCode.mockResolvedValueOnce(true);
       prisma.user.findUnique.mockResolvedValueOnce(enrolledAdmin());
 
-      const result = await service.verifyTotpChallenge(challenge, '123456');
+      const result = await service.verifyTotpChallenge(challenge, '123456', false, TEST_META);
 
       expect(result.stage).toBe('success');
       expect((result as { accessToken: string }).accessToken).toBe('access-token');
@@ -242,7 +249,9 @@ describe('AdminAuthService', () => {
 
     it('verifyTotpChallenge rejects with totp_challenge_expired when the challenge is unknown', async () => {
       redis.get.mockResolvedValueOnce(null);
-      await expect(service.verifyTotpChallenge('expired-token', '123456')).rejects.toMatchObject({
+      await expect(
+        service.verifyTotpChallenge('expired-token', '123456', false, TEST_META),
+      ).rejects.toMatchObject({
         response: { code: 'totp_challenge_expired' },
       });
       expect(totp.verifyCode).not.toHaveBeenCalled();
@@ -252,7 +261,9 @@ describe('AdminAuthService', () => {
       redis.get.mockResolvedValueOnce('admin-1');
       totp.verifyCode.mockResolvedValueOnce(false);
 
-      await expect(service.verifyTotpChallenge('challenge-1', '000000')).rejects.toMatchObject({
+      await expect(
+        service.verifyTotpChallenge('challenge-1', '000000', false, TEST_META),
+      ).rejects.toMatchObject({
         response: { code: 'totp_invalid_code' },
       });
       // Critical: a wrong code does NOT consume the challenge — the admin
@@ -265,7 +276,7 @@ describe('AdminAuthService', () => {
       totp.consumeRecoveryCode.mockResolvedValueOnce(true);
       prisma.user.findUnique.mockResolvedValueOnce(enrolledAdmin());
 
-      const result = await service.verifyTotpChallenge('challenge-1', 'ABCD-EFGH', true);
+      const result = await service.verifyTotpChallenge('challenge-1', 'ABCD-EFGH', true, TEST_META);
 
       expect(result.stage).toBe('success');
       expect(totp.consumeRecoveryCode).toHaveBeenCalledWith('admin-1', 'ABCD-EFGH');
