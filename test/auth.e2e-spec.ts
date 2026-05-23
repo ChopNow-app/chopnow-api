@@ -627,6 +627,36 @@ describe('Auth flow (e2e)', () => {
     }
   });
 
+  // ─── Phase O5 — deep readiness probe ──────────────────────────────
+  describe('Phase O5 — /ready deep probe', () => {
+    it('reports db + redis + campay state when all healthy', async () => {
+      const server = app.getHttpServer();
+      const res = await request(server).get('/ready').expect(200);
+
+      expect(res.body).toMatchObject({
+        status: 'ready',
+        db: 'up',
+        redis: 'up',
+        // Campay breaker is CLOSED at boot since no calls have failed.
+        campay: 'CLOSED',
+      });
+    });
+
+    it('liveness /health stays minimal (no external deps probed)', async () => {
+      const server = app.getHttpServer();
+      const res = await request(server).get('/health').expect(200);
+
+      expect(res.body).toMatchObject({
+        status: 'ok',
+        uptime: expect.any(Number),
+      });
+      // Confirm we didn't accidentally add db/redis/campay to /health —
+      // those belong on /ready.
+      expect(res.body.db).toBeUndefined();
+      expect(res.body.redis).toBeUndefined();
+    });
+  });
+
   // ─── Phase O2 — Prometheus /metrics endpoint smoke ─────────────────
   describe('Phase O2 — /metrics endpoint', () => {
     it('serves Prometheus text format without auth + includes the HTTP histogram', async () => {
