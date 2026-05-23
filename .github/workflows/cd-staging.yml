@@ -56,15 +56,49 @@ jobs:
         # Native amd64 build on the runner. ~30s build + ~30-60s push.
         # Two tags: `staging-<sha>` for traceability + a moving `staging`
         # pointer so rollback by tag works.
+        #
+        # Push wrapped in a retry loop after a recurring GHCR flake (3
+        # occurrences in 2026-05 — issue #262). The error shape is
+        # "unauthorized: User cannot be authenticated with the token
+        # provided" landing AFTER most layers have already been pushed,
+        # suggesting a token-state hiccup mid-push rather than a credential
+        # problem at login time. Re-running the same job always succeeds.
+        # The retry re-logs-in between attempts in case the docker config
+        # has stale auth state, then exponential-backs-off.
+        env:
+          GHCR_USERNAME: ${{ github.actor }}
+          GHCR_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           IMAGE_REPO=ghcr.io/${{ github.repository_owner }}/chopnow-api
           IMAGE_REPO_LC=$(echo "$IMAGE_REPO" | tr '[:upper:]' '[:lower:]')
           docker build \
             -t "$IMAGE_REPO_LC:staging-${{ github.sha }}" \
             -t "$IMAGE_REPO_LC:staging" \
             .
-          docker push "$IMAGE_REPO_LC:staging-${{ github.sha }}"
-          docker push "$IMAGE_REPO_LC:staging"
+
+          push_with_retry() {
+            local image="$1"
+            local attempt=1
+            local max=3
+            while [ $attempt -le $max ]; do
+              if docker push "$image"; then
+                return 0
+              fi
+              if [ $attempt -lt $max ]; then
+                local delay=$((attempt * 10))
+                echo "::warning::docker push $image failed (attempt $attempt/$max) — re-logging in and retrying in ${delay}s"
+                echo "$GHCR_PASSWORD" | docker login ghcr.io -u "$GHCR_USERNAME" --password-stdin
+                sleep $delay
+              fi
+              attempt=$((attempt + 1))
+            done
+            echo "::error::docker push $image failed after $max attempts"
+            return 1
+          }
+
+          push_with_retry "$IMAGE_REPO_LC:staging-${{ github.sha }}"
+          push_with_retry "$IMAGE_REPO_LC:staging"
 
       - name: Set up SSH (deploy key)
         uses: webfactory/ssh-agent@v0.9.0
