@@ -32,6 +32,7 @@ import { MetricsModule } from './infra/observability/metrics.module';
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
 import { RolesGuard } from './shared/guards/roles.guard';
+import { buildPinoTransport } from './infra/observability/pino-transport';
 
 @Module({
   imports: [
@@ -42,13 +43,11 @@ import { RolesGuard } from './shared/guards/roles.guard';
     }),
     LoggerModule.forRoot({
       pinoHttp: {
-        transport:
-          process.env.NODE_ENV !== 'production'
-            ? {
-                target: 'pino-pretty',
-                options: { singleLine: true, translateTime: 'SYS:HH:MM:ss' },
-              }
-            : undefined,
+        // Phase O3 — when LOKI_URL is set, ship logs to Grafana Cloud
+        // Loki in addition to / instead of stdout. Inert when LOKI_URL
+        // is empty so local dev + CI keep their existing behavior.
+        // See `buildPinoTransport` below for the matrix.
+        transport: buildPinoTransport(),
         redact: ['req.headers.authorization', 'req.headers.cookie'],
       },
     }),

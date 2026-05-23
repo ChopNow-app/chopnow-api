@@ -101,4 +101,14 @@ export const envSchema = Joi.object({
   // Default 500ms. Tighter (200ms) once we have a baseline; looser
   // (1000ms) only during incident triage to reduce log volume.
   PRISMA_SLOW_QUERY_MS: Joi.string().pattern(/^\d+$/).optional(),
+
+  // --- Loki log shipping (Phase O3) ---
+  // All optional — if LOKI_URL is unset, the pino-loki transport is
+  // not added and logs continue to stdout only. To activate: sign up
+  // at grafana.com, get the Loki endpoint + tenant ID + API token,
+  // set as GitHub secrets. See deploy/.env.staging.example for the
+  // staging shape.
+  LOKI_URL: Joi.string().uri().allow('').optional(),
+  LOKI_USERNAME: Joi.string().allow('').optional(),
+  LOKI_TOKEN: Joi.string().allow('').optional(),
 });
