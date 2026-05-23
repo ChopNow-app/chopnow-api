@@ -65,7 +65,11 @@ async function bootstrap() {
   // AllExceptionsFilter is registered via APP_FILTER in AppModule so it can
   // inject PinoLogger for structured 5xx logs.
 
-  app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
+  // `/metrics` is unprefixed per Prometheus scraping convention so the
+  // Grafana scraper config can use the standard target path. Same
+  // exclusion rationale as health/ready: these are operational
+  // endpoints, not part of the consumer API surface.
+  app.setGlobalPrefix('api', { exclude: ['health', 'ready', 'metrics'] });
 
   // URI versioning — every consumer-facing route gets `/api/v1/*`. Routes
   // that must stay at unversioned paths (machine-to-machine webhooks where
