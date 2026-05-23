@@ -175,7 +175,9 @@ const VENDORS: Array<{
         name: 'Eru',
         description: "Feuilles d'eru + waterfufu",
         priceXAF: 2000,
-        photoUrl: 'https://images.unsplash.com/photo-1604908554049-29a4d6c4ad0e?w=1280&q=80',
+        // Generic stew bowl — the previous Unsplash ID (1604908554049-…)
+        // 404'd in the 2026-05-23 seed run.
+        photoUrl: 'https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=1280&q=80',
       },
       {
         name: 'Koki',
@@ -244,11 +246,15 @@ function makeR2Client(): { client: S3Client; bucket: string } {
 // Fetch an external image, re-encode to WebP @ ≤1280px (matching the
 // R2Service.uploadImage pipeline used by /vendre + /livrer), upload to
 // R2 under `<keyPrefix>/seed-<uuid>.webp`, and return the storage key.
-// keyPrefix examples: 'vendor-profile', 'menu-items'.
+// keyPrefix examples: 'vendor-profile', 'item-photo'.
 async function downloadAndUploadPhoto(
   sourceUrl: string,
   r2: { client: S3Client; bucket: string },
-  keyPrefix: 'vendor-profile' | 'menu-items' = 'vendor-profile',
+  keyPrefix: 'vendor-profile' | 'item-photo' = 'vendor-profile',
+  // Why 'item-photo' (not 'menu-items'): it matches the prefix used by
+  // the production MenuService upload path, which is what the
+  // MediaController's ALLOWED_PREFIXES allowlist accepts. The R2 proxy
+  // 404s any other prefix.
 ): Promise<string> {
   const res = await fetch(sourceUrl);
   if (!res.ok) {
@@ -278,6 +284,20 @@ async function main(): Promise<void> {
   try {
     console.log(`Seeding pilot data for zone: ${PILOT_ZONE.name}`);
     console.log(`Zone center: (${PILOT_ZONE.center.lat}, ${PILOT_ZONE.center.lng})`);
+
+    // One-time migration: an earlier seed run (2026-05-23) wrote menu
+    // photoUrls under `menu-items/seed-*` — a prefix the MediaController
+    // doesn't allowlist, so every image returned 404. NULL those rows so
+    // the item upsert loop below re-uploads them under `item-photo/`
+    // (the correct production prefix). The R2 objects at the old prefix
+    // become orphans — harmless storage, but worth a manual sweep later.
+    // No-op once every row is migrated.
+    const stale = await prisma.$executeRaw`
+      UPDATE items SET "photoUrl" = NULL WHERE "photoUrl" LIKE 'menu-items/%'
+    `;
+    if (stale > 0) {
+      console.log(`  ! cleaned ${stale} stale menu-items/* photoUrls`);
+    }
 
     for (const v of VENDORS) {
       const user = await prisma.user.upsert({
@@ -364,7 +384,7 @@ async function main(): Promise<void> {
         if (it.photoUrl && !photoUrl) {
           try {
             console.log(`  ↳ uploading menu photo for "${it.name}"`);
-            photoUrl = await downloadAndUploadPhoto(it.photoUrl, r2, 'menu-items');
+            photoUrl = await downloadAndUploadPhoto(it.photoUrl, r2, 'item-photo');
             console.log(`    ✓ stored as ${photoUrl}`);
           } catch (err) {
             console.warn(
