@@ -82,7 +82,7 @@ describe('Auth flow (e2e)', () => {
         transformOptions: { enableImplicitConversion: true },
       }),
     );
-    app.setGlobalPrefix('api', { exclude: ['health', 'ready'] });
+    app.setGlobalPrefix('api', { exclude: ['health', 'ready', 'metrics'] });
     app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
 
     await app.init();
@@ -625,5 +625,28 @@ describe('Auth flow (e2e)', () => {
     } finally {
       await prisma.$disconnect();
     }
+  });
+
+  // ─── Phase O2 — Prometheus /metrics endpoint smoke ─────────────────
+  describe('Phase O2 — /metrics endpoint', () => {
+    it('serves Prometheus text format without auth + includes the HTTP histogram', async () => {
+      const server = app.getHttpServer();
+
+      // Public route — no Authorization header. Should not 401.
+      const res = await request(server).get('/metrics').expect(200);
+
+      // Prometheus text format: lines like `# HELP ...`, `# TYPE ...`,
+      // then `metric_name{labels} value timestamp?`.
+      expect(res.headers['content-type']).toMatch(/text\/plain/);
+      expect(res.text).toContain('# HELP http_request_duration_seconds');
+      expect(res.text).toContain('# TYPE http_request_duration_seconds histogram');
+      // Default Node.js process metrics from prom-client.
+      expect(res.text).toContain('process_cpu_user_seconds_total');
+      expect(res.text).toContain('nodejs_heap_size_total_bytes');
+
+      // The interceptor has observed at least one request by now (all
+      // the earlier e2e specs went through it).
+      expect(res.text).toMatch(/http_request_duration_seconds_count\{[^}]+\}\s+\d+/);
+    });
   });
 });

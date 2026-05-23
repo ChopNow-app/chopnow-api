@@ -27,6 +27,7 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { VoiceProxyModule } from './modules/voice-proxy/voice-proxy.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './health/health.module';
+import { MetricsModule } from './infra/observability/metrics.module';
 
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
@@ -85,6 +86,7 @@ import { RolesGuard } from './shared/guards/roles.guard';
     FinanceModule,
     // --- Cross-cutting ---
     HealthModule,
+    MetricsModule,
   ],
   providers: [
     // Global rate limiter (per-IP)
