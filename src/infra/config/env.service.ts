@@ -207,4 +207,20 @@ export class EnvService {
   get trustProxy(): number {
     return this.raw.getOrThrow('TRUST_PROXY');
   }
+
+  /**
+   * Cloudflare Turnstile bot-protection. When `captcha.enabled` is false
+   * (default), TurnstileGuard short-circuits and routes behave as if the
+   * guard weren't there. When true, the guard requires a valid
+   * `cf-turnstile-response` token and verifies it against Cloudflare's
+   * siteverify endpoint before passing the request through. Pre-wired
+   * for fast mid-pilot activation if abuse appears; see audit table.
+   */
+  get captcha(): { enabled: boolean; turnstileSecret?: string } {
+    const secret = this.raw.get<string>('TURNSTILE_SECRET_KEY');
+    return {
+      enabled: this.raw.get<string>('CAPTCHA_ENABLED') === 'true',
+      turnstileSecret: secret && secret.length > 0 ? secret : undefined,
+    };
+  }
 }
