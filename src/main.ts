@@ -1,3 +1,9 @@
+// Sentry init MUST run before anything else can throw. Top-of-file
+// import + immediate invocation before NestFactory.create gives the
+// SDK the chance to monkey-patch Node's http/express internals first.
+import { initSentry } from './infra/observability/sentry';
+const sentryEnabled = initSentry();
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -13,6 +19,13 @@ import { EnvService } from './infra/config/env.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  if (sentryEnabled) {
+    // One-line confirmation at boot — useful for confirming the DSN
+    // env-var actually reached the container. Not via the SDK; just
+    // console so it appears even if pino isn't configured yet.
+    console.log('[sentry] error tracking enabled');
+  }
 
   app.useLogger(app.get(Logger));
   const env = app.get(EnvService);

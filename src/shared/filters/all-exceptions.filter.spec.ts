@@ -7,9 +7,15 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/node';
 
 import { AllExceptionsFilter } from './all-exceptions.filter';
 import { pinoMock } from '../testing/pino-mock';
+
+jest.mock('@sentry/node', () => ({
+  ...jest.requireActual('@sentry/node'),
+  captureException: jest.fn(),
+}));
 
 function fakeHost(method = 'GET', path = '/api/v1/test') {
   const json = jest.fn();
@@ -31,6 +37,10 @@ function makeFilter() {
 }
 
 describe('AllExceptionsFilter', () => {
+  beforeEach(() => {
+    (Sentry.captureException as jest.Mock).mockClear();
+  });
+
   it('passes a structured { code, message } throw through unchanged', () => {
     const { filter } = makeFilter();
     const { host, status, json } = fakeHost();
@@ -148,6 +158,34 @@ describe('AllExceptionsFilter', () => {
     filter.catch(new BadRequestException({ code: 'foo', message: 'bar' }), host);
 
     expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('sends 5xx to Sentry with method + path + status tags (Phase O1)', () => {
+    const { filter } = makeFilter();
+    const { host } = fakeHost('POST', '/api/v1/orders');
+
+    filter.catch(new Error('boom'), host);
+
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    expect(Sentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({
+          method: 'POST',
+          path: '/api/v1/orders',
+          status_code: '500',
+        }),
+      }),
+    );
+  });
+
+  it('does NOT send 4xx to Sentry — client errors are not bugs', () => {
+    const { filter } = makeFilter();
+    const { host } = fakeHost();
+
+    filter.catch(new BadRequestException({ code: 'foo', message: 'bar' }), host);
+
+    expect(Sentry.captureException).not.toHaveBeenCalled();
   });
 
   it('includes path + timestamp on every response', () => {

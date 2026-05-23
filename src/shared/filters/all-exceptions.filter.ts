@@ -1,4 +1,5 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from '@nestjs/common';
+import * as Sentry from '@sentry/node';
 import { Request, Response } from 'express';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
@@ -39,9 +40,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? (rawResponse as Record<string, unknown>)
         : { message: String(rawResponse) };
 
-    // 5xx → log full context with stack trace. Stack NEVER leaves the
-    // server: the response body below uses the (already-sanitized)
-    // `body.message`, not the exception.
+    // 5xx → log full context with stack trace + ship to Sentry. Stack
+    // NEVER leaves the server in the response: the body below uses the
+    // (already-sanitized) `body.message`, not the exception.
+    //
+    // Sentry.captureException is a no-op when the SDK wasn't initialised
+    // (no SENTRY_DSN set) — safe in CI, dev, and any env where Sentry
+    // isn't wanted. When configured, every 5xx becomes a Sentry issue
+    // grouped by stack so we can see which throws are firing most.
     if (status >= 500) {
       this.logger.error(
         {
@@ -53,6 +59,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
         },
         'Unhandled exception returned 5xx',
       );
+      Sentry.captureException(exception, {
+        tags: {
+          method: request.method,
+          path: request.url,
+          status_code: String(status),
+        },
+      });
     }
 
     // Promote bare-string throws to a `code` field.
