@@ -90,6 +90,87 @@ export class DeviceService {
   }
 
   /**
+   * Phase D2 — fire-and-forget alert when /auth/refresh trips
+   * fingerprint mismatch. Stronger language than the new-device alert
+   * because the mismatch is a confirmed compromise signal, not just a
+   * heads-up about a fresh sign-in. As with the C2 alert, mail errors
+   * are swallowed.
+   */
+  async sendDeviceMismatchAlert(
+    userId: string,
+    incoming: { ipAddress: string | null; userAgent: string | null },
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, displayName: true },
+    });
+    if (!user?.email) {
+      this.logger.info(
+        { event: 'device_mismatch_alert_skipped_no_email', userId },
+        'Device-mismatch alert skipped: user has no email on file',
+      );
+      return;
+    }
+
+    const subject = 'Alerte sécurité — connexion suspecte sur ton compte ChopNow';
+    const when = new Intl.DateTimeFormat('fr-FR', {
+      timeZone: 'Africa/Douala',
+      dateStyle: 'long',
+      timeStyle: 'short',
+    }).format(new Date());
+    const where = incoming.ipAddress ? `IP ${incoming.ipAddress}` : 'adresse IP inconnue';
+    const ua = incoming.userAgent ? summarizeUserAgent(incoming.userAgent) : 'appareil inconnu';
+    const appUrl = this.env.appUrl;
+
+    const html = `
+      <div style="font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto;">
+        <h2 style="color: #E11D2A; margin: 0 0 8px;">Activité suspecte détectée</h2>
+        <p>Salut${user.displayName ? ` ${escapeHtml(user.displayName)}` : ''},</p>
+        <p>
+          Une tentative de connexion à ton compte ChopNow vient d'utiliser
+          des identifiants <strong>depuis un appareil différent</strong> de
+          celui qui les a obtenus à l'origine. Par sécurité, nous avons
+          déconnecté toutes tes sessions actives.
+        </p>
+        <ul style="line-height: 1.6;">
+          <li><strong>Quand&nbsp;:</strong> ${when}</li>
+          <li><strong>Appareil utilisé&nbsp;:</strong> ${escapeHtml(ua)}</li>
+          <li><strong>Origine&nbsp;:</strong> ${escapeHtml(where)}</li>
+        </ul>
+        <p>
+          <strong>Ce qu'il faut faire&nbsp;:</strong> reconnecte-toi sur
+          <a href="${appUrl}/login">${appUrl}/login</a>. Si tu utilises un
+          mot de passe, change-le. Si tu reconnais cette activité, tu peux
+          ignorer ce message.
+        </p>
+        <p style="color: #6B7280; font-size: 12px; margin-top: 24px;">
+          ChopNow — Mange sans attendre.
+        </p>
+      </div>
+    `;
+    const text =
+      `Activité suspecte sur ton compte ChopNow\n\n` +
+      `Quand : ${when}\n` +
+      `Appareil utilisé : ${ua}\n` +
+      `Origine : ${where}\n\n` +
+      `Toutes tes sessions ont été déconnectées par sécurité. Reconnecte-toi ` +
+      `sur ${appUrl}/login.`;
+
+    try {
+      await this.mail.send({ to: user.email, subject, html, text });
+      this.logger.info(
+        { event: 'device_mismatch_alert_sent', userId },
+        'Device-mismatch alert email sent',
+      );
+    } catch (err) {
+      this.logger.warn(
+        { event: 'device_mismatch_alert_failed', userId, error: String(err) },
+        'Device-mismatch alert email failed to send',
+      );
+    }
+  }
+
+  /**
    * Phase C2 — fire-and-forget alert email when a new device successfully
    * signs in. Failures are logged but never thrown — a flaky Resend
    * shouldn't strand the user post-verify-otp.

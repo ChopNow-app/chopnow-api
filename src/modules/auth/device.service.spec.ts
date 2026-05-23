@@ -147,6 +147,44 @@ describe('DeviceService', () => {
       await expect(service.sendNewDeviceAlert('user-1', deviceRow)).resolves.toBeUndefined();
     });
   });
+
+  describe('sendDeviceMismatchAlert (Phase D2)', () => {
+    it('sends a stronger-worded alert when the user has an email', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({
+        email: 'a@b.com',
+        displayName: 'Kouamé',
+      });
+      await service.sendDeviceMismatchAlert('user-1', {
+        ipAddress: '203.0.113.55',
+        userAgent: 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0',
+      });
+      expect(mail.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'a@b.com',
+          // Stronger subject than the C2 "new device" alert
+          subject: expect.stringContaining('Alerte sécurité'),
+          html: expect.stringContaining('appareil différent'),
+        }),
+      );
+    });
+
+    it('no-ops silently for phone-only consumers (no email)', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ email: null, displayName: null });
+      await service.sendDeviceMismatchAlert('user-1', {
+        ipAddress: null,
+        userAgent: null,
+      });
+      expect(mail.send).not.toHaveBeenCalled();
+    });
+
+    it('swallows mail.send errors so the refresh path still 401s cleanly', async () => {
+      prisma.user.findUnique.mockResolvedValueOnce({ email: 'a@b.com', displayName: null });
+      mail.send.mockRejectedValueOnce(new Error('Resend 503'));
+      await expect(
+        service.sendDeviceMismatchAlert('user-1', { ipAddress: null, userAgent: null }),
+      ).resolves.toBeUndefined();
+    });
+  });
 });
 
 describe('summarizeUserAgent', () => {

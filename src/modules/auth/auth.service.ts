@@ -288,6 +288,53 @@ export class AuthService {
         });
       }
 
+      // Phase D2 — device fingerprint mismatch.
+      //
+      // The refresh JWT was issued for a specific Device (chopnow_did),
+      // recorded on the row at issue time. If the caller now presents a
+      // DIFFERENT chopnow_did, that's a strong compromise signal: an
+      // attacker who lifted the refresh JWT (e.g. via a backup file leak
+      // or a CSP-bypassed XSS that snagged it from a service worker
+      // cache) is rotating it from their own browser.
+      //
+      // Defenses applied:
+      //   1. Revoke the entire active token family (same as reuse).
+      //   2. Send the user an alert email (Phase C2 wiring extended).
+      //   3. Return a structured 401 so the client can surface the
+      //      breach to the user instead of silently bouncing.
+      //
+      // Two narrow exemptions:
+      //   - matched.deviceId is null → pre-C1 row, no fingerprint to
+      //     compare. Treat as legitimate (graceful migration).
+      //   - meta.deviceCookie is null → user cleared cookies but the
+      //     refresh JWT survived (e.g. it's in a service worker cache).
+      //     Allow the rotation, the next response will mint a new
+      //     chopnow_did so the protection is back in place.
+      if (matched.deviceId && meta.deviceCookie && matched.deviceId !== meta.deviceCookie) {
+        await this.prisma.refreshToken.updateMany({
+          where: { userId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        this.logger.warn(
+          {
+            event: 'refresh_device_mismatch',
+            userId,
+            role,
+            expectedDeviceId: matched.deviceId,
+            presentedDeviceId: meta.deviceCookie,
+          },
+          'Refresh-token device fingerprint mismatch — token family revoked',
+        );
+        void this.devices.sendDeviceMismatchAlert(userId, {
+          ipAddress: meta.ipAddress,
+          userAgent: meta.userAgent,
+        });
+        throw new UnauthorizedException({
+          code: 'refresh_device_mismatch',
+          message: 'Session compromised. Please sign in again.',
+        });
+      }
+
       // Phase C1 — rotate within the same Device. If the cookie was
       // dropped (browser cleared it) or never matched, resolveDevice
       // mints a fresh row — but we deliberately suppress the alert
