@@ -74,6 +74,43 @@ You should see the `auth`, `users`, and `health` endpoints documented.
 
 ---
 
+## API spec for tooling (Postman / Bruno / Insomnia / openapi-typescript)
+
+Two ways to grab the OpenAPI 3 spec:
+
+**A. Live endpoint** (recommended — always matches the running API):
+
+- dev: `http://localhost:3001/openapi.json`
+- staging: `https://api-staging.tchopnow.app/openapi.json`
+- prod (when live): `https://api.tchopnow.app/openapi.json`
+
+Edge-cached 5 min; auto-publishes on every deploy.
+
+**B. Committed snapshot** at the repo root:
+
+- `openapi.json` — regenerated on demand via `npm run openapi:export`. Lags the live endpoint between deploys; useful when you need an offline copy or want to diff API changes in a PR.
+
+### Importing into request collection tools
+
+| Tool                | How                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------- |
+| Postman             | File → Import → paste the URL or upload `openapi.json` → choose "OpenAPI 3 with a Postman Collection" |
+| Bruno               | Collections → Import Collection → "OpenAPI V3 Spec" → paste URL or pick the file                      |
+| Insomnia            | Application → Import → URL or File → OpenAPI 3.0                                                      |
+| Type-safe TS client | `npx openapi-typescript https://api-staging.tchopnow.app/openapi.json -o api.d.ts`                    |
+
+### Refreshing the committed snapshot
+
+```bash
+npm run openapi:export      # writes openapi.json at repo root
+git add openapi.json
+git commit -m "chore(openapi): refresh spec snapshot"
+```
+
+A CI check can be added later to fail PRs whose changes to controllers / DTOs don't ship a matching `openapi.json` update.
+
+---
+
 ## Troubleshooting
 
 | Error                                                              | What it means                         | Fix                                                                              |
@@ -211,7 +248,7 @@ npm test                   # all green
 npm run build              # produces dist/
 
 # OpenAPI spec for the frontend team
-npm run openapi:export     # writes openapi.json (gitignored)
+npm run openapi:export     # writes openapi.json at repo root (committed snapshot)
 
 # Database
 npm run prisma:migrate     # applies pending migrations
