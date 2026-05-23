@@ -180,14 +180,17 @@ export class AuthService {
       create: { phone, role: UserRole.CONSUMER },
     });
 
-    // Phase C1+C2 — pin this sign-in to a Device row, then on a brand-
-    // new device fire a "Nouvelle connexion détectée" alert. The mail
-    // send is fire-and-forget; a slow / failing Resend call must not
-    // delay or fail verifyOtp itself (the user is mid-sign-in and
-    // expects an immediate 200).
+    // Phase C1+C2+D3 — pin this sign-in to a Device row, then on a
+    // brand-new device fire BOTH a "Nouvelle connexion détectée" email
+    // (Phase C2, reaches users with email on file) AND a Web Push
+    // notification to existing subscriptions (Phase D3, reaches users
+    // who've already granted notification permission on a prior device).
+    // Both sends are fire-and-forget — a slow / failing Resend or push
+    // service must not delay or fail verifyOtp.
     const resolved = await this.devices.resolveDevice(user.id, meta);
     if (resolved.isNew) {
       void this.devices.sendNewDeviceAlert(user.id, resolved.device);
+      void this.devices.sendNewDevicePush(user.id, resolved.device);
     }
 
     return this.signTokens(user.id, user.role, undefined, resolved.device.id);

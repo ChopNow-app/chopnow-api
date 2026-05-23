@@ -3,6 +3,7 @@ import { DeviceService, summarizeUserAgent } from './device.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { EnvService } from '../../infra/config/env.service';
 import { MailService } from '../../infra/mail/mail.service';
+import { WebPushService } from '../notifications/web-push.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
 
 describe('DeviceService', () => {
@@ -12,6 +13,7 @@ describe('DeviceService', () => {
     user: { findUnique: jest.Mock };
   };
   let mail: { send: jest.Mock };
+  let webPush: { sendToUser: jest.Mock };
 
   beforeEach(async () => {
     prisma = {
@@ -33,6 +35,7 @@ describe('DeviceService', () => {
       user: { findUnique: jest.fn() },
     };
     mail = { send: jest.fn().mockResolvedValue({ id: 'mail-1' }) };
+    webPush = { sendToUser: jest.fn().mockResolvedValue({ sent: 0, deactivated: 0 }) };
 
     const module = await Test.createTestingModule({
       providers: [
@@ -41,6 +44,7 @@ describe('DeviceService', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: EnvService, useValue: { appUrl: 'https://app.tchopnow.app' } },
         { provide: MailService, useValue: mail },
+        { provide: WebPushService, useValue: webPush },
       ],
     }).compile();
     service = module.get(DeviceService);
@@ -183,6 +187,41 @@ describe('DeviceService', () => {
       await expect(
         service.sendDeviceMismatchAlert('user-1', { ipAddress: null, userAgent: null }),
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('sendNewDevicePush (Phase D3)', () => {
+    const deviceRow = {
+      id: 'dev-new',
+      ipAddress: '10.0.0.1',
+      userAgentLabel: 'Chrome sur Android',
+    } as Parameters<DeviceService['sendNewDevicePush']>[1];
+
+    it('fans out a Web Push notification via WebPushService.sendToUser', async () => {
+      webPush.sendToUser.mockResolvedValueOnce({ sent: 2, deactivated: 0 });
+      await service.sendNewDevicePush('user-1', deviceRow);
+      expect(webPush.sendToUser).toHaveBeenCalledWith(
+        'user-1',
+        expect.objectContaining({
+          title: 'Nouvelle connexion détectée',
+          body: expect.stringContaining('Chrome sur Android'),
+          data: expect.objectContaining({
+            kind: 'new_device_signin',
+            deviceId: 'dev-new',
+            url: 'https://app.tchopnow.app/account?next=revoke-all',
+          }),
+        }),
+      );
+    });
+
+    it('no-ops cleanly when user has no subscriptions (sendToUser returns sent=0)', async () => {
+      webPush.sendToUser.mockResolvedValueOnce({ sent: 0, deactivated: 0 });
+      await expect(service.sendNewDevicePush('user-1', deviceRow)).resolves.toBeUndefined();
+    });
+
+    it('swallows WebPush errors so verifyOtp stays fast + successful', async () => {
+      webPush.sendToUser.mockRejectedValueOnce(new Error('VAPID network blip'));
+      await expect(service.sendNewDevicePush('user-1', deviceRow)).resolves.toBeUndefined();
     });
   });
 });
