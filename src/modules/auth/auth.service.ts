@@ -308,14 +308,37 @@ export class AuthService {
     }
   }
 
+  /**
+   * Phase D1 — public entry point used by `AdminAuthService.issueSession()`.
+   * Mirrors `verifyOtp`'s post-OTP path: resolve a Device row, fire a
+   * new-device email when first seen, mint a refresh+access pair that
+   * uses the *admin* refresh TTL (24h) instead of the consumer 30d.
+   *
+   * Admin sessions don't go through `/auth/refresh` differently from
+   * consumers — once the cookie is set the existing refresh endpoint
+   * handles rotation. The TTL override here is the only admin-specific
+   * behavior in the session lifecycle.
+   */
+  async issueAdminSession(userId: string, role: UserRole, meta: DeviceMeta): Promise<IssuedTokens> {
+    const resolved = await this.devices.resolveDevice(userId, meta);
+    if (resolved.isNew) {
+      void this.devices.sendNewDeviceAlert(userId, resolved.device);
+    }
+    return this.signTokens(userId, role, undefined, resolved.device.id, {
+      refreshTtl: this.env.jwtAdminRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`,
+    });
+  }
+
   private async signTokens(
     userId: string,
     role: UserRole,
     replacesTokenId?: string,
     deviceId?: string,
+    overrides?: { refreshTtl?: `${number}${'s' | 'm' | 'h' | 'd'}` },
   ): Promise<IssuedTokens> {
     const accessTtl = this.env.jwtAccessTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
-    const refreshTtl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+    const refreshTtl =
+      overrides?.refreshTtl ?? (this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`);
     // Unique JWT IDs per token. Without `jti`, two tokens minted in the same
     // second for the same user produce identical signatures (`iat` is second-
     // resolution) — which makes Story 1.2's rotation indistinguishable from
@@ -434,14 +457,20 @@ export class AuthService {
   }
 
   /**
-   * Cookie Max-Age in seconds — derived from JWT_REFRESH_TTL so the
-   * cookie expiry matches the JWT expiry. Used by the controller to
-   * set the chopnow_rt cookie. Parsed from the env string at boot
-   * (parseDurationMs is the same helper signTokens uses).
+   * Cookie Max-Age in seconds — derived from JWT_REFRESH_TTL (consumer
+   * default) so the cookie expiry matches the JWT expiry. The admin
+   * path passes its own TTL override (Phase D1: 24h vs the consumer
+   * 30d) so admin cookies expire in lockstep with the admin refresh
+   * JWT they carry.
    */
-  refreshCookieMaxAgeSeconds(): number {
-    const ttl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
+  refreshCookieMaxAgeSeconds(ttlOverride?: string): number {
+    const ttl = (ttlOverride ?? this.env.jwtRefreshTtl) as `${number}${'s' | 'm' | 'h' | 'd'}`;
     return Math.floor(parseDurationMs(ttl) / 1000);
+  }
+
+  /** Phase D1 — the admin refresh TTL, exposed for cookie Max-Age. */
+  adminRefreshTtl(): string {
+    return this.env.jwtAdminRefreshTtl;
   }
 
   private generateCode(): string {

@@ -75,6 +75,12 @@ export class EnvService {
   get jwtRefreshTtl(): string {
     return this.raw.getOrThrow('JWT_REFRESH_TTL');
   }
+  // Phase D1 — admin sessions use a tighter refresh window than consumer
+  // (consumer = 30d, admin = 24h). Default-set in env.validation so
+  // existing deploys don't need a redeploy to pick this up.
+  get jwtAdminRefreshTtl(): string {
+    return this.raw.getOrThrow('JWT_ADMIN_REFRESH_TTL');
+  }
 
   // --- Twilio (Story 1.1) ---
   get twilio(): {

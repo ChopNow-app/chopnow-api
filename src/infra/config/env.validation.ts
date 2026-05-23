@@ -22,6 +22,12 @@ export const envSchema = Joi.object({
   // call gets a 401 every 15 min and the client refreshes silently.
   JWT_ACCESS_TTL: Joi.string().default('15m'),
   JWT_REFRESH_TTL: Joi.string().default('30d'),
+  // Phase D1 — admin refresh TTL. Tighter than consumer: an XSS or
+  // stolen cookie buys at most 24h instead of 30 days. 24h is the
+  // longest interval between admin work sessions we expect at pilot
+  // scale; daily-active admins still get silent refresh, anyone less
+  // active re-enters password + TOTP.
+  JWT_ADMIN_REFRESH_TTL: Joi.string().default('24h'),
 
   // Passphrase for at-rest envelope encryption of TOTP shared secrets
   // (and any future secret we need to decrypt at runtime). Generate with
