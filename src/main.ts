@@ -16,6 +16,7 @@ import { resolve } from 'path';
 import { AppModule } from './app.module';
 import { APP_VERSION } from './app.version';
 import { EnvService } from './infra/config/env.service';
+import { OpenApiDocStore } from './infra/openapi/openapi-doc.store';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
@@ -80,7 +81,9 @@ async function bootstrap() {
   // Grafana scraper config can use the standard target path. Same
   // exclusion rationale as health/ready: these are operational
   // endpoints, not part of the consumer API surface.
-  app.setGlobalPrefix('api', { exclude: ['health', 'ready', 'metrics'] });
+  // `/openapi.json` is excluded so external tooling (Postman, Bruno,
+  // openapi-typescript) can fetch the spec from a stable unprefixed URL.
+  app.setGlobalPrefix('api', { exclude: ['health', 'ready', 'metrics', 'openapi.json'] });
 
   // URI versioning — every consumer-facing route gets `/api/v1/*`. Routes
   // that must stay at unversioned paths (machine-to-machine webhooks where
@@ -118,6 +121,10 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document, {
       swaggerOptions: { persistAuthorization: true },
     });
+    // Make the spec fetchable as JSON at `/openapi.json` via OpenApiController.
+    // Populated only on successful build — if SwaggerModule throws, the
+    // store stays null and the controller serves 503 (see openapi.controller.ts).
+    OpenApiDocStore.set(document);
 
     if (env.openApiExport) {
       const out = resolve(process.cwd(), 'openapi.json');
