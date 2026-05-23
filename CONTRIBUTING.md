@@ -260,6 +260,36 @@ handleWebhook() { /* ... */ }
 | Inbound webhook payloads                           | `verifyWebhookSignature()` from `src/shared/crypto/webhook-signature.ts` |
 | Phone, OTP, generic shapes                         | `class-validator` decorators on a DTO                                    |
 
+### Authorization — ownership checks on resource-ID routes
+
+**Background**: `RolesGuard` (`src/shared/guards/roles.guard.ts`) treats `SUPER_ADMIN` as a universal bypass — any `@Roles()` decorator passes for a SUPER_ADMIN user. This is intentional (there's no role above super-admin), but it means **a `@Roles()` decorator alone is not enough to enforce tenant isolation** on an endpoint that takes a resource ID.
+
+**Rule**: if your new endpoint has a path param that identifies a resource (`:orderId`, `:vendorId`, `:itemId`, `:addressId`, …) AND the resource is owned by a specific user/vendor/rider, the service method **must** call an ownership helper. Don't rely on `@Roles(VENDOR)` alone to keep vendor A out of vendor B's data.
+
+| Pattern                        | Correct                                                                                                            | Wrong                                                                     |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| Vendor mutates an item         | `MenuService.updateItem(userId, itemId)` calls `requireItemBelongsTo(vendor.id, itemId)` → 403 on mismatch         | `@Roles(VENDOR)` + direct `prisma.item.update({ where: { id: itemId } })` |
+| Rider marks a course delivered | `RidersService.requireRiderOrder(userId, orderId)` → 404 on mismatch                                               | `@Roles(RIDER)` + direct status update                                    |
+| Consumer reads their order     | `OrdersService.getOrder(orderId, userId)` checks `order.userId === userId OR order.vendor.userId === userId` → 404 | `@Roles(CONSUMER)` alone                                                  |
+
+**404 vs 403**: when the resource exists but doesn't belong to the caller, prefer **404** (don't confirm the ID exists). Use **403** only when the caller demonstrably owns the resource but isn't allowed to perform this specific action.
+
+**Existing helpers to reuse, don't re-invent**:
+
+- `OrderVendorActionsService.requireVendorOrder(orderId, userId)`
+- `RidersService.requireRiderOrder(userId, orderId)`
+- `MenuService.requireVendor(userId)` + `requireItemBelongsTo(vendorId, itemId)` + `requireCategoryBelongsTo(vendorId, categoryId)`
+- `AddressesService` inlines `existing.userId !== userId` (small enough to repeat)
+
+**Code-review checklist**:
+
+- [ ] Does the route take a path param that identifies a resource owned by a specific user/vendor/rider?
+- [ ] Does the service method called by this route invoke a `require*` ownership helper (or equivalent inline check) **before** the read/write?
+- [ ] Does the failure case throw `NotFoundException` (preferred for ownership mismatch) rather than `ForbiddenException` (which confirms the ID exists)?
+- [ ] If the endpoint also takes a body, does it read `req.user.id` for ownership claims rather than trusting `body.userId`?
+
+If you're not sure whether your new endpoint needs an ownership check, default to adding one — the cost is one extra line of service code; the cost of forgetting is a cross-tenant IDOR.
+
 ## FAQ
 
 **Q: Should I add a `*.repository.ts` file for my module?**

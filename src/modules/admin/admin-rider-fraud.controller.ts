@@ -10,14 +10,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
+import { ADMIN_WRITE_ROLES } from './admin.roles';
 import { AdminRiderFraudService } from './admin-rider-fraud.service';
 import { ResolveRiderFraudDto } from './dto/resolve-rider-fraud.dto';
-
-const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as const;
 
 @ApiTags('admin-rider-fraud')
 @ApiBearerAuth()
@@ -26,7 +24,7 @@ const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as
 export class AdminRiderFraudController {
   constructor(private readonly riderFraud: AdminRiderFraudService) {}
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('stuck-pickup')
   @ApiOperation({
     summary: 'List Orders stuck in PICKED_UP > 2h — admin rider-fraud triage queue',
@@ -39,7 +37,7 @@ export class AdminRiderFraudController {
     return this.riderFraud.listStuckPickups();
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post(':orderId/resolve-rider-fraud')
   @HttpCode(200)
   @ApiOperation({
