@@ -187,8 +187,11 @@ jobs:
           R2_BUCKET=chopnow-staging-media
           RESEND_API_KEY=${STAGING_RESEND_API_KEY}
           MAIL_FROM=ChopNow Staging <noreply@tchopnow.app>
+          # Staging sits between dev (1000 — hot-reload headroom) and
+          # prod (100 — user-facing limit). 200 keeps pilot smoke tests
+          # safe while still surfacing genuine traffic regressions.
           THROTTLE_TTL_SECONDS=60
-          THROTTLE_LIMIT=100
+          THROTTLE_LIMIT=200
           # Trust the single Caddy reverse-proxy in front of the API so
           # X-Forwarded-For is honored and per-IP @Throttle decorators
           # bucket on the real client (not 127.0.0.1).
