@@ -3,13 +3,16 @@ import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { LoggerModule } from 'nestjs-pino';
 
 import { envSchema } from './infra/config/env.validation';
 import { AppConfigModule } from './infra/config/config.module';
+import { EnvService } from './infra/config/env.service';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { RedisModule } from './infra/redis/redis.module';
+import { RedisService } from './infra/redis/redis.service';
 import { QueueModule } from './infra/queue/queue.module';
 import { TwilioModule } from './infra/twilio/twilio.module';
 import { R2Module } from './infra/r2/r2.module';
@@ -57,12 +60,28 @@ import { buildPinoTransport } from './infra/observability/pino-transport';
       maxListeners: 50,
     }),
     ScheduleModule.forRoot(),
-    ThrottlerModule.forRoot([
-      {
-        ttl: parseInt(process.env.THROTTLE_TTL_SECONDS ?? '60', 10) * 1000,
-        limit: parseInt(process.env.THROTTLE_LIMIT ?? '100', 10),
-      },
-    ]),
+    // Throttler storage runs over Redis so per-IP + per-route counters
+    // stay consistent across replicas. The in-memory default would let
+    // each container keep its own bucket — fine for a single staging
+    // container, broken the moment we horizontally scale on Hetzner
+    // (or even during a rolling redeploy with brief 2-container overlap).
+    //
+    // RedisModule is @Global, so the EnvService + RedisService can be
+    // injected here without extra `imports`. The Redis client is shared
+    // with OTP rate-limits, JWT revocation, idempotency cache, etc. —
+    // one connection pool, multiple consumers.
+    ThrottlerModule.forRootAsync({
+      inject: [EnvService, RedisService],
+      useFactory: (env: EnvService, redis: RedisService) => ({
+        throttlers: [
+          {
+            ttl: env.throttle.ttlSeconds * 1000,
+            limit: env.throttle.limit,
+          },
+        ],
+        storage: new ThrottlerStorageRedisService(redis.client),
+      }),
+    }),
     // --- Infrastructure (global) ---
     AppConfigModule,
     PrismaModule,

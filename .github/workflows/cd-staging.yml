@@ -189,6 +189,10 @@ jobs:
           MAIL_FROM=ChopNow Staging <noreply@tchopnow.app>
           THROTTLE_TTL_SECONDS=60
           THROTTLE_LIMIT=100
+          # Trust the single Caddy reverse-proxy in front of the API so
+          # X-Forwarded-For is honored and per-IP @Throttle decorators
+          # bucket on the real client (not 127.0.0.1).
+          TRUST_PROXY=1
           CORS_ORIGINS=${STAGING_CORS_ORIGINS}
           # Phase O1 — Sentry. Empty DSN ⇒ SDK no-op; populated DSN ⇒
           # every 5xx ships as a grouped Sentry issue.

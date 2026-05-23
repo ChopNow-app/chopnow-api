@@ -30,6 +30,17 @@ async function bootstrap() {
   app.useLogger(app.get(Logger));
   const env = app.get(EnvService);
 
+  // --- Trust proxy (must be set BEFORE anything that reads req.ip) ---
+  // Express ignores X-Forwarded-For unless this is set. Without it, every
+  // request behind Caddy looks like 127.0.0.1, every @Throttle({ ... }) +
+  // per-IP rate-limit collapses into a single global bucket, and audit
+  // logs lose the real client IP. Configured as a number of trusted hops
+  // (0 = off for local dev, 1 = single Caddy in front, 2 = Cloudflare →
+  // Caddy → API). See TRUST_PROXY in env.validation.ts.
+  if (env.trustProxy > 0) {
+    app.getHttpAdapter().getInstance().set('trust proxy', env.trustProxy);
+  }
+
   // --- HTTP security headers ---
   app.use(helmet());
 
