@@ -134,6 +134,10 @@ jobs:
           # Phase O1 — Sentry. Optional secret; if unset the SDK no-ops
           # cleanly and the rest of the app keeps working.
           STAGING_SENTRY_DSN: ${{ secrets.STAGING_SENTRY_DSN }}
+          # Phase O2 follow-up — bearer-token gate on /metrics. Required
+          # because Caddy proxies all paths through to the API; without
+          # this, /metrics is publicly scrapeable.
+          STAGING_METRICS_AUTH_TOKEN: ${{ secrets.STAGING_METRICS_AUTH_TOKEN }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
@@ -182,6 +186,8 @@ jobs:
           SENTRY_ENVIRONMENT=staging
           SENTRY_RELEASE=${SHA}
           SENTRY_TRACES_SAMPLE_RATE=0.1
+          # Phase O2 follow-up — /metrics bearer gate.
+          METRICS_AUTH_TOKEN=${STAGING_METRICS_AUTH_TOKEN}
           IMAGE_TAG=${SHA}
           EOF
 

@@ -89,4 +89,10 @@ export const envSchema = Joi.object({
   SENTRY_TRACES_SAMPLE_RATE: Joi.string()
     .pattern(/^0(\.\d+)?$|^1(\.0+)?$/)
     .optional(),
+
+  // --- Metrics auth (Phase O2 follow-up) ---
+  // Optional. When set, `/metrics` requires `Authorization: Bearer <token>`
+  // matching this value. When unset, /metrics is open — right for local
+  // dev. Generate with `openssl rand -hex 32`.
+  METRICS_AUTH_TOKEN: Joi.string().min(16).allow('').optional(),
 });
