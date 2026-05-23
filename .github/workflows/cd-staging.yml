@@ -138,6 +138,11 @@ jobs:
           # because Caddy proxies all paths through to the API; without
           # this, /metrics is publicly scrapeable.
           STAGING_METRICS_AUTH_TOKEN: ${{ secrets.STAGING_METRICS_AUTH_TOKEN }}
+          # Phase O3 — Grafana Cloud Loki log shipping. All optional;
+          # pino-loki transport is inert until LOKI_URL is set.
+          STAGING_LOKI_URL: ${{ secrets.STAGING_LOKI_URL }}
+          STAGING_LOKI_USERNAME: ${{ secrets.STAGING_LOKI_USERNAME }}
+          STAGING_LOKI_TOKEN: ${{ secrets.STAGING_LOKI_TOKEN }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
@@ -191,6 +196,11 @@ jobs:
           # Phase O4 — Prisma slow-query log threshold. 500ms default;
           # tighten to 200ms once we have a baseline.
           PRISMA_SLOW_QUERY_MS=500
+          # Phase O3 — Grafana Cloud Loki. Empty values → pino-loki
+          # transport inert + logs stay stdout-only (no regression).
+          LOKI_URL=${STAGING_LOKI_URL}
+          LOKI_USERNAME=${STAGING_LOKI_USERNAME}
+          LOKI_TOKEN=${STAGING_LOKI_TOKEN}
           IMAGE_TAG=${SHA}
           EOF
 
