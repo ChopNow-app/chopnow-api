@@ -274,7 +274,13 @@ jobs:
           # (1) Previous deploy left the container in a crashloop —
           #     `up -d` alone may not reliably touch a restarting container.
           # (2) Config drift between the on-disk compose.yml and what's running.
-          docker compose up -d api --force-recreate --remove-orphans
+          #
+          # Explicit service list — `api` gets force-recreated (image
+          # changed + config drift), `alloy` gets started if it's not
+          # already running (added in Phase O2.2). NOT including `db`
+          # or `redis` here so they don't pointlessly restart on every
+          # deploy (their config is stable).
+          docker compose up -d api alloy --force-recreate --remove-orphans
 
           # Show the resulting state for the workflow log.
           docker compose ps
