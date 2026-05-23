@@ -104,6 +104,7 @@ describe('AuthService', () => {
               isNew: false,
             })),
             sendNewDeviceAlert: jest.fn().mockResolvedValue(undefined),
+            sendNewDevicePush: jest.fn().mockResolvedValue(undefined),
             sendDeviceMismatchAlert: jest.fn().mockResolvedValue(undefined),
           },
         },

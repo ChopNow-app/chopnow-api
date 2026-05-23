@@ -7,10 +7,14 @@ import { DeviceService } from './device.service';
 import { JwtRevocationService } from './jwt-revocation.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { RefreshJwtStrategy } from './strategies/refresh-jwt.strategy';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 // EnvService is provided globally by AppConfigModule (see app.module.ts).
 @Module({
-  imports: [PassportModule, JwtModule.register({})],
+  // Phase D3 — DeviceService fans out Web Push notifications on new-
+  // device sign-in (in addition to the C2 email). Pulls WebPushService
+  // from NotificationsModule.
+  imports: [PassportModule, JwtModule.register({}), NotificationsModule],
   controllers: [AuthController],
   providers: [AuthService, DeviceService, JwtRevocationService, JwtStrategy, RefreshJwtStrategy],
   // Exported so admin suspension endpoints (Stories 6.2 / 6.8 / 6.9) can
