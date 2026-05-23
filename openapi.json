@@ -596,6 +596,14 @@
         "operationId": "OrdersController_vendorList_v1",
         "parameters": [
           {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/OrderStatus"
+            }
+          },
+          {
             "name": "type",
             "required": false,
             "in": "query",
@@ -603,26 +611,6 @@
               "enum": [
                 "immediate",
                 "preorder"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "name": "status",
-            "required": false,
-            "in": "query",
-            "schema": {
-              "enum": [
-                "PENDING",
-                "CONFIRMED",
-                "ACCEPTED",
-                "IN_PREP",
-                "READY_PICKUP",
-                "PICKED_UP",
-                "DELIVERED",
-                "CANCELLED",
-                "REFUSED",
-                "EXPIRED"
               ],
               "type": "string"
             }
@@ -2403,14 +2391,7 @@
             "required": false,
             "in": "query",
             "schema": {
-              "type": "string",
-              "enum": [
-                "PENDING_REVIEW",
-                "CORRECTION_REQUESTED",
-                "ACTIVE",
-                "SUSPENDED",
-                "REJECTED"
-              ]
+              "$ref": "#/components/schemas/VendorStatus"
             }
           },
           {
@@ -2418,12 +2399,7 @@
             "required": false,
             "in": "query",
             "schema": {
-              "type": "string",
-              "enum": [
-                "INFORMAL",
-                "SEMI_FORMAL",
-                "RESTAURANT"
-              ]
+              "$ref": "#/components/schemas/VendorType"
             }
           },
           {
@@ -2482,13 +2458,7 @@
             "required": false,
             "in": "query",
             "schema": {
-              "type": "string",
-              "enum": [
-                "MOTO",
-                "BICYCLE",
-                "CAR",
-                "ON_FOOT"
-              ]
+              "$ref": "#/components/schemas/RiderVehicleType"
             }
           },
           {
@@ -3493,6 +3463,13 @@
           "quantity"
         ]
       },
+      "PaymentMethod": {
+        "type": "string",
+        "enum": [
+          "MTN_MOMO",
+          "ORANGE_MONEY"
+        ]
+      },
       "CreateOrderDto": {
         "type": "object",
         "properties": {
@@ -3509,10 +3486,10 @@
             }
           },
           "paymentMethod": {
-            "type": "string",
-            "enum": [
-              "MTN_MOMO",
-              "ORANGE_MONEY"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaymentMethod"
+              }
             ]
           },
           "noteForVendor": {
@@ -3584,6 +3561,21 @@
         "required": [
           "vendorScore",
           "riderScore"
+        ]
+      },
+      "OrderStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING",
+          "CONFIRMED",
+          "ACCEPTED",
+          "IN_PREP",
+          "READY_PICKUP",
+          "PICKED_UP",
+          "DELIVERED",
+          "CANCELLED",
+          "REFUSED",
+          "EXPIRED"
         ]
       },
       "RefuseOrderDto": {
@@ -4246,6 +4238,33 @@
         },
         "required": [
           "acceptsPreOrders"
+        ]
+      },
+      "VendorStatus": {
+        "type": "string",
+        "enum": [
+          "PENDING_REVIEW",
+          "CORRECTION_REQUESTED",
+          "ACTIVE",
+          "SUSPENDED",
+          "REJECTED"
+        ]
+      },
+      "VendorType": {
+        "type": "string",
+        "enum": [
+          "INFORMAL",
+          "SEMI_FORMAL",
+          "RESTAURANT"
+        ]
+      },
+      "RiderVehicleType": {
+        "type": "string",
+        "enum": [
+          "MOTO",
+          "BICYCLE",
+          "CAR",
+          "ON_FOOT"
         ]
       },
       "RejectCashoutRequestDto": {

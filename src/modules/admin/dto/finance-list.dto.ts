@@ -6,12 +6,12 @@ import { RiderVehicleType, VendorStatus, VendorType } from '@prisma/client';
 const MAX_PAGE = 200;
 
 export class ListVendorBalancesDto {
-  @ApiPropertyOptional({ enum: VendorStatus })
+  @ApiPropertyOptional({ enum: VendorStatus, enumName: 'VendorStatus' })
   @IsOptional()
   @IsEnum(VendorStatus)
   status?: VendorStatus;
 
-  @ApiPropertyOptional({ enum: VendorType })
+  @ApiPropertyOptional({ enum: VendorType, enumName: 'VendorType' })
   @IsOptional()
   @IsEnum(VendorType)
   type?: VendorType;
@@ -39,7 +39,7 @@ export class ListVendorBalancesDto {
 }
 
 export class ListRiderBalancesDto {
-  @ApiPropertyOptional({ enum: RiderVehicleType })
+  @ApiPropertyOptional({ enum: RiderVehicleType, enumName: 'RiderVehicleType' })
   @IsOptional()
   @IsEnum(RiderVehicleType)
   vehicleType?: RiderVehicleType;
