@@ -28,6 +28,8 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "openapi:export": "OPENAPI_EXPORT=true ts-node --transpile-only -r tsconfig-paths/register src/main.ts",
+    "openapi:postman": "npx -y openapi-to-postmanv2 -s openapi.json -o chopnow-api.postman_collection.json -p -O folderStrategy=Tags,requestParametersResolution=Example",
+    "openapi:all": "npm run openapi:export && npm run openapi:postman",
     "prepare": "husky"
   },
   "dependencies": {
