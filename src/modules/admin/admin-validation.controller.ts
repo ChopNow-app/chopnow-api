@@ -10,16 +10,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
+import { ADMIN_WRITE_ROLES } from './admin.roles';
 import { AdminValidationService } from './admin-validation.service';
 import { AdminDecisionDto } from './dto/admin-decision.dto';
 import { SetVendorPreOrdersDto } from './dto/set-vendor-pre-orders.dto';
-
-// Story 1.6 — admin routes are gated by @Roles(OPERATOR | ADMIN | SUPER_ADMIN).
-// SUPER_ADMIN bypasses the @Roles() check in RolesGuard automatically.
-const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN] as const;
 
 @ApiTags('admin-validation')
 @ApiBearerAuth()
@@ -30,14 +26,14 @@ export class AdminValidationController {
 
   // ── vendors ────────────────────────────────────────────────────────
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('vendors/pending')
   @ApiOperation({ summary: 'List vendors awaiting approval (Story 6.2)' })
   listPendingVendors() {
     return this.validation.listPendingVendors();
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('vendors/:vendorId/approve')
   @HttpCode(200)
   @ApiOperation({
@@ -49,7 +45,7 @@ export class AdminValidationController {
     return this.validation.approveVendor(vendorId);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('vendors/:vendorId/reject')
   @HttpCode(200)
   @ApiOperation({
@@ -63,7 +59,7 @@ export class AdminValidationController {
     return this.validation.rejectVendor(vendorId, dto.reason);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('vendors/:vendorId/suspend')
   @HttpCode(200)
   @ApiOperation({
@@ -79,7 +75,7 @@ export class AdminValidationController {
     return this.validation.suspendVendor(vendorId, dto.reason);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('vendors/:vendorId/unsuspend')
   @HttpCode(200)
   @ApiOperation({ summary: 'Lift a vendor suspension — clears the JWT blacklist.' })
@@ -87,7 +83,7 @@ export class AdminValidationController {
     return this.validation.unsuspendVendor(vendorId);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Patch('vendors/:vendorId/pre-orders')
   @HttpCode(200)
   @ApiOperation({
@@ -107,14 +103,14 @@ export class AdminValidationController {
 
   // ── riders ─────────────────────────────────────────────────────────
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('riders/pending')
   @ApiOperation({ summary: 'List riders awaiting KYC approval' })
   listPendingRiders() {
     return this.validation.listPendingRiders();
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('riders/:riderId/approve')
   @HttpCode(200)
   @ApiOperation({ summary: 'Approve a rider KYC' })
@@ -122,7 +118,7 @@ export class AdminValidationController {
     return this.validation.approveRider(riderId);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('riders/:riderId/reject')
   @HttpCode(200)
   @ApiOperation({ summary: 'Reject a rider application' })
@@ -133,7 +129,7 @@ export class AdminValidationController {
     return this.validation.rejectRider(riderId, dto.reason);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('riders/:riderId/suspend')
   @HttpCode(200)
   @ApiOperation({ summary: 'Suspend a rider (revokes JWTs immediately)' })
@@ -144,7 +140,7 @@ export class AdminValidationController {
     return this.validation.suspendRider(riderId, dto.reason);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('riders/:riderId/unsuspend')
   @HttpCode(200)
   @ApiOperation({ summary: 'Lift a rider suspension' })

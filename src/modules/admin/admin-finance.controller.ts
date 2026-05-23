@@ -11,13 +11,13 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
 import { Request } from 'express';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { CampayCircuitBreakerService } from '../../infra/campay/campay-circuit-breaker.service';
 import { FinanceService } from '../finance/finance.service';
 import { PayoutEscalationService } from '../finance/payout-escalation.service';
 import { AdminAuditInterceptor } from './admin-audit.interceptor';
+import { ADMIN_WRITE_ROLES } from './admin.roles';
 import { ListCashoutRequestsDto, RejectCashoutRequestDto } from './dto/cashout.dto';
 import {
   ListRefundQueueDto,
@@ -25,8 +25,6 @@ import {
   ListVendorBalancesDto,
 } from './dto/finance-list.dto';
 import { ManualMarkPaidDto } from './dto/manual-mark-paid.dto';
-
-const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN, UserRole.SUPER_ADMIN] as const;
 
 @ApiTags('admin-finance')
 @ApiBearerAuth()
@@ -39,7 +37,7 @@ export class AdminFinanceController {
     private readonly campayBreaker: CampayCircuitBreakerService,
   ) {}
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('vendors/:vendorId/balance')
   @ApiOperation({
     summary: 'Vendor balance — read from LedgerEntry, signed (positive = platform owes vendor)',
@@ -53,7 +51,7 @@ export class AdminFinanceController {
     return this.finance.getVendorBalance(vendorId);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('riders/:riderId/balance')
   @ApiOperation({
     summary: 'Rider balance — read from LedgerEntry, signed (positive = platform owes rider)',
@@ -67,7 +65,7 @@ export class AdminFinanceController {
     return this.finance.getRiderBalance(riderId);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('finance/vendor-balances')
   @ApiOperation({
     summary: 'Paginated list of vendor balances (sorted by balance DESC)',
@@ -80,7 +78,7 @@ export class AdminFinanceController {
     return this.finance.listVendorBalances(query);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('finance/rider-balances')
   @ApiOperation({
     summary: 'Paginated list of rider balances (sorted by balance DESC)',
@@ -89,7 +87,7 @@ export class AdminFinanceController {
     return this.finance.listRiderBalances(query);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('finance/refund-queue')
   @ApiOperation({
     summary: 'Refund worklist — orders in PaymentStatus.REFUND_PENDING, oldest first',
@@ -102,7 +100,7 @@ export class AdminFinanceController {
     return this.finance.listRefundQueue(query);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('finance/cashout-requests')
   @ApiOperation({
     summary: 'Cashout request queue — INFORMAL vendor on-demand cashouts (ADR-0005, 7.2b)',
@@ -115,7 +113,7 @@ export class AdminFinanceController {
     return this.finance.listCashoutRequests(query);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('finance/cashout-requests/:requestId/approve')
   @HttpCode(200)
   @ApiOperation({
@@ -131,7 +129,7 @@ export class AdminFinanceController {
     return this.finance.approveCashoutRequest(requestId, admin.id);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('finance/cashout-requests/:requestId/reject')
   @HttpCode(200)
   @ApiOperation({ summary: 'Reject a cashout request with a reason' })
@@ -147,7 +145,7 @@ export class AdminFinanceController {
 
   // ── Escalation (#85) ────────────────────────────────────────────────
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('finance/campay-circuit')
   @ApiOperation({
     summary: 'Campay circuit breaker state (#92) — CLOSED / OPEN / HALF_OPEN',
@@ -161,7 +159,7 @@ export class AdminFinanceController {
     return this.campayBreaker.getState();
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get('finance/escalations')
   @ApiOperation({
     summary: 'List failed / stuck payouts + refunds needing admin attention',
@@ -175,7 +173,7 @@ export class AdminFinanceController {
     return this.escalation.listEscalations();
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('finance/vendor-payouts/:payoutId/retry')
   @HttpCode(200)
   @ApiOperation({ summary: 'Retry a FAILED vendor payout — flips it back to PENDING' })
@@ -184,7 +182,7 @@ export class AdminFinanceController {
     return this.finance.retryVendorPayout(payoutId, admin.id);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('finance/rider-payouts/:payoutId/retry')
   @HttpCode(200)
   @ApiOperation({ summary: 'Retry a FAILED rider payout — flips it back to PENDING' })
@@ -193,7 +191,7 @@ export class AdminFinanceController {
     return this.finance.retryRiderPayout(payoutId, admin.id);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('finance/vendor-payouts/:payoutId/manual-mark-paid')
   @HttpCode(200)
   @ApiOperation({
@@ -212,7 +210,7 @@ export class AdminFinanceController {
     return this.finance.manualMarkVendorPayoutPaid(payoutId, dto.campayRef, admin.id, dto.note);
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Post('finance/rider-payouts/:payoutId/manual-mark-paid')
   @HttpCode(200)
   @ApiOperation({ summary: 'Manually mark a rider payout PAID after manual Campay fire' })

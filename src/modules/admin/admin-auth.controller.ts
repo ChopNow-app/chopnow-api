@@ -1,12 +1,12 @@
 import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { UserRole } from '@prisma/client';
 import type { CookieOptions, Request, Response } from 'express';
 import { EnvService } from '../../infra/config/env.service';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
 import { AdminAuthService, LoginResult } from './admin-auth.service';
+import { ADMIN_ANY_ROLE } from './admin.roles';
 import { AdminTotpService } from './admin-totp.service';
 import { AuthService } from '../auth/auth.service';
 import type { DeviceMeta } from '../auth/device.service';
@@ -16,13 +16,6 @@ import { ConfirmAdminTotpDto, VerifyAdminTotpDto } from './dto/admin-2fa.dto';
 const REFRESH_COOKIE_NAME = 'chopnow_rt';
 const DEVICE_COOKIE_NAME = 'chopnow_did';
 const DEVICE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10; // ~10 years
-
-const ADMIN_ROLES = [
-  UserRole.SUPER_ADMIN,
-  UserRole.ADMIN,
-  UserRole.OPERATOR,
-  UserRole.VIEWER,
-] as const;
 
 @ApiTags('admin-auth')
 @Controller('admin/auth')
@@ -95,7 +88,7 @@ export class AdminAuthController {
 
   // ── Enrollment (requires an authenticated admin session) ────────────
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_ANY_ROLE)
   @ApiBearerAuth()
   @Post('2fa/setup')
   @HttpCode(200)
@@ -111,7 +104,7 @@ export class AdminAuthController {
     return this.totp.startEnrollment(user.id, user.email ?? '');
   }
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_ANY_ROLE)
   @ApiBearerAuth()
   @Post('2fa/confirm')
   @HttpCode(200)
