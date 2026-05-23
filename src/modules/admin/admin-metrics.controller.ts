@@ -10,7 +10,14 @@ function parseDate(input: string | undefined, fallback: Date): Date {
   if (!input) return fallback;
   const d = new Date(input);
   if (Number.isNaN(d.getTime())) {
-    throw new BadRequestException(`Invalid date: ${input}`);
+    // Don't echo the raw input back — even though a malformed date isn't
+    // a security risk by itself, the principle is "never reflect user
+    // input in error messages." Code is structured so the frontend can
+    // surface its own helpful message.
+    throw new BadRequestException({
+      code: 'invalid_date',
+      message: 'Could not parse date. Expected ISO 8601 format.',
+    });
   }
   return d;
 }
@@ -37,7 +44,10 @@ export class AdminMetricsController {
     const from = parseDate(fromRaw, defaultFrom);
     const to = parseDate(toRaw, now);
     if (from >= to) {
-      throw new BadRequestException('`from` must be earlier than `to`');
+      throw new BadRequestException({
+        code: 'invalid_date_range',
+        message: '`from` must be earlier than `to`.',
+      });
     }
     return this.metrics.getPilotMetrics(from, to);
   }
