@@ -5,6 +5,7 @@ import { Device } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { EnvService } from '../../infra/config/env.service';
 import { MailService } from '../../infra/mail/mail.service';
+import { WebPushService } from '../notifications/web-push.service';
 
 export interface DeviceMeta {
   /** Value of the `chopnow_did` cookie if the client sent one. Null on
@@ -42,6 +43,7 @@ export class DeviceService {
     private readonly prisma: PrismaService,
     private readonly env: EnvService,
     private readonly mail: MailService,
+    private readonly webPush: WebPushService,
     @InjectPinoLogger(DeviceService.name) private readonly logger: PinoLogger,
   ) {}
 
@@ -239,6 +241,53 @@ export class DeviceService {
       this.logger.warn(
         { event: 'new_device_alert_failed', userId, deviceId: device.id, error: String(err) },
         'New-device alert email failed to send',
+      );
+    }
+  }
+
+  /**
+   * Phase D3 — fan out a Web Push notification to all of the user's
+   * existing push subscriptions when a new device signs in.
+   *
+   * Coverage caveat (documented in the PR): this only reaches users who
+   * have already granted notification permission on at least one prior
+   * device. First-time pilot users have no subscriptions, so they
+   * receive only the email alert (and nothing if they're phone-only).
+   *
+   * The new device itself will NOT receive a push here — it's brand-
+   * new, so no subscription exists for it yet. That's the desired
+   * behavior; the alert is meant to warn the *existing* device(s).
+   *
+   * Fire-and-forget like the email alert — a failing push fan-out
+   * must not delay or fail verifyOtp.
+   */
+  async sendNewDevicePush(userId: string, device: Device): Promise<void> {
+    const where = device.ipAddress ? `IP ${device.ipAddress}` : 'origine inconnue';
+    const ua = device.userAgentLabel ?? 'appareil inconnu';
+    try {
+      const result = await this.webPush.sendToUser(userId, {
+        title: 'Nouvelle connexion détectée',
+        body: `${ua} · ${where}. Si ce n'est pas toi, déconnecte-toi partout depuis /account.`,
+        data: {
+          kind: 'new_device_signin',
+          deviceId: device.id,
+          url: `${this.env.appUrl}/account?next=revoke-all`,
+        },
+      });
+      this.logger.info(
+        {
+          event: 'new_device_push_sent',
+          userId,
+          deviceId: device.id,
+          sent: result.sent,
+          deactivated: result.deactivated,
+        },
+        'New-device push fan-out complete',
+      );
+    } catch (err) {
+      this.logger.warn(
+        { event: 'new_device_push_failed', userId, deviceId: device.id, error: String(err) },
+        'New-device push fan-out failed',
       );
     }
   }
