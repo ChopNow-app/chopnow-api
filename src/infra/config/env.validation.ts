@@ -84,6 +84,11 @@ export const envSchema = Joi.object({
   // issues both the site (frontend) and secret (backend) keys.
   CAPTCHA_ENABLED: Joi.string().valid('true', 'false').default('false'),
   TURNSTILE_SECRET_KEY: Joi.string().allow('').optional(),
+  // Public Turnstile site key. Not a secret — embedded in the PWA — but
+  // kept on the backend so it's the single source of truth alongside
+  // CAPTCHA_ENABLED. The /auth/captcha-config endpoint serves it to the
+  // PWA at runtime; flipping the flag never needs a frontend rebuild.
+  TURNSTILE_SITE_KEY: Joi.string().allow('').optional(),
 
   // Number of reverse-proxy hops in front of the API. Read by
   // `app.set('trust proxy', N)` in main.ts so Express trusts the
