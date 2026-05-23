@@ -104,6 +104,7 @@ describe('AuthService', () => {
               isNew: false,
             })),
             sendNewDeviceAlert: jest.fn().mockResolvedValue(undefined),
+            sendDeviceMismatchAlert: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -353,6 +354,84 @@ describe('AuthService', () => {
           data: expect.objectContaining({ revokedAt: expect.any(Date), replacedBy: 'rt-new' }),
         }),
       );
+    });
+
+    // ─── Phase D2 — device-fingerprint mismatch auto-revoke ─────────
+    it('Phase D2: refresh with a different chopnow_did revokes the family + fires the alert', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      // The matching row was minted for device 'dev-original' (chopnow_did
+      // cookie value at sign-in time).
+      prisma.refreshToken.findMany.mockResolvedValue([await row({ deviceId: 'dev-original' })]);
+      const devicesMock = (
+        service as unknown as { devices: { sendDeviceMismatchAlert: jest.Mock } }
+      ).devices;
+
+      const incomingMeta = {
+        deviceCookie: 'dev-attacker',
+        ipAddress: '203.0.113.55',
+        userAgent: 'curl/8.0',
+      };
+
+      await expect(
+        service.refresh(userId, UserRole.CONSUMER, incomingToken, incomingMeta),
+      ).rejects.toMatchObject({
+        response: { code: 'refresh_device_mismatch' },
+      });
+
+      // Family wiped + alert email fired (fire-and-forget — synchronous
+      // for the test because it's a Promise.resolve mock).
+      expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
+      expect(devicesMock.sendDeviceMismatchAlert).toHaveBeenCalledWith(userId, {
+        ipAddress: '203.0.113.55',
+        userAgent: 'curl/8.0',
+      });
+      expect(prisma.refreshToken.create).not.toHaveBeenCalled();
+    });
+
+    it('Phase D2: pre-C1 row (deviceId=null) is exempt — rotation proceeds normally', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      prisma.refreshToken.findMany.mockResolvedValue([await row({ deviceId: null })]);
+
+      const incomingMeta = {
+        deviceCookie: 'dev-whatever',
+        ipAddress: '127.0.0.1',
+        userAgent: 'jest',
+      };
+
+      const result = await service.refresh(userId, UserRole.CONSUMER, incomingToken, incomingMeta);
+      // No mismatch error — rotation succeeded.
+      expect(result).toMatchObject({ accessToken: 'access-jwt' });
+    });
+
+    it('Phase D2: missing chopnow_did cookie is exempt — rotation proceeds normally', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        id: userId,
+        isActive: true,
+        isDeleted: false,
+      });
+      prisma.refreshToken.findMany.mockResolvedValue([await row({ deviceId: 'dev-original' })]);
+
+      const incomingMeta = {
+        deviceCookie: null, // user cleared cookies but the refresh JWT survived
+        ipAddress: '127.0.0.1',
+        userAgent: 'jest',
+      };
+
+      const result = await service.refresh(userId, UserRole.CONSUMER, incomingToken, incomingMeta);
+      // Rotation succeeded — the next response re-mints chopnow_did so
+      // the protection is back in place for subsequent refreshes.
+      expect(result).toMatchObject({ accessToken: 'access-jwt' });
     });
 
     it('reuse detection: replayed revoked token revokes the entire family', async () => {
