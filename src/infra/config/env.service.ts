@@ -216,11 +216,13 @@ export class EnvService {
    * siteverify endpoint before passing the request through. Pre-wired
    * for fast mid-pilot activation if abuse appears; see audit table.
    */
-  get captcha(): { enabled: boolean; turnstileSecret?: string } {
+  get captcha(): { enabled: boolean; turnstileSecret?: string; turnstileSiteKey?: string } {
     const secret = this.raw.get<string>('TURNSTILE_SECRET_KEY');
+    const siteKey = this.raw.get<string>('TURNSTILE_SITE_KEY');
     return {
       enabled: this.raw.get<string>('CAPTCHA_ENABLED') === 'true',
       turnstileSecret: secret && secret.length > 0 ? secret : undefined,
+      turnstileSiteKey: siteKey && siteKey.length > 0 ? siteKey : undefined,
     };
   }
 }

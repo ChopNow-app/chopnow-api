@@ -153,6 +153,7 @@ jobs:
           # SIM-farm signal appears, then flipped together.
           STAGING_CAPTCHA_ENABLED: ${{ secrets.STAGING_CAPTCHA_ENABLED }}
           STAGING_TURNSTILE_SECRET_KEY: ${{ secrets.STAGING_TURNSTILE_SECRET_KEY }}
+          STAGING_TURNSTILE_SITE_KEY: ${{ secrets.STAGING_TURNSTILE_SITE_KEY }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
@@ -206,6 +207,7 @@ jobs:
           # TurnstileGuard short-circuits to `return true` in that case.
           CAPTCHA_ENABLED=${STAGING_CAPTCHA_ENABLED:-false}
           TURNSTILE_SECRET_KEY=${STAGING_TURNSTILE_SECRET_KEY}
+          TURNSTILE_SITE_KEY=${STAGING_TURNSTILE_SITE_KEY}
           CORS_ORIGINS=${STAGING_CORS_ORIGINS}
           # Phase O1 — Sentry. Empty DSN ⇒ SDK no-op; populated DSN ⇒
           # every 5xx ships as a grouped Sentry issue.

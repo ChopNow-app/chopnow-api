@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
+import { AuthCaptchaConfigController } from './auth-captcha-config.controller';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { DeviceService } from './device.service';
@@ -15,7 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
   // device sign-in (in addition to the C2 email). Pulls WebPushService
   // from NotificationsModule.
   imports: [PassportModule, JwtModule.register({}), NotificationsModule],
-  controllers: [AuthController],
+  controllers: [AuthController, AuthCaptchaConfigController],
   providers: [AuthService, DeviceService, JwtRevocationService, JwtStrategy, RefreshJwtStrategy],
   // Exported so admin suspension endpoints (Stories 6.2 / 6.8 / 6.9) can
   // call revokeUser() / reactivateUser() once they exist.
