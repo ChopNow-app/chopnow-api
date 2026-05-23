@@ -120,7 +120,12 @@ export class OrdersController {
       'Optional `type` query splits immediate orders (default — scheduledFor=null, sorted placedAt DESC) ' +
       'from pre-orders (type=preorder — scheduledFor!=null, sorted scheduledFor ASC).',
   })
-  @ApiQuery({ name: 'status', required: false, enum: OrderStatus })
+  // enumName forces @nestjs/swagger to emit a named $ref instead of
+  // inlining the Prisma OrderStatus object literal — which caused
+  // "circular dependency detected (property key: PENDING)" at staging
+  // boot under the SWC build (ts-node hid it). Same pattern applied to
+  // PaymentMethod in CreateOrderDto and VendorStatus in FinanceListDto.
+  @ApiQuery({ name: 'status', required: false, enum: OrderStatus, enumName: 'OrderStatus' })
   @ApiQuery({ name: 'type', required: false, enum: ['immediate', 'preorder'] })
   vendorList(
     @Req() req: Request,

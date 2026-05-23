@@ -50,7 +50,7 @@ export class CreateOrderDto {
   @Type(() => CartLineDto)
   items!: CartLineDto[];
 
-  @ApiProperty({ enum: PaymentMethod })
+  @ApiProperty({ enum: PaymentMethod, enumName: 'PaymentMethod' })
   @IsEnum(PaymentMethod)
   paymentMethod!: PaymentMethod;
 
