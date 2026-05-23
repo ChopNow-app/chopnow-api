@@ -86,28 +86,29 @@ Two ways to grab the OpenAPI 3 spec:
 
 Edge-cached 5 min; auto-publishes on every deploy.
 
-**B. Committed snapshot** at the repo root:
+**B. Committed snapshots** at the repo root:
 
 - `openapi.json` — regenerated on demand via `npm run openapi:export`. Lags the live endpoint between deploys; useful when you need an offline copy or want to diff API changes in a PR.
+- `chopnow-api.postman_collection.json` — pre-rendered Postman Collection 2.1, organized into 25 folders by tag (auth, orders, payments, …). Import directly into Postman, no OpenAPI conversion step. Regenerated via `npm run openapi:postman` (consumes `openapi.json`); `npm run openapi:all` runs both.
 
 ### Importing into request collection tools
 
-| Tool                | How                                                                                                   |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| Postman             | File → Import → paste the URL or upload `openapi.json` → choose "OpenAPI 3 with a Postman Collection" |
-| Bruno               | Collections → Import Collection → "OpenAPI V3 Spec" → paste URL or pick the file                      |
-| Insomnia            | Application → Import → URL or File → OpenAPI 3.0                                                      |
-| Type-safe TS client | `npx openapi-typescript https://api-staging.tchopnow.app/openapi.json -o api.d.ts`                    |
+| Tool                | How                                                                                                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postman             | File → Import → upload `chopnow-api.postman_collection.json` (faster — pre-rendered, 25 folders by tag) — or import `openapi.json` if you want Postman to do the conversion itself |
+| Bruno               | Collections → Import Collection → "OpenAPI V3 Spec" → paste URL or pick the file                                                                                                   |
+| Insomnia            | Application → Import → URL or File → OpenAPI 3.0                                                                                                                                   |
+| Type-safe TS client | `npx openapi-typescript https://api-staging.tchopnow.app/openapi.json -o api.d.ts`                                                                                                 |
 
-### Refreshing the committed snapshot
+### Refreshing the committed snapshots
 
 ```bash
-npm run openapi:export      # writes openapi.json at repo root
-git add openapi.json
-git commit -m "chore(openapi): refresh spec snapshot"
+npm run openapi:all   # exports openapi.json + generates Postman collection
+git add openapi.json chopnow-api.postman_collection.json
+git commit -m "chore(openapi): refresh spec snapshots"
 ```
 
-A CI check can be added later to fail PRs whose changes to controllers / DTOs don't ship a matching `openapi.json` update.
+A CI check can be added later to fail PRs whose changes to controllers / DTOs don't ship matching snapshot updates.
 
 ---
 
