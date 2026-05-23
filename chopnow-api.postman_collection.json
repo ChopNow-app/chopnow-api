@@ -5,7 +5,7 @@
       "description": "OTP, JWT, sessions",
       "item": [
         {
-          "id": "2f34130f-5a2d-4abc-ab0b-cc85aacddd26",
+          "id": "33051a29-f5da-43b9-8f4a-785b8bc06119",
           "name": "Request OTP",
           "request": {
             "name": "Request OTP",
@@ -28,7 +28,7 @@
             "method": "POST",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"phone\": \"658179629\",\n  \"cfTurnstileResponse\": \"<string>\"\n}",
+              "raw": "{\n  \"phone\": \"+48606308\",\n  \"cfTurnstileResponse\": \"<string>\"\n}",
               "options": {
                 "raw": {
                   "headerFamily": "json",
@@ -40,7 +40,7 @@
           },
           "response": [
             {
-              "id": "226f2c6f-d413-4a99-955d-6faddc2dd14c",
+              "id": "507d54fa-3f29-47c9-9682-6323bbbde25e",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -58,7 +58,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"phone\": \"658179629\",\n  \"cfTurnstileResponse\": \"<string>\"\n}",
+                  "raw": "{\n  \"phone\": \"+48606308\",\n  \"cfTurnstileResponse\": \"<string>\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -80,7 +80,7 @@
           }
         },
         {
-          "id": "b1ffb62e-72f6-41c2-97cf-9504df0368a7",
+          "id": "0bc47f21-4b36-4412-8418-344b54c8b4a9",
           "name": "Verify OTP",
           "request": {
             "name": "Verify OTP",
@@ -103,7 +103,7 @@
             "method": "POST",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"phone\": \"658263825\",\n  \"code\": \"773322\"\n}",
+              "raw": "{\n  \"phone\": \"2331270208\",\n  \"code\": \"315403\"\n}",
               "options": {
                 "raw": {
                   "headerFamily": "json",
@@ -115,7 +115,7 @@
           },
           "response": [
             {
-              "id": "eecca9cc-0444-4116-9cb1-d2ad4f41bd23",
+              "id": "1a2c5b8e-c404-4533-a51e-e4033d9c6964",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -133,7 +133,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"phone\": \"658263825\",\n  \"code\": \"773322\"\n}",
+                  "raw": "{\n  \"phone\": \"2331270208\",\n  \"code\": \"315403\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -155,7 +155,7 @@
           }
         },
         {
-          "id": "e7235be5-5e26-48bb-956a-5d54a00548e5",
+          "id": "74c15fa7-bb7f-4f63-8f1c-25f8bcf944b1",
           "name": "Rotate refresh token",
           "request": {
             "name": "Rotate refresh token",
@@ -190,7 +190,7 @@
           },
           "response": [
             {
-              "id": "54f8af6f-8cdc-4654-88f7-1a851d189a7b",
+              "id": "6e7bdd8f-0198-40a5-8ca1-d7e658a4e4f6",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -230,7 +230,7 @@
           }
         },
         {
-          "id": "23b51b7b-600f-4511-9ec0-320b76f794de",
+          "id": "7a4afe21-5892-4c83-8387-39e0c88382a5",
           "name": "Logout — revoke this device's refresh token + clear cookie",
           "request": {
             "name": "Logout — revoke this device's refresh token + clear cookie",
@@ -250,7 +250,7 @@
           },
           "response": [
             {
-              "id": "37fddad2-5042-4b81-b19d-f3f4327d790f",
+              "id": "e3432429-0702-4525-a1be-a142ad45bebb",
               "name": "204",
               "originalRequest": {
                 "url": {
@@ -275,7 +275,7 @@
           }
         },
         {
-          "id": "1f81c65e-35d7-45b9-bd86-c5b01bfed414",
+          "id": "a70199e3-aad4-4ed8-a8ea-9bc646d8b662",
           "name": "Revoke all refresh tokens for the authenticated user",
           "request": {
             "name": "Revoke all refresh tokens for the authenticated user",
@@ -295,7 +295,7 @@
           },
           "response": [
             {
-              "id": "4bc4cd3a-4510-4760-8fd2-306362051c6a",
+              "id": "6ce71a61-bc60-4311-b445-c6a96d888007",
               "name": "204",
               "originalRequest": {
                 "url": {
@@ -320,7 +320,7 @@
           }
         },
         {
-          "id": "2b0db25d-1815-45f8-9dec-ddca7b4fae9a",
+          "id": "48ee5278-3bcb-4935-a403-763d23469cf6",
           "name": "Public CAPTCHA / Turnstile configuration",
           "request": {
             "name": "Public CAPTCHA / Turnstile configuration",
@@ -346,7 +346,7 @@
           },
           "response": [
             {
-              "id": "fbda12a9-a70d-423b-91a6-b7af56dfdad0",
+              "id": "99786284-09b1-4991-b8e5-10f452721b0e",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -389,7 +389,7 @@
       "description": "Profile, role lookups",
       "item": [
         {
-          "id": "a437be52-fe3f-4e7b-a0ba-3b311c7a0ebe",
+          "id": "468d305f-7400-4c6b-b842-16d0533c83c3",
           "name": "Current authenticated user profile",
           "request": {
             "name": "Current authenticated user profile",
@@ -414,7 +414,7 @@
           },
           "response": [
             {
-              "id": "787ca617-24ae-41de-bc0e-fb80bc8bc951",
+              "id": "ecb331a6-0231-4a12-8181-dbd43685135f",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -449,7 +449,7 @@
           }
         },
         {
-          "id": "10574de9-55e7-4f19-9aee-5765366229fa",
+          "id": "4253deee-9703-4e14-878d-006ac0106ff6",
           "name": "Update own profile (Story 1.8)",
           "request": {
             "name": "Update own profile (Story 1.8)",
@@ -492,7 +492,7 @@
           },
           "response": [
             {
-              "id": "55f92d1e-3160-4769-a097-b8b3e96a8ac1",
+              "id": "442e9daf-aa2a-46c5-bf1b-4a79895717dc",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -546,7 +546,7 @@
       "description": "Vendors, items, availability",
       "item": [
         {
-          "id": "36f6512f-66a8-4010-80eb-e1717f77f4f9",
+          "id": "925adaba-2eec-428b-b699-54537d578e99",
           "name": "Browse vendors near a location (Story 2.5)",
           "request": {
             "name": "Browse vendors near a location (Story 2.5)",
@@ -594,7 +594,7 @@
           },
           "response": [
             {
-              "id": "7c7fb530-7345-4a4a-8afb-11b5408f7ae5",
+              "id": "9b0751cb-0735-41f5-945b-390813a70e75",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -647,7 +647,7 @@
           }
         },
         {
-          "id": "06a8af86-f281-4ae8-b1e5-78a2f9878aa8",
+          "id": "4cde2941-fdea-4953-b6c4-e65726d64f92",
           "name": "Vendor public profile + menu (Story 2.6)",
           "request": {
             "name": "Vendor public profile + menu (Story 2.6)",
@@ -678,7 +678,7 @@
           },
           "response": [
             {
-              "id": "8a6e36a6-137c-411e-8c8d-dd6b43a793a3",
+              "id": "e3d8788e-253b-4878-ab5f-302ec4b361fe",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -720,7 +720,7 @@
       "description": "Cart and order lifecycle",
       "item": [
         {
-          "id": "8356c584-d744-4d87-bdf5-1ba592c74541",
+          "id": "c72b0edb-ceda-4384-a07c-8ab29c7a0126",
           "name": "Create order from cart (Story 3.1)",
           "request": {
             "name": "Create order from cart (Story 3.1)",
@@ -752,7 +752,7 @@
             "method": "POST",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"vendorId\": \"<string>\",\n  \"items\": [\n    {\n      \"itemId\": \"<string>\",\n      \"quantity\": \"<number>\"\n    }\n  ],\n  \"paymentMethod\": \"MTN_MOMO\",\n  \"deliveryLat\": \"<number>\",\n  \"deliveryLng\": \"<number>\",\n  \"deliveryQuartier\": \"<string>\",\n  \"deliveryPhone\": \"<string>\",\n  \"noteForVendor\": \"<string>\",\n  \"deliveryLandmark\": \"<string>\",\n  \"deliveryDescription\": \"<string>\",\n  \"scheduledFor\": \"<dateTime>\"\n}",
+              "raw": "{\n  \"vendorId\": \"<string>\",\n  \"items\": [\n    {\n      \"itemId\": \"<string>\",\n      \"quantity\": \"<number>\"\n    }\n  ],\n  \"paymentMethod\": \"ORANGE_MONEY\",\n  \"deliveryLat\": \"<number>\",\n  \"deliveryLng\": \"<number>\",\n  \"deliveryQuartier\": \"<string>\",\n  \"deliveryPhone\": \"<string>\",\n  \"noteForVendor\": \"<string>\",\n  \"deliveryLandmark\": \"<string>\",\n  \"deliveryDescription\": \"<string>\",\n  \"scheduledFor\": \"<dateTime>\"\n}",
               "options": {
                 "raw": {
                   "headerFamily": "json",
@@ -772,7 +772,7 @@
           },
           "response": [
             {
-              "id": "abf4e647-4460-46ce-9809-edcfb3d699de",
+              "id": "65b42721-02ad-4552-a2ed-48fa1530a935",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -807,7 +807,7 @@
                 "method": "POST",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"vendorId\": \"<string>\",\n  \"items\": [\n    {\n      \"itemId\": \"<string>\",\n      \"quantity\": \"<number>\"\n    }\n  ],\n  \"paymentMethod\": \"MTN_MOMO\",\n  \"deliveryLat\": \"<number>\",\n  \"deliveryLng\": \"<number>\",\n  \"deliveryQuartier\": \"<string>\",\n  \"deliveryPhone\": \"<string>\",\n  \"noteForVendor\": \"<string>\",\n  \"deliveryLandmark\": \"<string>\",\n  \"deliveryDescription\": \"<string>\",\n  \"scheduledFor\": \"<dateTime>\"\n}",
+                  "raw": "{\n  \"vendorId\": \"<string>\",\n  \"items\": [\n    {\n      \"itemId\": \"<string>\",\n      \"quantity\": \"<number>\"\n    }\n  ],\n  \"paymentMethod\": \"ORANGE_MONEY\",\n  \"deliveryLat\": \"<number>\",\n  \"deliveryLng\": \"<number>\",\n  \"deliveryQuartier\": \"<string>\",\n  \"deliveryPhone\": \"<string>\",\n  \"noteForVendor\": \"<string>\",\n  \"deliveryLandmark\": \"<string>\",\n  \"deliveryDescription\": \"<string>\",\n  \"scheduledFor\": \"<dateTime>\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -829,7 +829,7 @@
           }
         },
         {
-          "id": "f40587d0-4ae6-4b4d-872e-360606dc7099",
+          "id": "14f8a443-43b1-4033-922c-bc4a5674d9dc",
           "name": "List own orders (recent first, max 30)",
           "request": {
             "name": "List own orders (recent first, max 30)",
@@ -854,7 +854,7 @@
           },
           "response": [
             {
-              "id": "13db37ec-dc94-4358-aa36-afa27311a331",
+              "id": "2e9ae744-ede5-4ece-81fd-3cb5a1a0e416",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -889,7 +889,7 @@
           }
         },
         {
-          "id": "758c9c57-50e1-4ed2-8f07-71d4ac8d6bc3",
+          "id": "56680cfa-6a53-4637-ab37-1e6b36d90e26",
           "name": "Order detail",
           "request": {
             "name": "Order detail",
@@ -928,7 +928,7 @@
           },
           "response": [
             {
-              "id": "92593b5f-e621-418f-bbaf-699c5cc7035d",
+              "id": "e8600d1b-4a09-4dab-89b8-a41c224e2fe2",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -974,7 +974,7 @@
           }
         },
         {
-          "id": "d6ebb851-a1b8-4935-a096-7079323e007a",
+          "id": "f66da175-6548-46a1-9663-bdc0fadb1a36",
           "name": "Public order status (no auth — UUID-as-token model)",
           "request": {
             "name": "Public order status (no auth — UUID-as-token model)",
@@ -1013,7 +1013,7 @@
           },
           "response": [
             {
-              "id": "7f275689-eac4-42dd-ae53-6fdf12ef9e86",
+              "id": "0185e578-f7f0-40ba-9c68-4a686dea1efe",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1059,7 +1059,7 @@
           }
         },
         {
-          "id": "c0623194-a962-466b-8728-73666a6447a2",
+          "id": "f0ef45bc-4fec-4c61-aef6-b07774f5ab1f",
           "name": "Consumer cancel — only before vendor acceptance (Story 3.8)",
           "request": {
             "name": "Consumer cancel — only before vendor acceptance (Story 3.8)",
@@ -1098,7 +1098,7 @@
           },
           "response": [
             {
-              "id": "2d993ebb-486a-4467-8ab2-dcc09cab9960",
+              "id": "d9298375-f1d2-4e47-9d05-ee3bf051fc55",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1144,7 +1144,7 @@
           }
         },
         {
-          "id": "e27923f0-3d3f-4206-93b1-0d24f59362dd",
+          "id": "a287ff5b-78dd-4981-8f29-76e305b1fb35",
           "name": "Rate vendor + rider post-delivery (Story 3.9)",
           "request": {
             "name": "Rate vendor + rider post-delivery (Story 3.9)",
@@ -1198,7 +1198,7 @@
           },
           "response": [
             {
-              "id": "16ca8d34-fcd8-4998-b06e-89a0b54ac0d3",
+              "id": "50baba82-44a9-434d-8254-10fa951c2952",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -1257,7 +1257,7 @@
           }
         },
         {
-          "id": "afacca76-6c02-44be-a092-b6b1ad50830a",
+          "id": "28c73fae-21af-4ac2-8ddd-53ed457e21d3",
           "name": "Vendor inbox — list own orders (Story 3.7, pre-orders #187)",
           "request": {
             "name": "Vendor inbox — list own orders (Story 3.7, pre-orders #187)",
@@ -1276,7 +1276,7 @@
                     "type": "text/plain"
                   },
                   "key": "status",
-                  "value": "PENDING"
+                  "value": "CANCELLED"
                 },
                 {
                   "disabled": false,
@@ -1285,7 +1285,7 @@
                     "type": "text/plain"
                   },
                   "key": "type",
-                  "value": "preorder"
+                  "value": "immediate"
                 }
               ],
               "variable": []
@@ -1304,7 +1304,7 @@
           },
           "response": [
             {
-              "id": "b710f9ac-da87-4ae0-865a-1dca1ba37b1b",
+              "id": "0b0ab250-477f-4a3d-9608-277a45112f88",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1318,7 +1318,7 @@
                         "type": "text/plain"
                       },
                       "key": "status",
-                      "value": "PENDING"
+                      "value": "CANCELLED"
                     },
                     {
                       "disabled": false,
@@ -1327,7 +1327,7 @@
                         "type": "text/plain"
                       },
                       "key": "type",
-                      "value": "preorder"
+                      "value": "immediate"
                     }
                   ],
                   "variable": []
@@ -1358,7 +1358,7 @@
           }
         },
         {
-          "id": "61be1956-8d28-4d83-b782-6d5398ce9e21",
+          "id": "36c46066-94dd-4f3f-9ab0-72431098e016",
           "name": "Vendor accepts an order (Story 3.7)",
           "request": {
             "name": "Vendor accepts an order (Story 3.7)",
@@ -1394,7 +1394,7 @@
           },
           "response": [
             {
-              "id": "3320d379-2d8d-44fb-9356-2e27ac0c6e55",
+              "id": "61bd02c5-773f-4863-8666-32d4d097cfee",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1440,7 +1440,7 @@
           }
         },
         {
-          "id": "a7cb28c9-6951-4eb8-a65d-e2df63be20a1",
+          "id": "c6e07852-b2c3-4c33-aa26-b90771518f68",
           "name": "Vendor refuses with reason (Story 3.7)",
           "request": {
             "name": "Vendor refuses with reason (Story 3.7)",
@@ -1474,7 +1474,7 @@
             "method": "PATCH",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"reason\": \"ITEM_OUT_OF_STOCK\",\n  \"note\": \"<string>\"\n}",
+              "raw": "{\n  \"reason\": \"OTHER\",\n  \"note\": \"<string>\"\n}",
               "options": {
                 "raw": {
                   "headerFamily": "json",
@@ -1494,7 +1494,7 @@
           },
           "response": [
             {
-              "id": "b88911bc-e880-48b7-aafa-e2a01ad42a4e",
+              "id": "1c294925-b451-4657-b9db-1e3339bf48cc",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1531,7 +1531,7 @@
                 "method": "PATCH",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"reason\": \"ITEM_OUT_OF_STOCK\",\n  \"note\": \"<string>\"\n}",
+                  "raw": "{\n  \"reason\": \"OTHER\",\n  \"note\": \"<string>\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -1553,7 +1553,7 @@
           }
         },
         {
-          "id": "ab193991-9f65-46f5-be8b-c5871749e989",
+          "id": "f7f0107b-cf73-494e-8675-29f758500659",
           "name": "Vendor toggles a single article as prepared (preparation checklist)",
           "request": {
             "name": "Vendor toggles a single article as prepared (preparation checklist)",
@@ -1614,7 +1614,7 @@
           },
           "response": [
             {
-              "id": "3ce0b9b2-5e15-4918-b9bf-8899d5750f80",
+              "id": "9d8a10df-6026-4ccb-b994-f996034bf016",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1683,7 +1683,7 @@
           }
         },
         {
-          "id": "5187dc83-c519-492f-87d4-91e1d1f4704e",
+          "id": "4c02710f-bdaa-4fe9-8865-4550e5f356a9",
           "name": "Vendor marks an order ready for pickup — all items must be prepared first",
           "request": {
             "name": "Vendor marks an order ready for pickup — all items must be prepared first",
@@ -1719,7 +1719,7 @@
           },
           "response": [
             {
-              "id": "66fddd0f-6219-4b90-811e-4ce01bb548fe",
+              "id": "f97ef66e-52b3-4b6b-9f03-724d40d9d4cc",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1765,7 +1765,7 @@
           }
         },
         {
-          "id": "8c61f242-6c18-4306-ab66-3723bc80e296",
+          "id": "a7d846bf-a685-469a-a4b8-e458dfbaf5d9",
           "name": "Vendor cancels a pre-order they already accepted (#187). Triggers consumer refund + VendorPenalty.",
           "request": {
             "name": "Vendor cancels a pre-order they already accepted (#187). Triggers consumer refund + VendorPenalty.",
@@ -1819,7 +1819,7 @@
           },
           "response": [
             {
-              "id": "f6931623-eef6-4b8b-8790-762dc3e78415",
+              "id": "ca88f252-44c6-466c-9fb7-71f30ac10a6f",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -1884,7 +1884,7 @@
       "description": "Campay MoMo + Orange Money",
       "item": [
         {
-          "id": "72ba158a-3ed9-4325-b87e-53fc8709acae",
+          "id": "22ed4083-8bd2-4a8c-ab5b-f5831129f81d",
           "name": "Initiate a Campay MoMo collect (Stories 3.3, 3.4)",
           "request": {
             "name": "Initiate a Campay MoMo collect (Stories 3.3, 3.4)",
@@ -1938,7 +1938,7 @@
           },
           "response": [
             {
-              "id": "ce00cde3-cd3e-4997-bd4b-08edf142ed7e",
+              "id": "774fd09d-2e01-48a9-81f9-c74831dc5317",
               "name": "202",
               "originalRequest": {
                 "url": {
@@ -2018,7 +2018,7 @@
       "description": "",
       "item": [
         {
-          "id": "6de5e22f-560d-4e3a-962b-8235456821aa",
+          "id": "002d72db-1aff-4263-b074-45c3b3563c42",
           "name": "Media Controller stream Object",
           "request": {
             "name": "Media Controller stream Object",
@@ -2056,7 +2056,7 @@
           },
           "response": [
             {
-              "id": "a6311c66-c558-4536-9450-fe6c86d83dbe",
+              "id": "f100a93b-5e02-4114-bc07-b515721a2d7a",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2108,7 +2108,7 @@
       "description": "",
       "item": [
         {
-          "id": "b479b97e-1f16-4d8e-bbb9-effb28a4893e",
+          "id": "47a41e48-6427-497d-b2b1-1d5ac75d8a2f",
           "name": "Register or refresh a Web Push subscription for the current user",
           "request": {
             "name": "Register or refresh a Web Push subscription for the current user",
@@ -2151,7 +2151,7 @@
           },
           "response": [
             {
-              "id": "ca285e1e-b439-4f84-b513-ef230a4a95f7",
+              "id": "f2795dee-318e-4060-9517-b273508b6200",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -2199,7 +2199,7 @@
           }
         },
         {
-          "id": "2258f9ef-1d5b-4549-a39c-a710d3e356d4",
+          "id": "8aaaceb8-5b89-4078-936d-e52fe78b524c",
           "name": "Remove a push subscription for the current user",
           "request": {
             "name": "Remove a push subscription for the current user",
@@ -2242,7 +2242,7 @@
           },
           "response": [
             {
-              "id": "04d37bcf-7b00-4200-a28f-033a5bbe2445",
+              "id": "7b2692db-582b-4781-9b51-71f314ac647c",
               "name": "204",
               "originalRequest": {
                 "url": {
@@ -2296,7 +2296,7 @@
       "description": "",
       "item": [
         {
-          "id": "12c7b954-f9cb-492c-999f-190f21bc0de9",
+          "id": "83a0f133-bfad-4263-b2c7-06247e695302",
           "name": "List saved addresses (Story 3.2)",
           "request": {
             "name": "List saved addresses (Story 3.2)",
@@ -2321,7 +2321,7 @@
           },
           "response": [
             {
-              "id": "e39099f5-5400-429b-ba14-4bd3d8e9d496",
+              "id": "7961772b-ee2f-42a3-bc39-0a0573aa9cb8",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2356,7 +2356,7 @@
           }
         },
         {
-          "id": "e2774470-051e-4cb8-9d30-302a8f743a1f",
+          "id": "1c4c0e1b-1fa7-4245-b862-37df03956a7e",
           "name": "Save a new address (max 3 per user)",
           "request": {
             "name": "Save a new address (max 3 per user)",
@@ -2399,7 +2399,7 @@
           },
           "response": [
             {
-              "id": "0e0d12a2-09a3-4d5d-a900-897fd06ecab2",
+              "id": "bc56cb2b-d6bf-48c9-8ddb-e451d4bf36ce",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -2447,7 +2447,7 @@
           }
         },
         {
-          "id": "3cd2907d-1590-4666-9d72-e7a7aaba4938",
+          "id": "0a6b61c1-d182-4a0e-ac65-3a287411d05d",
           "name": "Replace an address (ownership-checked)",
           "request": {
             "name": "Replace an address (ownership-checked)",
@@ -2498,7 +2498,7 @@
           },
           "response": [
             {
-              "id": "43a40f4a-ad74-4370-955a-90bc2041de1a",
+              "id": "95f804a2-e8bd-4b45-b729-9f50277253e9",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2557,7 +2557,7 @@
           }
         },
         {
-          "id": "a9bc5670-f9c5-48e1-91d7-7047cc4787e8",
+          "id": "686f6942-78d6-47bf-896f-99b82731ba59",
           "name": "Delete an address",
           "request": {
             "name": "Delete an address",
@@ -2593,7 +2593,7 @@
           },
           "response": [
             {
-              "id": "4b9d1acd-140a-46d6-91a2-e256f733d23c",
+              "id": "3e3a8a5e-a63c-4a88-9fb8-be794b1070ff",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2645,7 +2645,7 @@
       "description": "",
       "item": [
         {
-          "id": "56af86e2-dca5-4088-b24b-6dbc730845d6",
+          "id": "629ce84c-8a4e-4ddc-a08c-27460ef02edc",
           "name": "Campay outbound transfer status webhook",
           "request": {
             "name": "Campay outbound transfer status webhook",
@@ -2662,7 +2662,7 @@
           },
           "response": [
             {
-              "id": "ee9fc694-3075-43cd-91d5-651c0462663a",
+              "id": "6ea673b3-75be-4c08-a037-e2242b2017b7",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2687,7 +2687,7 @@
           }
         },
         {
-          "id": "2c545ed0-0a21-478c-b99e-9a0400e33b0c",
+          "id": "a934fc1a-30b4-4a6c-a40c-2edde0c742c6",
           "name": "Campay refund status webhook",
           "request": {
             "name": "Campay refund status webhook",
@@ -2704,7 +2704,7 @@
           },
           "response": [
             {
-              "id": "844113c5-a385-4932-8ef1-36d9271cc996",
+              "id": "20ef2924-fcbb-434e-a86a-1eb9b91ab2f7",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2729,7 +2729,7 @@
           }
         },
         {
-          "id": "4e3bc542-b882-4362-836c-a91d1c1d1b40",
+          "id": "4f4366f9-79f9-44de-b93a-780921d89c5c",
           "name": "Campay payment status webhook",
           "request": {
             "name": "Campay payment status webhook",
@@ -2746,7 +2746,7 @@
           },
           "response": [
             {
-              "id": "5576ac28-9386-48e1-bcc4-e6f8bae2e424",
+              "id": "c85e010a-58cb-43ba-9577-9d810ae3523c",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -2777,7 +2777,7 @@
       "description": "",
       "item": [
         {
-          "id": "e4d8d2c9-7312-4b20-8c06-bff89fb187c5",
+          "id": "7e52f50c-c25a-4a0b-bddb-9b56f0c9ee6a",
           "name": "Submit an informal vendor application",
           "request": {
             "name": "Submit an informal vendor application",
@@ -2852,7 +2852,7 @@
                     "type": "text/plain"
                   },
                   "key": "declaredCapacity",
-                  "value": "LT_10",
+                  "value": "R_10_30",
                   "type": "text"
                 },
                 {
@@ -2969,7 +2969,7 @@
           },
           "response": [
             {
-              "id": "a4ad29c1-2995-42c6-953b-3820571d1aed",
+              "id": "b1a78567-0415-4f6a-b8e8-d0cc6adec341",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -3039,7 +3039,7 @@
                         "type": "text/plain"
                       },
                       "key": "declaredCapacity",
-                      "value": "LT_10",
+                      "value": "R_10_30",
                       "type": "text"
                     },
                     {
@@ -3166,7 +3166,7 @@
           }
         },
         {
-          "id": "bdf096dd-04b2-431b-9187-10ceb96c4c6f",
+          "id": "27f340de-87a9-44da-995d-96ff0c4fe643",
           "name": "Get own vendor profile",
           "request": {
             "name": "Get own vendor profile",
@@ -3194,7 +3194,7 @@
           },
           "response": [
             {
-              "id": "3402d6a2-1faa-4cf4-9e3e-ecadab1baf82",
+              "id": "cb381430-abe3-47e2-91f5-c3f8f1283c5b",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3229,7 +3229,7 @@
           }
         },
         {
-          "id": "cc367a16-928b-4988-a72a-1dfdd9fb2a55",
+          "id": "74ca23b9-232f-411b-9b08-4c5f0bcad0fe",
           "name": "Update own vendor profile (Story 1.8)",
           "request": {
             "name": "Update own vendor profile (Story 1.8)",
@@ -3272,7 +3272,7 @@
           },
           "response": [
             {
-              "id": "bf597bbb-c118-4136-8cc9-14919f251378",
+              "id": "3e26dbd7-f2ab-4803-a40d-7115fd281894",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3320,7 +3320,7 @@
           }
         },
         {
-          "id": "de36cb9d-f733-43ff-9071-092740a4c0f5",
+          "id": "c252bb0e-cc76-4b15-957e-63738d645c54",
           "name": "Get own balance + payout history",
           "request": {
             "name": "Get own balance + payout history",
@@ -3354,7 +3354,7 @@
           },
           "response": [
             {
-              "id": "7f15f87d-11cc-4398-8488-c2e380616abc",
+              "id": "0d7b5a0a-29dd-4de1-a37f-9a05ac4a6c38",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3388,7 +3388,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"balanceXAF\": \"<number>\",\n  \"isTrusted\": \"<boolean>\",\n  \"vendorType\": \"SEMI_FORMAL\",\n  \"lastPayoutAt\": {},\n  \"lastPayoutXAF\": {},\n  \"nextScheduledPayout\": {\n    \"cadence\": \"DAILY_MORNING\",\n    \"estimatedAt\": {}\n  },\n  \"recentPayouts\": [\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"IN_FLIGHT\",\n      \"paidAt\": {}\n    },\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"PENDING\",\n      \"paidAt\": {}\n    }\n  ],\n  \"pendingCashoutRequestId\": {}\n}",
+              "body": "{\n  \"balanceXAF\": \"<number>\",\n  \"isTrusted\": \"<boolean>\",\n  \"vendorType\": \"INFORMAL\",\n  \"lastPayoutAt\": {},\n  \"lastPayoutXAF\": {},\n  \"nextScheduledPayout\": {\n    \"cadence\": \"WEEKLY_SUNDAY\",\n    \"estimatedAt\": {}\n  },\n  \"recentPayouts\": [\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"PAID\",\n      \"paidAt\": {}\n    },\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"PAID\",\n      \"paidAt\": {}\n    }\n  ],\n  \"pendingCashoutRequestId\": {}\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             }
@@ -3399,7 +3399,7 @@
           }
         },
         {
-          "id": "ad3107fe-e217-4467-89fc-31e9c9bc91ba",
+          "id": "9869e149-bfc0-4f10-b8c3-5a54578284ea",
           "name": "Request an on-demand cashout (INFORMAL vendors only)",
           "request": {
             "name": "Request an on-demand cashout (INFORMAL vendors only)",
@@ -3427,7 +3427,7 @@
           },
           "response": [
             {
-              "id": "f17b8edd-4c1d-4cac-bebb-49d2f4324273",
+              "id": "2608cbf7-b19b-4dde-a450-ace8e926eceb",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -3462,7 +3462,7 @@
           }
         },
         {
-          "id": "b54725b0-01f6-4b88-ac91-a279beea4f18",
+          "id": "46db72c9-983b-446f-bed6-1841d8edd2e0",
           "name": "Replace own profile photo (Story 1.8)",
           "request": {
             "name": "Replace own profile photo (Story 1.8)",
@@ -3490,7 +3490,7 @@
           },
           "response": [
             {
-              "id": "f3ba7125-434e-4156-87c3-6481561ae389",
+              "id": "d5827a88-4c87-4dd7-87c9-8970cef37d2b",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3525,7 +3525,7 @@
           }
         },
         {
-          "id": "9768a8c5-6bf2-4f21-9cba-7c8361e661b4",
+          "id": "0573ba30-01c2-4c2d-a72c-6036e36b9768",
           "name": "Replace own cover photo (hero image on the vendor's catalogue card)",
           "request": {
             "name": "Replace own cover photo (hero image on the vendor's catalogue card)",
@@ -3553,7 +3553,7 @@
           },
           "response": [
             {
-              "id": "c1757885-1356-448a-abf2-0a356945b844",
+              "id": "8934d448-bfa5-4f62-9909-38d41a46888a",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3588,7 +3588,7 @@
           }
         },
         {
-          "id": "a2529f13-8b89-4d89-bc29-c9ca1178317c",
+          "id": "0aa2d499-9425-4f49-b17d-e199b36f29cd",
           "name": "Check vendor submission status by WhatsApp phone (Story 2.0 follow-up)",
           "request": {
             "name": "Check vendor submission status by WhatsApp phone (Story 2.0 follow-up)",
@@ -3618,7 +3618,7 @@
           },
           "response": [
             {
-              "id": "48ee6ec0-1d9a-4f75-89aa-91fc3e4adf5c",
+              "id": "c56922fd-561d-440c-b00e-91cd51347dc8",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3659,7 +3659,7 @@
       "description": "",
       "item": [
         {
-          "id": "7e1ed323-f1a1-40d8-93f8-15069afd3971",
+          "id": "783603cb-7532-401d-862b-c601caaeb96b",
           "name": "List own menu items (Story 2.2 / 2.3)",
           "request": {
             "name": "List own menu items (Story 2.2 / 2.3)",
@@ -3684,7 +3684,7 @@
           },
           "response": [
             {
-              "id": "65beb78a-107a-45d9-8bf7-dc26a3c9485f",
+              "id": "31960be6-67e1-4ab5-9080-efcb4dae76ad",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3719,7 +3719,7 @@
           }
         },
         {
-          "id": "60f38de5-8846-40cb-bcaa-6a72e8677676",
+          "id": "bbfb2d81-3379-455c-bcbf-96b954cc8df3",
           "name": "Create a menu item (Story 2.2 / 2.3)",
           "request": {
             "name": "Create a menu item (Story 2.2 / 2.3)",
@@ -3762,7 +3762,7 @@
           },
           "response": [
             {
-              "id": "8c5e54b3-9c69-4945-b366-00bf8cec7182",
+              "id": "51770ea6-f83d-4604-b3cc-473bd6728742",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -3810,7 +3810,7 @@
           }
         },
         {
-          "id": "5b078bf2-3d26-42d1-9235-50ed9c326b63",
+          "id": "ca505c4f-cce5-4bc3-821a-0c333086227d",
           "name": "Replace a menu item",
           "request": {
             "name": "Replace a menu item",
@@ -3861,7 +3861,7 @@
           },
           "response": [
             {
-              "id": "8eaa98ee-931c-4391-a0d2-53dffe0eadd9",
+              "id": "88ee1acb-ed77-4bf6-9474-e7f847d5ebb2",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -3920,7 +3920,7 @@
           }
         },
         {
-          "id": "2849c140-b2c8-496c-b970-76c5687c6f9a",
+          "id": "4078930e-32d1-41c6-8990-8f8098daa22a",
           "name": "Delete a menu item",
           "request": {
             "name": "Delete a menu item",
@@ -3956,7 +3956,7 @@
           },
           "response": [
             {
-              "id": "e601eff9-a0fb-4298-9499-a2133f334e7e",
+              "id": "de0a17fc-fe3a-4353-b752-60302ca408a5",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4002,7 +4002,7 @@
           }
         },
         {
-          "id": "e7e46c4e-1c74-44bb-b3fc-2ee7e5747929",
+          "id": "41b3e781-11cb-450c-b17a-4732a1a3386d",
           "name": "1-tap stock toggle (Story 2.10)",
           "request": {
             "name": "1-tap stock toggle (Story 2.10)",
@@ -4036,7 +4036,7 @@
             "method": "PATCH",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"isInStock\": \"<boolean>\",\n  \"stockLevel\": \"OUT_OF_STOCK\"\n}",
+              "raw": "{\n  \"isInStock\": \"<boolean>\",\n  \"stockLevel\": \"LOW_STOCK\"\n}",
               "options": {
                 "raw": {
                   "headerFamily": "json",
@@ -4056,7 +4056,7 @@
           },
           "response": [
             {
-              "id": "6860e3c5-57c5-4492-8ffe-64aee9f98165",
+              "id": "4da18117-0dac-422d-9938-75368c34c4b4",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4093,7 +4093,7 @@
                 "method": "PATCH",
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"isInStock\": \"<boolean>\",\n  \"stockLevel\": \"OUT_OF_STOCK\"\n}",
+                  "raw": "{\n  \"isInStock\": \"<boolean>\",\n  \"stockLevel\": \"LOW_STOCK\"\n}",
                   "options": {
                     "raw": {
                       "headerFamily": "json",
@@ -4115,7 +4115,7 @@
           }
         },
         {
-          "id": "d7fb2860-51ad-4a8f-bb50-0a98d323842f",
+          "id": "24152b24-d0c6-4e89-ac95-351b36f8e408",
           "name": "Upload / replace an item photo",
           "request": {
             "name": "Upload / replace an item photo",
@@ -4151,7 +4151,7 @@
           },
           "response": [
             {
-              "id": "c7e7a227-ecc3-495b-ba17-c976de0c9403",
+              "id": "572bee0e-440c-4d84-9f18-c2ba57bf90ee",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4197,7 +4197,7 @@
           }
         },
         {
-          "id": "b725b156-420a-442c-b81a-3ebd0200274a",
+          "id": "09e551ef-4fdd-4d12-ad7d-5a9921796326",
           "name": "List own menu categories",
           "request": {
             "name": "List own menu categories",
@@ -4222,7 +4222,7 @@
           },
           "response": [
             {
-              "id": "fcb2863a-1f60-4d9a-8743-b69594c07340",
+              "id": "df8c723a-d3e1-4ba5-92bc-90055ab591cc",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4257,7 +4257,7 @@
           }
         },
         {
-          "id": "b60ddeb1-39d9-4d65-ad09-c1114301f27c",
+          "id": "3312d35e-211d-49ad-8e3c-97fbe90826ec",
           "name": "Create a menu category (Story 2.3)",
           "request": {
             "name": "Create a menu category (Story 2.3)",
@@ -4300,7 +4300,7 @@
           },
           "response": [
             {
-              "id": "88ce8f91-687d-4517-9ea4-31425e8fc6cd",
+              "id": "48c5cf4f-c82d-4d34-8e24-f36e45d4b6cd",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -4348,7 +4348,7 @@
           }
         },
         {
-          "id": "583336c4-8190-44f5-8f88-f6ccfb235694",
+          "id": "a2a4b7c8-d74b-4243-a802-f2caf8e8333a",
           "name": "Rename / reorder a category",
           "request": {
             "name": "Rename / reorder a category",
@@ -4399,7 +4399,7 @@
           },
           "response": [
             {
-              "id": "947e6473-3889-4c7f-9515-71f462790dfe",
+              "id": "f86d0ee7-bd45-44fa-9e10-c0485f327dda",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4458,7 +4458,7 @@
           }
         },
         {
-          "id": "c7fef325-9210-447b-b1fb-b53feaba9fd5",
+          "id": "88bb31ad-1743-451d-90cc-8f3af5cd160d",
           "name": "Delete a category. Items in it are detached (categoryId = NULL).",
           "request": {
             "name": "Delete a category. Items in it are detached (categoryId = NULL).",
@@ -4494,7 +4494,7 @@
           },
           "response": [
             {
-              "id": "46eb89d7-2235-4eff-8166-9096fa2e4bff",
+              "id": "a5b1cdb7-53f6-4220-a33d-783ea263098e",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4546,7 +4546,7 @@
       "description": "",
       "item": [
         {
-          "id": "1c350398-a2b6-411d-9008-1732b3fdf2c2",
+          "id": "684f5b24-abc9-452c-b7d1-039b80b3a8c3",
           "name": "Read own availability + hours (Story 2.4)",
           "request": {
             "name": "Read own availability + hours (Story 2.4)",
@@ -4574,7 +4574,7 @@
           },
           "response": [
             {
-              "id": "fc0ed09f-3160-4ccb-be64-a1ef0ff6bf59",
+              "id": "147526bc-a756-4040-9206-1ae2228274e8",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4609,7 +4609,7 @@
           }
         },
         {
-          "id": "9b7fc79b-eca9-4cfd-a48c-5827fe59361f",
+          "id": "8e65a753-5399-4c96-a5dc-af43b472d2e4",
           "name": "Toggle Ouvert / Fermé (Story 2.4 — 1-tap)",
           "request": {
             "name": "Toggle Ouvert / Fermé (Story 2.4 — 1-tap)",
@@ -4652,7 +4652,7 @@
           },
           "response": [
             {
-              "id": "88fcd0f7-b8c8-4976-b78e-f43fd998fbdc",
+              "id": "a14bc074-eb17-498c-9941-16cc5778890d",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4700,7 +4700,7 @@
           }
         },
         {
-          "id": "ffe3333a-4163-4825-b73b-a3945455c43d",
+          "id": "26028776-a1f4-45ab-acfc-006f5b3d9851",
           "name": "Replace weekly opening hours (Story 2.4 — restaurant)",
           "request": {
             "name": "Replace weekly opening hours (Story 2.4 — restaurant)",
@@ -4743,7 +4743,7 @@
           },
           "response": [
             {
-              "id": "c9e0e146-fa8e-4f99-8db9-026ae340ea87",
+              "id": "68178d4f-144e-4099-b03e-46a56ddfa611",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -4797,7 +4797,7 @@
       "description": "",
       "item": [
         {
-          "id": "2fae20a6-f5db-4af3-8387-30dd2a2bd6f5",
+          "id": "4fce3223-9a3b-4e68-92d2-9db1f562ab1a",
           "name": "Submit a rider KYC application",
           "request": {
             "name": "Submit a rider KYC application",
@@ -4881,7 +4881,7 @@
           },
           "response": [
             {
-              "id": "46436c1d-5176-4dfc-a0db-508eb02b7865",
+              "id": "230d4418-5449-4365-91b5-87860b41f6a4",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -4970,7 +4970,7 @@
           }
         },
         {
-          "id": "1837d6d4-ee47-4f38-a1b9-13b19e73d5b9",
+          "id": "ed9f4d8f-7eb1-424c-9fb6-5d2efe69c9c4",
           "name": "Update own rider profile (Story 1.8)",
           "request": {
             "name": "Update own rider profile (Story 1.8)",
@@ -5013,7 +5013,7 @@
           },
           "response": [
             {
-              "id": "220b8641-e667-4694-9aaf-d29c99cd4f4d",
+              "id": "8dbad3ef-5d45-4b21-8392-05f04908ffec",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5061,7 +5061,7 @@
           }
         },
         {
-          "id": "fd1cd708-164c-4005-ba11-514e5b6d3dc4",
+          "id": "45bcefd1-4129-4b32-80c5-656b5b8ff045",
           "name": "Get own balance + payout history",
           "request": {
             "name": "Get own balance + payout history",
@@ -5095,7 +5095,7 @@
           },
           "response": [
             {
-              "id": "53acacee-1efc-45df-a5c0-d7550d30fd37",
+              "id": "6f108c27-2157-4f21-825e-e066caee2790",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5129,7 +5129,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"balanceXAF\": \"<number>\",\n  \"lastPayoutAt\": {},\n  \"lastPayoutXAF\": {},\n  \"nextScheduledPayout\": {\n    \"cadence\": \"DAILY_MORNING\",\n    \"estimatedAt\": {}\n  },\n  \"recentPayouts\": [\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"PENDING\",\n      \"paidAt\": {}\n    },\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"PENDING\",\n      \"paidAt\": {}\n    }\n  ]\n}",
+              "body": "{\n  \"balanceXAF\": \"<number>\",\n  \"lastPayoutAt\": {},\n  \"lastPayoutXAF\": {},\n  \"nextScheduledPayout\": {\n    \"cadence\": \"WEEKLY_SUNDAY\",\n    \"estimatedAt\": {}\n  },\n  \"recentPayouts\": [\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"IN_FLIGHT\",\n      \"paidAt\": {}\n    },\n    {\n      \"id\": \"<string>\",\n      \"periodStart\": \"<dateTime>\",\n      \"periodEnd\": \"<dateTime>\",\n      \"netXAF\": \"<number>\",\n      \"status\": \"CANCELLED\",\n      \"paidAt\": {}\n    }\n  ]\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
             }
@@ -5140,7 +5140,7 @@
           }
         },
         {
-          "id": "3fac4b40-e739-443f-9020-6bd913e6a432",
+          "id": "a747184a-7086-422b-8ccc-39b75dafbe60",
           "name": "Toggle online / offline (Story 4.1)",
           "request": {
             "name": "Toggle online / offline (Story 4.1)",
@@ -5183,7 +5183,7 @@
           },
           "response": [
             {
-              "id": "caa0b3dd-f6e9-4384-8191-f1211c872d13",
+              "id": "20cf77ee-f611-409c-8918-384fbdb10b93",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5231,7 +5231,7 @@
           }
         },
         {
-          "id": "29831b87-a2ab-48dc-8cc8-f2a5b9413004",
+          "id": "dcdf49d0-1e82-4c0e-9455-02d48053cd05",
           "name": "Push 15s GPS heartbeat (Story 4.4)",
           "request": {
             "name": "Push 15s GPS heartbeat (Story 4.4)",
@@ -5274,7 +5274,7 @@
           },
           "response": [
             {
-              "id": "823d2f26-c263-4a2d-bd61-78f7b85a3eda",
+              "id": "5af69264-9bb6-47b4-9dec-b7712b83c89d",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5322,7 +5322,7 @@
           }
         },
         {
-          "id": "330c3b49-a591-4d4b-ba25-83f0cb490981",
+          "id": "41de68b3-4e9f-46e9-81f4-cac47ee66b13",
           "name": "List assigned + in-flight courses (Story 4.2)",
           "request": {
             "name": "List assigned + in-flight courses (Story 4.2)",
@@ -5347,7 +5347,7 @@
           },
           "response": [
             {
-              "id": "f22cc94a-d624-4928-a224-d71457ca7dcd",
+              "id": "66db94f6-a2f7-4a09-bb23-8088107231b2",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5382,7 +5382,7 @@
           }
         },
         {
-          "id": "42a01496-5c5d-4117-be57-16c1322b797c",
+          "id": "bd99dc9a-9676-4e25-81dd-89174b9f7da0",
           "name": "Rider confirms pickup at vendor (Story 4.2 / 4.13)",
           "request": {
             "name": "Rider confirms pickup at vendor (Story 4.2 / 4.13)",
@@ -5436,7 +5436,7 @@
           },
           "response": [
             {
-              "id": "44f7a9ec-0f0f-4f1b-b038-0c509d1e7d41",
+              "id": "2a2a2e7e-645a-4f62-a07b-f475ca38fe01",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5495,7 +5495,7 @@
           }
         },
         {
-          "id": "84dfc91e-3a52-4f41-a842-0712476a8041",
+          "id": "e012a53f-7fa8-4f30-b40d-9f9f94a579f8",
           "name": "Rider confirms drop-off (Story 4.2 / 4.13)",
           "request": {
             "name": "Rider confirms drop-off (Story 4.2 / 4.13)",
@@ -5549,7 +5549,7 @@
           },
           "response": [
             {
-              "id": "f8683f05-3ed8-423d-8169-8ec79ce22187",
+              "id": "9c915c23-efde-47d5-b8d4-1e8c5941d944",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5608,7 +5608,7 @@
           }
         },
         {
-          "id": "decbb104-643a-4bce-ab6b-7ba13d265b89",
+          "id": "77960fb0-7e41-4229-901f-595c969b1fd4",
           "name": "Check rider submission status by phone (Story 1.4 follow-up)",
           "request": {
             "name": "Check rider submission status by phone (Story 1.4 follow-up)",
@@ -5638,7 +5638,7 @@
           },
           "response": [
             {
-              "id": "13bcc69b-ff6b-4cb6-8668-85e2dc0d4775",
+              "id": "99f22fe5-fbe1-4647-a60d-7e4d7e3baaa8",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5679,7 +5679,7 @@
       "description": "",
       "item": [
         {
-          "id": "2a7647f5-8878-4a3d-8773-35d702ba91ef",
+          "id": "42adf1fc-b7d8-40f8-af2f-f6b4e6a17e39",
           "name": "Admin login step 1 — email + password",
           "request": {
             "name": "Admin login step 1 — email + password",
@@ -5714,7 +5714,7 @@
           },
           "response": [
             {
-              "id": "75c06935-ca65-4c8a-933b-faa94a9cf66e",
+              "id": "ede13035-ce36-4547-88f9-868d7f335d6b",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5754,7 +5754,7 @@
           }
         },
         {
-          "id": "c7d94c4b-a99a-4690-b704-2aeccdc9b47b",
+          "id": "e3e36964-6ba3-4f0b-b5a9-808918379c46",
           "name": "Admin login step 2 — TOTP code or recovery code",
           "request": {
             "name": "Admin login step 2 — TOTP code or recovery code",
@@ -5789,7 +5789,7 @@
           },
           "response": [
             {
-              "id": "7d975c8f-3c91-43f7-9836-366ed1ef5858",
+              "id": "ac2c01da-76a1-460e-86f0-8e4b68bd839f",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5829,7 +5829,7 @@
           }
         },
         {
-          "id": "7b8d814b-4e98-4f64-9177-ff66f5b14c1c",
+          "id": "10148002-4983-431e-802a-23a5cbaa3ec0",
           "name": "Start TOTP enrollment — returns QR + cleartext secret",
           "request": {
             "name": "Start TOTP enrollment — returns QR + cleartext secret",
@@ -5857,7 +5857,7 @@
           },
           "response": [
             {
-              "id": "dc1fa45c-e8e6-4fba-9b0e-76da3f1a7fa2",
+              "id": "d56edc58-3f89-428d-bb97-352008845677",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5892,7 +5892,7 @@
           }
         },
         {
-          "id": "f210b832-1be4-4ca8-ab94-49a4cb7cd19f",
+          "id": "7f7dce27-f4e2-44c6-8a46-a0d34c5b4d0e",
           "name": "Confirm TOTP enrollment with the first code, get recovery codes",
           "request": {
             "name": "Confirm TOTP enrollment with the first code, get recovery codes",
@@ -5935,7 +5935,7 @@
           },
           "response": [
             {
-              "id": "fdccc739-c7c2-4984-a5a6-9b2c3bb0dd8d",
+              "id": "caebbd6c-ae6a-4012-9313-061164a3a23a",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -5989,7 +5989,7 @@
       "description": "",
       "item": [
         {
-          "id": "0dfe5d44-93a5-4f13-bb6f-f09e701584bf",
+          "id": "c7f51157-d9ae-4dc9-ba95-0eba277caf34",
           "name": "List vendors awaiting approval (Story 6.2)",
           "request": {
             "name": "List vendors awaiting approval (Story 6.2)",
@@ -6014,7 +6014,7 @@
           },
           "response": [
             {
-              "id": "aedf3eb5-8a49-4a18-a774-01c7df61b144",
+              "id": "0d94ca15-db5a-4a0f-bd62-c1e3e5555e68",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6049,7 +6049,7 @@
           }
         },
         {
-          "id": "31631a34-a0bb-4d54-bb0c-9bf856ee95a9",
+          "id": "86a72c71-ac96-42fe-b9bf-e450d8883f69",
           "name": "Approve a vendor application",
           "request": {
             "name": "Approve a vendor application",
@@ -6088,7 +6088,7 @@
           },
           "response": [
             {
-              "id": "c9393541-85c8-4d3d-a482-a6bc7cf8f8ad",
+              "id": "f6fa1f98-2b4d-483a-af08-0c12b8bb753e",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6134,7 +6134,7 @@
           }
         },
         {
-          "id": "ab101e24-f933-4e19-a1ad-b6fd8ca6ce69",
+          "id": "e0f08f09-45e7-41c9-8831-2b7bb28ad2f2",
           "name": "Reject a vendor application",
           "request": {
             "name": "Reject a vendor application",
@@ -6188,7 +6188,7 @@
           },
           "response": [
             {
-              "id": "15de1845-cc6e-4f8e-94fb-bd9eb8e94255",
+              "id": "ca1148d4-858b-4d1a-beff-baf13e12a6de",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6247,7 +6247,7 @@
           }
         },
         {
-          "id": "ca0d2506-2640-41e6-ab4c-5f0954033859",
+          "id": "5628eb19-2f5b-4272-bb45-0cb9aedf143d",
           "name": "Suspend a vendor (Stories 1.7 + 6.2)",
           "request": {
             "name": "Suspend a vendor (Stories 1.7 + 6.2)",
@@ -6301,7 +6301,7 @@
           },
           "response": [
             {
-              "id": "4dc7997a-f7f7-45a4-80ae-3ae5b59ba99f",
+              "id": "15ea7168-b7d8-4a18-8e81-580812a6544f",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6360,7 +6360,7 @@
           }
         },
         {
-          "id": "45fc4df6-c409-431c-abbd-647f1d10a6e9",
+          "id": "f6822894-91d9-4eab-b276-02e917f9169b",
           "name": "Lift a vendor suspension — clears the JWT blacklist.",
           "request": {
             "name": "Lift a vendor suspension — clears the JWT blacklist.",
@@ -6396,7 +6396,7 @@
           },
           "response": [
             {
-              "id": "d5d62d26-0822-436c-9922-f940d94fe47e",
+              "id": "39254504-cd21-4890-b24b-739a1086a78f",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6442,7 +6442,7 @@
           }
         },
         {
-          "id": "fbb2a578-f4e0-4f55-bfa9-b9e61aa3dad6",
+          "id": "e4fca72f-3e05-4f8b-bcc9-8b20e1a35999",
           "name": "Toggle Vendor.acceptsPreOrders (#187 follow-up)",
           "request": {
             "name": "Toggle Vendor.acceptsPreOrders (#187 follow-up)",
@@ -6496,7 +6496,7 @@
           },
           "response": [
             {
-              "id": "61fac893-91a9-49ae-b95a-af6b8497433c",
+              "id": "c7b1c497-a9ed-402f-ab07-21c022d8388d",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6555,7 +6555,7 @@
           }
         },
         {
-          "id": "a50462c5-808c-48a2-a415-fcc2c0fdca6d",
+          "id": "49ec4915-02c4-4309-9b6c-cc8a5f4c1948",
           "name": "List riders awaiting KYC approval",
           "request": {
             "name": "List riders awaiting KYC approval",
@@ -6580,7 +6580,7 @@
           },
           "response": [
             {
-              "id": "1630211a-f916-4611-8330-2437210b55d4",
+              "id": "11b68799-dbd4-4c30-a940-498b3eed816d",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6615,7 +6615,7 @@
           }
         },
         {
-          "id": "5f5e96cd-598e-4730-a9e1-834feeef8edf",
+          "id": "f24f63ba-df01-4401-8981-24c3d804cfe5",
           "name": "Approve a rider KYC",
           "request": {
             "name": "Approve a rider KYC",
@@ -6651,7 +6651,7 @@
           },
           "response": [
             {
-              "id": "285c9840-5520-4cc5-8511-4144c1a21150",
+              "id": "42d757f5-5c68-4ecf-8906-ea38689d2d36",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6697,7 +6697,7 @@
           }
         },
         {
-          "id": "5f443941-6c5a-45a8-81d1-f1109bdb926e",
+          "id": "1da5bb40-9090-438e-8293-f85c6f29b277",
           "name": "Reject a rider application",
           "request": {
             "name": "Reject a rider application",
@@ -6748,7 +6748,7 @@
           },
           "response": [
             {
-              "id": "affbccd5-a4d3-4811-9bf3-40ba99f2ee62",
+              "id": "0de5b562-91ae-475b-ad76-c7935122df2d",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6807,7 +6807,7 @@
           }
         },
         {
-          "id": "ee05a4ae-61bd-4c45-a52a-f70eb69f9e54",
+          "id": "630ff70d-5fbf-4fb6-b044-59f3e76708cf",
           "name": "Suspend a rider (revokes JWTs immediately)",
           "request": {
             "name": "Suspend a rider (revokes JWTs immediately)",
@@ -6858,7 +6858,7 @@
           },
           "response": [
             {
-              "id": "8e1cf2aa-c48f-4407-898b-c3d70cd372a7",
+              "id": "60f898b5-9a71-4a1f-a972-b2a2f39e2ca2",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -6917,7 +6917,7 @@
           }
         },
         {
-          "id": "f37a186d-e356-4126-8cfc-b960b2023575",
+          "id": "d00793b2-acc7-4f8f-9817-55c8f8d4d366",
           "name": "Lift a rider suspension",
           "request": {
             "name": "Lift a rider suspension",
@@ -6953,7 +6953,7 @@
           },
           "response": [
             {
-              "id": "8c1c8ec5-7c1c-4cd8-ab46-1f943cb08237",
+              "id": "0113223e-6c11-40fd-be00-3774ee2ddff4",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7005,7 +7005,7 @@
       "description": "",
       "item": [
         {
-          "id": "ab1125d2-57ff-4873-b4f7-e9b9340fe09f",
+          "id": "ecaa0530-56e1-4afb-9a6a-850e320b0313",
           "name": "Pilot KPI snapshot (7-day reorder rate, completion, avg times)",
           "request": {
             "name": "Pilot KPI snapshot (7-day reorder rate, completion, avg times)",
@@ -7052,7 +7052,7 @@
           },
           "response": [
             {
-              "id": "9c5c9818-2990-4ec3-b344-f4e1d97987a8",
+              "id": "d6577d42-3c60-4e71-83e6-90353862b229",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7112,7 +7112,7 @@
       "description": "",
       "item": [
         {
-          "id": "49f0d897-6f3a-4977-b75b-81eed9f855d4",
+          "id": "15970030-f8e1-4293-9d1a-417916ed26c7",
           "name": "Vendor balance — read from LedgerEntry, signed (positive = platform owes vendor)",
           "request": {
             "name": "Vendor balance — read from LedgerEntry, signed (positive = platform owes vendor)",
@@ -7151,7 +7151,7 @@
           },
           "response": [
             {
-              "id": "0316504b-e180-46f2-94b5-f1bef983b473",
+              "id": "5528d61e-94d1-4a22-aebc-317d28cbd0cb",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7197,7 +7197,7 @@
           }
         },
         {
-          "id": "e013d1f2-3a8a-451a-a34a-3b65022d431b",
+          "id": "75ecb136-7386-422b-95d9-9b6e00209292",
           "name": "Rider balance — read from LedgerEntry, signed (positive = platform owes rider)",
           "request": {
             "name": "Rider balance — read from LedgerEntry, signed (positive = platform owes rider)",
@@ -7236,7 +7236,7 @@
           },
           "response": [
             {
-              "id": "ac878efc-50c8-4c1d-83da-9084d9b24c32",
+              "id": "57da7e37-f8a7-4db2-b02e-e7d8ac0f29d6",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7282,7 +7282,7 @@
           }
         },
         {
-          "id": "cf627d14-acca-4eb1-907b-a53f989a9f87",
+          "id": "dcdc8ac9-4666-4e91-ac14-b8da17eda3d1",
           "name": "Paginated list of vendor balances (sorted by balance DESC)",
           "request": {
             "name": "Paginated list of vendor balances (sorted by balance DESC)",
@@ -7356,7 +7356,7 @@
           },
           "response": [
             {
-              "id": "dc4d26e2-517d-4206-8aec-eeacb9f02825",
+              "id": "1fec5fd0-1cb7-4471-8e03-30da34abf9d5",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7437,7 +7437,7 @@
           }
         },
         {
-          "id": "0e275322-8905-49c0-bc54-d8c22287bee1",
+          "id": "a30f436e-e199-4b30-a3c1-c819a4a502c9",
           "name": "Paginated list of rider balances (sorted by balance DESC)",
           "request": {
             "name": "Paginated list of rider balances (sorted by balance DESC)",
@@ -7453,7 +7453,7 @@
                     "type": "text/plain"
                   },
                   "key": "vehicleType",
-                  "value": "MOTO"
+                  "value": "ON_FOOT"
                 },
                 {
                   "disabled": false,
@@ -7499,7 +7499,7 @@
           },
           "response": [
             {
-              "id": "526dacf5-9667-41eb-88d2-0bdf27927371",
+              "id": "c59c4420-7156-4188-bda6-4911ce6e1427",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7513,7 +7513,7 @@
                         "type": "text/plain"
                       },
                       "key": "vehicleType",
-                      "value": "MOTO"
+                      "value": "ON_FOOT"
                     },
                     {
                       "disabled": false,
@@ -7571,7 +7571,7 @@
           }
         },
         {
-          "id": "7685644b-cfe6-4381-8afd-7418042c196c",
+          "id": "3c287472-bfd8-4eed-ba3c-73a3b630363a",
           "name": "Refund worklist — orders in PaymentStatus.REFUND_PENDING, oldest first",
           "request": {
             "name": "Refund worklist — orders in PaymentStatus.REFUND_PENDING, oldest first",
@@ -7618,7 +7618,7 @@
           },
           "response": [
             {
-              "id": "23ea6f52-24f0-464c-bcc2-a2210ec292b0",
+              "id": "6acb7d3b-3ce4-4f92-8e94-f2e217f2c253",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7672,7 +7672,7 @@
           }
         },
         {
-          "id": "b33d157f-c55f-47e3-8046-a58d8c9ef455",
+          "id": "7ccdf749-64dc-4e51-987f-82f436d648c0",
           "name": "Cashout request queue — INFORMAL vendor on-demand cashouts (ADR-0005, 7.2b)",
           "request": {
             "name": "Cashout request queue — INFORMAL vendor on-demand cashouts (ADR-0005, 7.2b)",
@@ -7691,7 +7691,7 @@
                     "type": "text/plain"
                   },
                   "key": "status",
-                  "value": "APPROVED"
+                  "value": "CANCELLED"
                 },
                 {
                   "disabled": false,
@@ -7728,7 +7728,7 @@
           },
           "response": [
             {
-              "id": "274da544-caca-40a4-a238-40b060272a43",
+              "id": "0c96809c-3ab8-461d-ace0-db5a4595780c",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7742,7 +7742,7 @@
                         "type": "text/plain"
                       },
                       "key": "status",
-                      "value": "APPROVED"
+                      "value": "CANCELLED"
                     },
                     {
                       "disabled": false,
@@ -7791,7 +7791,7 @@
           }
         },
         {
-          "id": "3947dfc6-7d9b-4ff7-bfce-bdcddf90cc75",
+          "id": "ee279c7c-d603-4559-866a-53db591f4486",
           "name": "Approve a cashout request — creates a VendorPayout via the 7.2a path",
           "request": {
             "name": "Approve a cashout request — creates a VendorPayout via the 7.2a path",
@@ -7838,7 +7838,7 @@
           },
           "response": [
             {
-              "id": "7ebdb457-a7f9-4cdd-90a2-0fa957ca9e22",
+              "id": "72752e9d-fd0d-4ce2-88ef-e7f80e27b9a5",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -7892,7 +7892,7 @@
           }
         },
         {
-          "id": "11607cab-2a59-4788-8de3-d162799761fb",
+          "id": "eceb2eb4-445f-4042-b147-a37104f9d218",
           "name": "Reject a cashout request with a reason",
           "request": {
             "name": "Reject a cashout request with a reason",
@@ -7943,7 +7943,7 @@
           },
           "response": [
             {
-              "id": "3277d230-4369-4afb-8ab9-9e57fcf69a0f",
+              "id": "e3b0aa85-7eee-47c3-a7cf-7364f990beb6",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8010,7 +8010,7 @@
           }
         },
         {
-          "id": "c8272104-d735-4881-96a4-0f482349396b",
+          "id": "2e00c08c-4535-4cef-a45a-1ec4a299b982",
           "name": "Campay circuit breaker state (#92) — CLOSED / OPEN / HALF_OPEN",
           "request": {
             "name": "Campay circuit breaker state (#92) — CLOSED / OPEN / HALF_OPEN",
@@ -8038,7 +8038,7 @@
           },
           "response": [
             {
-              "id": "863bb0b6-4a3a-4cc1-a3b4-9b396a781336",
+              "id": "4eb1f434-9b11-4612-bc4a-5479f040acee",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8073,7 +8073,7 @@
           }
         },
         {
-          "id": "c7df43b1-3d64-4beb-b20c-c8ef3595e3ed",
+          "id": "685ffe66-b9b1-495e-9203-20fda426d1cf",
           "name": "List failed / stuck payouts + refunds needing admin attention",
           "request": {
             "name": "List failed / stuck payouts + refunds needing admin attention",
@@ -8101,7 +8101,7 @@
           },
           "response": [
             {
-              "id": "b2b3b646-cc00-46bf-adfe-f5e7e0c7620c",
+              "id": "194dc2f7-177f-4ae1-8dff-017e2a2283ab",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8136,7 +8136,7 @@
           }
         },
         {
-          "id": "2131604f-2ce9-4fa9-b2f6-2d8893a685bf",
+          "id": "34eac1d3-436b-4ffc-b0c7-d8fc96ad6609",
           "name": "Retry a FAILED vendor payout — flips it back to PENDING",
           "request": {
             "name": "Retry a FAILED vendor payout — flips it back to PENDING",
@@ -8172,7 +8172,7 @@
           },
           "response": [
             {
-              "id": "2f4386db-abee-49de-b881-af923d373361",
+              "id": "7270caf9-4baa-4072-a1d8-05f31b18ef08",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8218,7 +8218,7 @@
           }
         },
         {
-          "id": "c53a451a-052e-49e1-bce4-5fe537185c73",
+          "id": "b1cd954b-7c61-40ec-9bf7-458b840e824a",
           "name": "Retry a FAILED rider payout — flips it back to PENDING",
           "request": {
             "name": "Retry a FAILED rider payout — flips it back to PENDING",
@@ -8254,7 +8254,7 @@
           },
           "response": [
             {
-              "id": "4756a508-82a7-4587-bcf7-aa44ec70296f",
+              "id": "3aa00ca0-a24a-4b09-95fc-f23a26161360",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8300,7 +8300,7 @@
           }
         },
         {
-          "id": "1782f92f-87fa-4e36-836b-75036a7a51fe",
+          "id": "7ab214cf-74c2-4b1e-9d88-72d2a51f1825",
           "name": "Manually mark a vendor payout PAID after firing it via the Campay UI",
           "request": {
             "name": "Manually mark a vendor payout PAID after firing it via the Campay UI",
@@ -8362,7 +8362,7 @@
           },
           "response": [
             {
-              "id": "25cd49df-6751-4cd7-8015-92a86af7e5c3",
+              "id": "4985f3ee-20e4-491d-854e-6a3f37902d41",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8429,7 +8429,7 @@
           }
         },
         {
-          "id": "c19df3b2-df1d-40ba-92e3-e500fa136f2d",
+          "id": "b9c4ae1f-a8d3-4451-b5b2-15ae6717506c",
           "name": "Manually mark a rider payout PAID after manual Campay fire",
           "request": {
             "name": "Manually mark a rider payout PAID after manual Campay fire",
@@ -8488,7 +8488,7 @@
           },
           "response": [
             {
-              "id": "bcd4ae3e-936f-4413-80db-00650963d826",
+              "id": "bdbb83f0-e8c8-4a56-9292-d51f70b82507",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8561,7 +8561,7 @@
       "description": "",
       "item": [
         {
-          "id": "42f3e179-7f9b-45ab-8527-fbb130399f2c",
+          "id": "db2edb4e-790f-4fc4-be27-b7eb2c07e555",
           "name": "List Orders stuck in PICKED_UP > 2h — admin rider-fraud triage queue",
           "request": {
             "name": "List Orders stuck in PICKED_UP > 2h — admin rider-fraud triage queue",
@@ -8589,7 +8589,7 @@
           },
           "response": [
             {
-              "id": "8e157516-1faf-40ec-a376-ef82f86ac530",
+              "id": "48843a3a-408e-4067-8003-c964232f29c4",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8624,7 +8624,7 @@
           }
         },
         {
-          "id": "3dbc2b02-771c-4e80-9a0d-526b4337fd9a",
+          "id": "5d2b434b-78dc-434b-96e0-06b359d2276e",
           "name": "Resolve a rider-fraud incident (Order stuck in PICKED_UP)",
           "request": {
             "name": "Resolve a rider-fraud incident (Order stuck in PICKED_UP)",
@@ -8678,7 +8678,7 @@
           },
           "response": [
             {
-              "id": "c99ad33a-df2b-4c04-a360-c813c29fba5b",
+              "id": "094a08fc-3931-4553-a2dd-499e025babb3",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8743,7 +8743,7 @@
       "description": "",
       "item": [
         {
-          "id": "45403999-4152-47c5-9263-f498f84829bd",
+          "id": "36b10b76-a12a-42bb-b986-9d11e6c30e33",
           "name": "List admin audit log entries (Phase A2) — SUPER_ADMIN only",
           "request": {
             "name": "List admin audit log entries (Phase A2) — SUPER_ADMIN only",
@@ -8826,7 +8826,7 @@
           },
           "response": [
             {
-              "id": "3ebb0827-53bc-4772-ae83-1e118ae0fc0c",
+              "id": "7a55e769-00f2-4b46-b4d8-1c31299aec9d",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -8922,7 +8922,7 @@
       "description": "",
       "item": [
         {
-          "id": "e82fbbbd-415b-4d9f-bda4-8c981c85f509",
+          "id": "7887246c-38e0-467f-9e56-6398a83ded75",
           "name": "Masked rider → consumer call (Story 4.17)",
           "request": {
             "name": "Masked rider → consumer call (Story 4.17)",
@@ -8958,7 +8958,7 @@
           },
           "response": [
             {
-              "id": "fc34b381-b67b-4acb-99c9-8e7a7f8887f4",
+              "id": "72110658-89ad-48cf-9018-fd20591e9e8d",
               "name": "202",
               "originalRequest": {
                 "url": {
@@ -9004,7 +9004,7 @@
           }
         },
         {
-          "id": "2f6b90ae-0dc0-483a-8abd-94316d81f9f5",
+          "id": "a2787514-b0ec-4d0c-a6fc-f39b33b3092a",
           "name": "Masked vendor → consumer call (Story 3.17)",
           "request": {
             "name": "Masked vendor → consumer call (Story 3.17)",
@@ -9040,7 +9040,7 @@
           },
           "response": [
             {
-              "id": "93409dad-f383-4c6f-88b9-987baca89976",
+              "id": "e400873b-56c2-4e6f-bcd5-0bc5c5fff5d6",
               "name": "202",
               "originalRequest": {
                 "url": {
@@ -9086,7 +9086,7 @@
           }
         },
         {
-          "id": "0d15057c-65a5-468c-8a66-e5b99076b59d",
+          "id": "6c5acf9b-953d-4a8c-ba72-14790826a25c",
           "name": "Masked vendor → rider call (Story 3.17)",
           "request": {
             "name": "Masked vendor → rider call (Story 3.17)",
@@ -9122,7 +9122,7 @@
           },
           "response": [
             {
-              "id": "50795a41-fb4c-42e2-b328-ceed02e3484c",
+              "id": "4fbd1654-07ff-4aa9-8d1e-0de534161a3b",
               "name": "202",
               "originalRequest": {
                 "url": {
@@ -9168,7 +9168,7 @@
           }
         },
         {
-          "id": "d765c319-177c-47b1-a32a-ce19fc28ab4a",
+          "id": "e2634456-02eb-4aca-8f7f-31f46d6c723b",
           "name": "Masked consumer → vendor call",
           "request": {
             "name": "Masked consumer → vendor call",
@@ -9204,7 +9204,7 @@
           },
           "response": [
             {
-              "id": "e0f12a44-daef-4a87-87b4-48801916ba94",
+              "id": "34e4b24b-93a1-42dc-97c9-94e4ecd58ad1",
               "name": "202",
               "originalRequest": {
                 "url": {
@@ -9250,7 +9250,7 @@
           }
         },
         {
-          "id": "29046cb9-2fd6-4c72-82c3-25b9144a0997",
+          "id": "b417888f-ab78-4488-bd1b-7ed57ff29ac2",
           "name": "Masked consumer → rider call",
           "request": {
             "name": "Masked consumer → rider call",
@@ -9286,7 +9286,7 @@
           },
           "response": [
             {
-              "id": "f994fa27-259b-489b-a313-86babb828724",
+              "id": "2b00a8fe-f72f-443f-aecf-aaba6ccab608",
               "name": "202",
               "originalRequest": {
                 "url": {
@@ -9332,7 +9332,7 @@
           }
         },
         {
-          "id": "ad74badc-f1d5-4276-a21a-224c7d6d9b64",
+          "id": "05b8ec33-81f1-4a26-bfea-cf4f604de43b",
           "name": "TwiML bridge (Twilio Voice webhook)",
           "request": {
             "name": "TwiML bridge (Twilio Voice webhook)",
@@ -9368,7 +9368,7 @@
           },
           "response": [
             {
-              "id": "bfbd619d-2bc2-4022-97d1-67d14eed988b",
+              "id": "82876d5a-e180-4f08-977a-30c7e78fb1b7",
               "name": "201",
               "originalRequest": {
                 "url": {
@@ -9412,7 +9412,7 @@
           }
         },
         {
-          "id": "f85761d6-86fc-4cb0-a69c-96fa396d06f0",
+          "id": "26273f8a-7634-4012-886d-324ab35b6917",
           "name": "TwiML bridge (GET fallback for Twilio Voice)",
           "request": {
             "name": "TwiML bridge (GET fallback for Twilio Voice)",
@@ -9448,7 +9448,7 @@
           },
           "response": [
             {
-              "id": "88abe780-5bc5-4414-be88-9ae8e38bb480",
+              "id": "7f7a04bb-55bf-40e9-b83d-c37ed3a6c5c8",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -9498,7 +9498,7 @@
       "description": "",
       "item": [
         {
-          "id": "5c07e1d8-192f-4e0a-8d40-af36f00b2094",
+          "id": "72a3c246-dd9a-42fa-860a-ac7786f7d8ca",
           "name": "Health Controller health",
           "request": {
             "name": "Health Controller health",
@@ -9515,7 +9515,7 @@
           },
           "response": [
             {
-              "id": "56f9dba7-da71-4851-bb18-81a50e7e223b",
+              "id": "37be15ee-a9d6-4685-af7d-55c9e3f0dec8",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -9540,7 +9540,7 @@
           }
         },
         {
-          "id": "ff2ffb82-1127-475b-8638-3d6f9053f9d3",
+          "id": "970378e7-4138-441c-96ba-9fbd3c902c99",
           "name": "Health Controller ready",
           "request": {
             "name": "Health Controller ready",
@@ -9557,7 +9557,7 @@
           },
           "response": [
             {
-              "id": "9c0706f7-1c53-485a-9319-4ad2d26e5df3",
+              "id": "2e07ae0b-d124-477b-a59c-b7dd8ae47c07",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -9588,7 +9588,7 @@
       "description": "",
       "item": [
         {
-          "id": "f8b16ff8-1d29-423c-857e-3b77f463a117",
+          "id": "88a0bdb6-4ed7-405c-8a03-cdc2fbea080b",
           "name": "Open Api Controller get",
           "request": {
             "name": "Open Api Controller get",
@@ -9605,7 +9605,7 @@
           },
           "response": [
             {
-              "id": "2ce26afa-197f-4151-8887-928a21e00fac",
+              "id": "f9c97484-d37c-4822-aee4-a1ace1c1a754",
               "name": "200",
               "originalRequest": {
                 "url": {
@@ -9640,7 +9640,7 @@
     }
   ],
   "info": {
-    "_postman_id": "5350c5e8-5326-4bcf-bdb6-8517733a87e6",
+    "_postman_id": "d128deb8-f2c0-48fc-a17b-8d7045b94654",
     "name": "ChopNow API",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     "description": {
