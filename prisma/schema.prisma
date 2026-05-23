@@ -160,6 +160,7 @@ model User {
   adminTotpSecret   AdminTotpSecret?
   adminRecoveryCodes AdminRecoveryCode[]
   adminAuditLogs    AdminAuditLog[]
+  devices           Device[]
 
   @@index([phone])
   @@index([role])
@@ -191,10 +192,14 @@ model OtpLog {
 }
 
 // Story 1.2: Refresh token rotation + Story 1.7 revocation cascade
+// Phase C1: deviceId FK so we can attribute each refresh to a specific
+// device (linked via the HttpOnly chopnow_did cookie at issue time).
 model RefreshToken {
   id         String    @id @default(uuid())
   userId     String
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceId   String?
+  device     Device?   @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   tokenHash  String    @unique
   expiresAt  DateTime
   revokedAt  DateTime?
@@ -203,7 +208,30 @@ model RefreshToken {
 
   @@index([userId])
   @@index([tokenHash])
+  @@index([deviceId])
   @@map("refresh_tokens")
+}
+
+// Phase C1 — per-device tracking for refresh-token fingerprinting +
+// new-device alert emails. The row's `id` doubles as the value stored
+// client-side in the HttpOnly `chopnow_did` cookie (random UUID,
+// unguessable, lifetime ~10 years). userAgentHash is sha256(UA) — we
+// keep a short human-readable label for the alert email but never the
+// raw UA. ipAddress is the most recently observed IP at sign-in /
+// rotation time.
+model Device {
+  id             String         @id @default(uuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgentHash  String?
+  userAgentLabel String?
+  ipAddress      String?
+  firstSeenAt    DateTime       @default(now())
+  lastSeenAt     DateTime       @default(now())
+  refreshTokens  RefreshToken[]
+
+  @@index([userId])
+  @@map("devices")
 }
 
 // Phase A2 — admin audit log. Append-only record of every admin write

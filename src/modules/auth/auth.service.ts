@@ -10,6 +10,18 @@ import { RedisService } from '../../infra/redis/redis.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
 import { normalizePhone } from '../../shared/phone/phone.util';
 import { parseDurationMs } from '../../shared/time/duration.util';
+import { DeviceService, DeviceMeta } from './device.service';
+
+/**
+ * Phase C1 — the issued-token bundle now also carries the deviceId so
+ * the controller can mint / refresh the `chopnow_did` cookie alongside
+ * the existing `chopnow_rt` cookie.
+ */
+export interface IssuedTokens {
+  accessToken: string;
+  refreshToken: string;
+  deviceId: string;
+}
 
 const OTP_TTL_MINUTES = 5;
 const OTP_MAX_ATTEMPTS = 3;
@@ -46,6 +58,7 @@ export class AuthService {
     private readonly env: EnvService,
     private readonly otpDelivery: OtpDeliveryService,
     private readonly redis: RedisService,
+    private readonly devices: DeviceService,
   ) {}
 
   /**
@@ -121,10 +134,7 @@ export class AuthService {
     return { ok: true, expiresInSeconds: OTP_TTL_MINUTES * 60 };
   }
 
-  async verifyOtp(
-    phone: string,
-    code: string,
-  ): Promise<{ accessToken: string; refreshToken: string }> {
+  async verifyOtp(phone: string, code: string, meta: DeviceMeta): Promise<IssuedTokens> {
     phone = normalizePhone(phone);
     const log = await this.prisma.otpLog.findFirst({
       where: {
@@ -170,7 +180,17 @@ export class AuthService {
       create: { phone, role: UserRole.CONSUMER },
     });
 
-    return this.signTokens(user.id, user.role);
+    // Phase C1+C2 — pin this sign-in to a Device row, then on a brand-
+    // new device fire a "Nouvelle connexion détectée" alert. The mail
+    // send is fire-and-forget; a slow / failing Resend call must not
+    // delay or fail verifyOtp itself (the user is mid-sign-in and
+    // expects an immediate 200).
+    const resolved = await this.devices.resolveDevice(user.id, meta);
+    if (resolved.isNew) {
+      void this.devices.sendNewDeviceAlert(user.id, resolved.device);
+    }
+
+    return this.signTokens(user.id, user.role, undefined, resolved.device.id);
   }
 
   /**
@@ -186,7 +206,8 @@ export class AuthService {
     userId: string,
     role: UserRole,
     rawRefreshToken: string,
-  ): Promise<{ accessToken: string; refreshToken: string }> {
+    meta: DeviceMeta,
+  ): Promise<IssuedTokens> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.isActive || user.isDeleted) {
       // Suspended/deleted user. Wipe whatever refresh tokens they had so the
@@ -267,7 +288,16 @@ export class AuthService {
         });
       }
 
-      return await this.signTokens(userId, role, matched.id);
+      // Phase C1 — rotate within the same Device. If the cookie was
+      // dropped (browser cleared it) or never matched, resolveDevice
+      // mints a fresh row — but we deliberately suppress the alert
+      // email here: the user is already authenticated via the refresh
+      // token they hold, so a missing chopnow_did doesn't represent a
+      // new-device sign-in. The previous device's row stays in place;
+      // future RefreshToken rotations from that browser will key off
+      // the freshly-set cookie.
+      const resolved = await this.devices.resolveDevice(userId, meta);
+      return await this.signTokens(userId, role, matched.id, resolved.device.id);
     } finally {
       // Release on every exit — success, refresh_invalid_or_expired, or
       // refresh_reuse_detected. The natural 5s TTL is the safety net for
@@ -278,7 +308,12 @@ export class AuthService {
     }
   }
 
-  private async signTokens(userId: string, role: UserRole, replacesTokenId?: string) {
+  private async signTokens(
+    userId: string,
+    role: UserRole,
+    replacesTokenId?: string,
+    deviceId?: string,
+  ): Promise<IssuedTokens> {
     const accessTtl = this.env.jwtAccessTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
     const refreshTtl = this.env.jwtRefreshTtl as `${number}${'s' | 'm' | 'h' | 'd'}`;
     // Unique JWT IDs per token. Without `jti`, two tokens minted in the same
@@ -307,7 +342,7 @@ export class AuthService {
     // token expires).
     await this.prisma.$transaction(async (tx) => {
       const row = await tx.refreshToken.create({
-        data: { userId, tokenHash: refreshTokenHash, expiresAt },
+        data: { userId, tokenHash: refreshTokenHash, expiresAt, deviceId: deviceId ?? null },
       });
       if (replacesTokenId) {
         await tx.refreshToken.update({
@@ -317,7 +352,26 @@ export class AuthService {
       }
     });
 
-    return { accessToken, refreshToken };
+    return { accessToken, refreshToken, deviceId: deviceId ?? '' };
+  }
+
+  /**
+   * Phase C2 — "log out everywhere." Revokes every active refresh-token
+   * row for this user AND adds them to the JwtRevocation set so their
+   * access tokens are rejected even before they expire. Used by the
+   * `POST /auth/sessions/revoke-all` endpoint the new-device alert
+   * email points users at.
+   */
+  async revokeAllSessions(userId: string): Promise<{ revokedCount: number }> {
+    const result = await this.prisma.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    this.logger.info(
+      { event: 'auth_revoke_all_sessions', userId, revokedCount: result.count },
+      'All refresh tokens revoked for user',
+    );
+    return { revokedCount: result.count };
   }
 
   /**

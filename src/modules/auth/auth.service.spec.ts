@@ -8,7 +8,10 @@ import { EnvService } from '../../infra/config/env.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { RedisService } from '../../infra/redis/redis.service';
 import { OtpDeliveryService } from '../../infra/twilio/otp-delivery.service';
+import { DeviceService } from './device.service';
 import { pinoLoggerProvider } from '../../shared/testing/pino-mock';
+
+const TEST_META = { deviceCookie: null, ipAddress: '127.0.0.1', userAgent: 'jest' };
 
 describe('AuthService', () => {
   let service: AuthService;
@@ -90,6 +93,19 @@ describe('AuthService', () => {
         },
         { provide: OtpDeliveryService, useValue: otpDelivery },
         { provide: RedisService, useValue: redis },
+        {
+          // Stub DeviceService: every resolveDevice call returns a fresh
+          // device id; tests that care about new-device alert specifics
+          // can spy on the methods themselves.
+          provide: DeviceService,
+          useValue: {
+            resolveDevice: jest.fn().mockImplementation(async () => ({
+              device: { id: 'dev-1' },
+              isNew: false,
+            })),
+            sendNewDeviceAlert: jest.fn().mockResolvedValue(undefined),
+          },
+        },
       ],
     }).compile();
 
@@ -223,7 +239,7 @@ describe('AuthService', () => {
         expiresAt: new Date(Date.now() + 60_000),
       });
 
-      await service.verifyOtp('670000000', '123456');
+      await service.verifyOtp('670000000', '123456', TEST_META);
 
       // The whole point of releasing here: a user who verifies, logs out,
       // then tries to sign in again within 30s would otherwise be stuck
@@ -241,7 +257,9 @@ describe('AuthService', () => {
     it('looks up the OtpLog using the canonical phone form', async () => {
       prisma.otpLog.findFirst.mockResolvedValue(null);
 
-      await expect(service.verifyOtp('670000000', '123456')).rejects.toThrow(UnauthorizedException);
+      await expect(service.verifyOtp('670000000', '123456', TEST_META)).rejects.toThrow(
+        UnauthorizedException,
+      );
 
       const where = prisma.otpLog.findFirst.mock.calls[0][0].where;
       expect(where.phone).toBe('+237670000000');
@@ -259,9 +277,13 @@ describe('AuthService', () => {
         status: OtpStatus.SENT,
       });
 
-      const result = await service.verifyOtp('+237670000000', code);
+      const result = await service.verifyOtp('+237670000000', code, TEST_META);
 
-      expect(result).toEqual({ accessToken: 'access-jwt', refreshToken: 'refresh-jwt' });
+      expect(result).toMatchObject({
+        accessToken: 'access-jwt',
+        refreshToken: 'refresh-jwt',
+        deviceId: 'dev-1',
+      });
       const statusFilter = prisma.otpLog.findFirst.mock.calls[0][0].where.status;
       expect(statusFilter.in).toEqual(
         expect.arrayContaining([OtpStatus.PENDING, OtpStatus.SENT, OtpStatus.DELIVERED]),
@@ -277,7 +299,7 @@ describe('AuthService', () => {
         status: OtpStatus.SENT,
       });
 
-      await service.verifyOtp('+237670000000', code);
+      await service.verifyOtp('+237670000000', code, TEST_META);
 
       expect(prisma.$transaction).toHaveBeenCalledTimes(1);
       expect(prisma.refreshToken.create).toHaveBeenCalledTimes(1);
@@ -317,9 +339,13 @@ describe('AuthService', () => {
       });
       prisma.refreshToken.findMany.mockResolvedValue([await row()]);
 
-      const result = await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+      const result = await service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META);
 
-      expect(result).toEqual({ accessToken: 'access-jwt', refreshToken: 'refresh-jwt' });
+      expect(result).toMatchObject({
+        accessToken: 'access-jwt',
+        refreshToken: 'refresh-jwt',
+        deviceId: 'dev-1',
+      });
       // Old token marked revoked + linked to the replacement.
       expect(prisma.refreshToken.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -340,11 +366,11 @@ describe('AuthService', () => {
         await row({ revokedAt: new Date(Date.now() - 10_000) }),
       ]);
 
-      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
-        {
-          response: { code: 'refresh_reuse_detected' },
-        },
-      );
+      await expect(
+        service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
+      ).rejects.toMatchObject({
+        response: { code: 'refresh_reuse_detected' },
+      });
 
       // Family wipe.
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
@@ -362,11 +388,11 @@ describe('AuthService', () => {
         isDeleted: false,
       });
 
-      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
-        {
-          response: { code: 'user_suspended' },
-        },
-      );
+      await expect(
+        service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
+      ).rejects.toMatchObject({
+        response: { code: 'user_suspended' },
+      });
 
       // All active tokens wiped even though we don't look at the candidates.
       expect(prisma.refreshToken.updateMany).toHaveBeenCalledWith({
@@ -382,11 +408,11 @@ describe('AuthService', () => {
       // JWT-signed user that has since been hard-deleted from the DB.
       prisma.user.findUnique.mockResolvedValue(null);
 
-      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
-        {
-          response: { code: 'user_suspended' },
-        },
-      );
+      await expect(
+        service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
+      ).rejects.toMatchObject({
+        response: { code: 'user_suspended' },
+      });
     });
 
     it('rejects with user_suspended when user.isDeleted=true', async () => {
@@ -396,11 +422,11 @@ describe('AuthService', () => {
         isDeleted: true,
       });
 
-      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
-        {
-          response: { code: 'user_suspended' },
-        },
-      );
+      await expect(
+        service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
+      ).rejects.toMatchObject({
+        response: { code: 'user_suspended' },
+      });
     });
 
     it('rejects with refresh_invalid_or_expired when no unexpired row matches', async () => {
@@ -412,11 +438,11 @@ describe('AuthService', () => {
       // Either the DB is empty or every row's hash mismatches.
       prisma.refreshToken.findMany.mockResolvedValue([]);
 
-      await expect(service.refresh(userId, UserRole.CONSUMER, incomingToken)).rejects.toMatchObject(
-        {
-          response: { code: 'refresh_invalid_or_expired' },
-        },
-      );
+      await expect(
+        service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
+      ).rejects.toMatchObject({
+        response: { code: 'refresh_invalid_or_expired' },
+      });
 
       // No revoke side-effects — we don't know which family to touch.
       expect(prisma.refreshToken.updateMany).not.toHaveBeenCalled();
@@ -431,7 +457,7 @@ describe('AuthService', () => {
       });
       prisma.refreshToken.findMany.mockResolvedValue([await row()]);
 
-      await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+      await service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META);
 
       const where = prisma.refreshToken.findMany.mock.calls[0][0].where;
       // The presence of `revokedAt: null` in this filter would silently
@@ -450,7 +476,7 @@ describe('AuthService', () => {
         });
         prisma.refreshToken.findMany.mockResolvedValue([await row()]);
 
-        await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+        await service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META);
 
         expect(redis.setNX).toHaveBeenCalledWith(
           expect.stringMatching(/^refresh:inflight:[a-f0-9]{32}$/),
@@ -475,7 +501,7 @@ describe('AuthService', () => {
         redis.setNX.mockResolvedValueOnce(false);
 
         await expect(
-          service.refresh(userId, UserRole.CONSUMER, incomingToken),
+          service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
         ).rejects.toMatchObject({ response: { code: 'refresh_in_flight' } });
 
         // Critical: no DB side-effects. The whole point of the lock is to
@@ -494,7 +520,7 @@ describe('AuthService', () => {
         });
         prisma.refreshToken.findMany.mockResolvedValue([await row()]);
 
-        await service.refresh(userId, UserRole.CONSUMER, incomingToken);
+        await service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META);
 
         expect(redis.del).toHaveBeenCalledWith(
           expect.stringMatching(/^refresh:inflight:[a-f0-9]{32}$/),
@@ -512,7 +538,7 @@ describe('AuthService', () => {
         ]);
 
         await expect(
-          service.refresh(userId, UserRole.CONSUMER, incomingToken),
+          service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
         ).rejects.toMatchObject({ response: { code: 'refresh_reuse_detected' } });
 
         expect(redis.del).toHaveBeenCalled();
@@ -526,7 +552,7 @@ describe('AuthService', () => {
         });
 
         await expect(
-          service.refresh(userId, UserRole.CONSUMER, incomingToken),
+          service.refresh(userId, UserRole.CONSUMER, incomingToken, TEST_META),
         ).rejects.toMatchObject({ response: { code: 'user_suspended' } });
 
         // No lock work when we never reach the rotation path.
