@@ -143,6 +143,11 @@ jobs:
           STAGING_LOKI_URL: ${{ secrets.STAGING_LOKI_URL }}
           STAGING_LOKI_USERNAME: ${{ secrets.STAGING_LOKI_USERNAME }}
           STAGING_LOKI_TOKEN: ${{ secrets.STAGING_LOKI_TOKEN }}
+          # Phase O2.2 — Grafana Alloy → Prometheus scraping. Reuses
+          # STAGING_LOKI_TOKEN since the access policy has both
+          # logs:write + metrics:write scopes.
+          STAGING_PROM_URL: ${{ secrets.STAGING_PROM_URL }}
+          STAGING_PROM_USERNAME: ${{ secrets.STAGING_PROM_USERNAME }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
@@ -201,6 +206,13 @@ jobs:
           LOKI_URL=${STAGING_LOKI_URL}
           LOKI_USERNAME=${STAGING_LOKI_USERNAME}
           LOKI_TOKEN=${STAGING_LOKI_TOKEN}
+          # Phase O2.2 — Grafana Alloy → Prometheus remote-write env.
+          # Read by docker-compose at apply time + substituted into the
+          # alloy container. Empty values → Alloy starts but drops
+          # samples (logs warnings, no crash).
+          PROM_REMOTE_WRITE_URL=${STAGING_PROM_URL}
+          GRAFANA_USERNAME=${STAGING_PROM_USERNAME}
+          GRAFANA_TOKEN=${STAGING_LOKI_TOKEN}
           IMAGE_TAG=${SHA}
           EOF
 
@@ -211,6 +223,12 @@ jobs:
         run: |
           scp deploy/docker-compose.staging.yml "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/docker-compose.yml"
           scp /tmp/.env.staging "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/.env"
+          # Phase O2.2 — Alloy config sits next to the compose file.
+          # The volume mount in docker-compose.staging.yml is relative
+          # (./alloy/config.alloy → /etc/alloy/config.alloy:ro), so the
+          # file must land at /opt/chopnow/staging/alloy/config.alloy.
+          ssh "${STAGING_USER}@${STAGING_HOST}" 'mkdir -p /opt/chopnow/staging/alloy'
+          scp deploy/alloy/config.alloy "${STAGING_USER}@${STAGING_HOST}:/opt/chopnow/staging/alloy/config.alloy"
           # Local copy of the env file has plaintext secrets — wipe after upload.
           shred -u /tmp/.env.staging 2>/dev/null || rm -f /tmp/.env.staging
 
