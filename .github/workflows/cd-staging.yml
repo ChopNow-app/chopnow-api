@@ -104,7 +104,13 @@ jobs:
           PORT=3001
           APP_URL=${STAGING_APP_URL}
           DB_PASSWORD=${STAGING_DB_PASSWORD}
-          DATABASE_URL=postgresql://chopnow:${STAGING_DB_PASSWORD}@db:5432/chopnow?schema=public
+          # DB hardening — explicit connection pool + statement timeout.
+          # connection_limit=20: caps concurrent Prisma connections (default
+          #   2*CPUs is too low on the small staging droplet).
+          # pool_timeout=20: explicit pool-acquire timeout.
+          # statement_timeout=30000: 30s server-side cap so a runaway query
+          #   can't hold a connection indefinitely.
+          DATABASE_URL=postgresql://chopnow:${STAGING_DB_PASSWORD}@db:5432/chopnow?schema=public&connection_limit=20&pool_timeout=20&statement_timeout=30000
           REDIS_HOST=redis
           REDIS_PORT=6379
           REDIS_PASSWORD=

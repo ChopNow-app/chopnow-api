@@ -209,6 +209,10 @@ model RefreshToken {
   @@index([userId])
   @@index([tokenHash])
   @@index([deviceId])
+  // DB hardening — composite for AuthService.refresh's
+  // findMany({ where: { userId, expiresAt: { gt: now } } }) so the
+  // expired-row filter happens during the index scan, not after.
+  @@index([userId, expiresAt])
   @@map("refresh_tokens")
 }
 
