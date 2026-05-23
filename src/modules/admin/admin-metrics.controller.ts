@@ -1,11 +1,10 @@
 import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
 import { Roles } from '../../shared/decorators/roles.decorator';
+import { ADMIN_WRITE_ROLES } from './admin.roles';
 import { AdminMetricsService } from './admin-metrics.service';
 
 const DEFAULT_WINDOW_DAYS = 7;
-const ADMIN_ROLES = [UserRole.OPERATOR, UserRole.ADMIN] as const;
 
 function parseDate(input: string | undefined, fallback: Date): Date {
   if (!input) return fallback;
@@ -22,7 +21,7 @@ function parseDate(input: string | undefined, fallback: Date): Date {
 export class AdminMetricsController {
   constructor(private readonly metrics: AdminMetricsService) {}
 
-  @Roles(...ADMIN_ROLES)
+  @Roles(...ADMIN_WRITE_ROLES)
   @Get()
   @ApiOperation({
     summary: 'Pilot KPI snapshot (7-day reorder rate, completion, avg times)',
