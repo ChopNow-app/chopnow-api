@@ -1,0 +1,53 @@
+// Grafana Alloy config for the chopnow-api staging droplet.
+//
+// Scrapes the api container's /metrics endpoint over the internal
+// Docker network (no public traffic, no Caddy, no bearer needed)
+// every 15s and remote-writes the result to Grafana Cloud Prometheus.
+//
+// Secrets pulled from env vars passed in by docker-compose:
+//   - PROM_REMOTE_WRITE_URL
+//   - GRAFANA_USERNAME    (numeric Prometheus instance ID)
+//   - GRAFANA_TOKEN       (access-policy token with metrics:write)
+//
+// Edit + redeploy the compose stack to change scrape interval, add
+// targets (postgres_exporter, redis_exporter, …), or tune remote_write.
+
+prometheus.scrape "api" {
+  // `api` is the docker-compose service name; resolves to the
+  // container's internal IP via the compose-managed DNS.
+  targets    = [{ __address__ = "api:3001", instance = "chopnow-api-staging" }]
+  metrics_path = "/metrics"
+  forward_to = [prometheus.remote_write.grafanacloud.receiver]
+
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+
+  // `/metrics` is gated by METRICS_AUTH_TOKEN at the app level if set.
+  // We don't pass a token here because the staging deploy hasn't set
+  // STAGING_METRICS_AUTH_TOKEN (the endpoint is currently open over
+  // the Docker network anyway — gate exists to harden the Caddy-public
+  // surface, not this scrape).
+}
+
+prometheus.remote_write "grafanacloud" {
+  endpoint {
+    url = env("PROM_REMOTE_WRITE_URL")
+
+    basic_auth {
+      username = env("GRAFANA_USERNAME")
+      password = env("GRAFANA_TOKEN")
+    }
+
+    // Don't ship process metrics for Alloy itself — keeps active-series
+    // count down on the free tier.
+    write_relabel_config {
+      source_labels = ["__name__"]
+      regex         = "^(alloy_.*|up)$"
+      action        = "drop"
+    }
+  }
+
+  // Default 30s send interval is fine for pilot scale. Tightening
+  // would just burn quota without making dashboards meaningfully
+  // more real-time given our 15s scrape cadence.
+}
