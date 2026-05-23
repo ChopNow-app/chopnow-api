@@ -188,6 +188,9 @@ jobs:
           SENTRY_TRACES_SAMPLE_RATE=0.1
           # Phase O2 follow-up — /metrics bearer gate.
           METRICS_AUTH_TOKEN=${STAGING_METRICS_AUTH_TOKEN}
+          # Phase O4 — Prisma slow-query log threshold. 500ms default;
+          # tighten to 200ms once we have a baseline.
+          PRISMA_SLOW_QUERY_MS=500
           IMAGE_TAG=${SHA}
           EOF
 

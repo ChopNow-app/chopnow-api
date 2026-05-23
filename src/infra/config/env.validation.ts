@@ -95,4 +95,10 @@ export const envSchema = Joi.object({
   // matching this value. When unset, /metrics is open — right for local
   // dev. Generate with `openssl rand -hex 32`.
   METRICS_AUTH_TOKEN: Joi.string().min(16).allow('').optional(),
+
+  // --- Prisma slow query (Phase O4) ---
+  // Threshold (ms) above which Prisma logs a `prisma_slow_query` event.
+  // Default 500ms. Tighter (200ms) once we have a baseline; looser
+  // (1000ms) only during incident triage to reduce log volume.
+  PRISMA_SLOW_QUERY_MS: Joi.string().pattern(/^\d+$/).optional(),
 });
