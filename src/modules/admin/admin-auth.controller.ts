@@ -1,14 +1,21 @@
-import { Body, Controller, HttpCode, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { UserRole } from '@prisma/client';
-import type { Request } from 'express';
+import type { CookieOptions, Request, Response } from 'express';
+import { EnvService } from '../../infra/config/env.service';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles } from '../../shared/decorators/roles.decorator';
-import { AdminAuthService } from './admin-auth.service';
+import { AdminAuthService, LoginResult } from './admin-auth.service';
 import { AdminTotpService } from './admin-totp.service';
+import { AuthService } from '../auth/auth.service';
+import type { DeviceMeta } from '../auth/device.service';
 import { AdminLoginDto } from './dto/admin-login.dto';
 import { ConfirmAdminTotpDto, VerifyAdminTotpDto } from './dto/admin-2fa.dto';
+
+const REFRESH_COOKIE_NAME = 'chopnow_rt';
+const DEVICE_COOKIE_NAME = 'chopnow_did';
+const DEVICE_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365 * 10; // ~10 years
 
 const ADMIN_ROLES = [
   UserRole.SUPER_ADMIN,
@@ -23,6 +30,8 @@ export class AdminAuthController {
   constructor(
     private readonly adminAuth: AdminAuthService,
     private readonly totp: AdminTotpService,
+    private readonly auth: AuthService,
+    private readonly env: EnvService,
   ) {}
 
   // ── Step 1: password ────────────────────────────────────────────────
@@ -45,8 +54,14 @@ export class AdminAuthController {
       'redirect to enrollment.\n' +
       'Error codes (body.code on 401): invalid_credentials, account_locked.',
   })
-  login(@Body() dto: AdminLoginDto) {
-    return this.adminAuth.login(dto.email, dto.password);
+  async login(
+    @Body() dto: AdminLoginDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.adminAuth.login(dto.email, dto.password, this.readDeviceMeta(req));
+    this.maybeSetSessionCookies(res, result);
+    return this.scrubBody(result);
   }
 
   // ── Step 2: TOTP / recovery code ────────────────────────────────────
@@ -63,8 +78,19 @@ export class AdminAuthController {
       'one decrements the remaining pool. ' +
       'Error codes: totp_challenge_expired, totp_invalid_code.',
   })
-  verify2fa(@Body() dto: VerifyAdminTotpDto) {
-    return this.adminAuth.verifyTotpChallenge(dto.challenge, dto.code, Boolean(dto.isRecoveryCode));
+  async verify2fa(
+    @Body() dto: VerifyAdminTotpDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.adminAuth.verifyTotpChallenge(
+      dto.challenge,
+      dto.code,
+      Boolean(dto.isRecoveryCode),
+      this.readDeviceMeta(req),
+    );
+    this.maybeSetSessionCookies(res, result);
+    return this.scrubBody(result);
   }
 
   // ── Enrollment (requires an authenticated admin session) ────────────
@@ -99,5 +125,61 @@ export class AdminAuthController {
   confirm2faSetup(@Req() req: Request, @Body() dto: ConfirmAdminTotpDto) {
     const user = req.user as { id: string };
     return this.totp.confirmEnrollment(user.id, dto.code);
+  }
+
+  // ── Phase D1 helpers ────────────────────────────────────────────────
+
+  /**
+   * Set the admin refresh + device cookies on the response. Skips when
+   * the login is still mid-flow (`totp_required`) — only the second-
+   * factor success can issue a session.
+   */
+  private maybeSetSessionCookies(res: Response, result: LoginResult): void {
+    if (result.stage !== 'success') return;
+    res.cookie(
+      REFRESH_COOKIE_NAME,
+      result.refreshToken,
+      this.cookieOptions({
+        maxAgeSeconds: this.auth.refreshCookieMaxAgeSeconds(this.auth.adminRefreshTtl()),
+      }),
+    );
+    res.cookie(
+      DEVICE_COOKIE_NAME,
+      result.deviceId,
+      this.cookieOptions({ maxAgeSeconds: DEVICE_COOKIE_MAX_AGE_SECONDS }),
+    );
+  }
+
+  private cookieOptions({ maxAgeSeconds }: { maxAgeSeconds: number }): CookieOptions {
+    return {
+      httpOnly: true,
+      secure: this.env.isProduction,
+      sameSite: 'strict',
+      path: '/api/v1/auth',
+      maxAge: maxAgeSeconds * 1000,
+    };
+  }
+
+  /**
+   * Strip the body refreshToken + deviceId on the way out — the cookies
+   * are the authoritative copies. accessToken stays in the body so the
+   * PWA can put it straight into the in-memory store.
+   */
+  private scrubBody(result: LoginResult) {
+    if (result.stage !== 'success') return result;
+    const { refreshToken: _rt, deviceId: _did, ...rest } = result;
+    void _rt;
+    void _did;
+    return rest;
+  }
+
+  private readDeviceMeta(req: Request): DeviceMeta {
+    const cookieRaw = (req.cookies as { chopnow_did?: unknown } | undefined)?.chopnow_did;
+    const deviceCookie = typeof cookieRaw === 'string' && cookieRaw.length > 0 ? cookieRaw : null;
+    const userAgentRaw = req.headers['user-agent'];
+    const userAgent =
+      typeof userAgentRaw === 'string' && userAgentRaw.length > 0 ? userAgentRaw : null;
+    const ipAddress = typeof req.ip === 'string' && req.ip.length > 0 ? req.ip : null;
+    return { deviceCookie, userAgent, ipAddress };
   }
 }
