@@ -1,0 +1,4304 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/media/{prefix}/{name}": {
+      "get": {
+        "operationId": "MediaController_streamObject",
+        "parameters": [
+          {
+            "name": "prefix",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "name",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "Media"
+        ]
+      }
+    },
+    "/api/v1/auth/request-otp": {
+      "post": {
+        "description": "Sends a 6-digit OTP via WhatsApp (primary) with SMS fallback. Story 1.1.",
+        "operationId": "AuthController_requestOtp_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Request OTP",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/verify-otp": {
+      "post": {
+        "description": "On success: 200 with { accessToken, refreshToken } in body AND sets the HttpOnly `chopnow_rt` refresh cookie (Phase B1). The body refreshToken is kept for backwards compatibility while the consumer PWA cuts over from localStorage to cookie storage; new clients should ignore the body and rely on the cookie.",
+        "operationId": "AuthController_verifyOtp_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyOtpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Verify OTP",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "description": "Story 1.2 — returns a new access + refresh pair. Phase B1: prefers the HttpOnly `chopnow_rt` cookie; falls back to body `refreshToken` during the frontend cutover. Old refresh becomes invalid (rotation). Replaying an already-rotated refresh revokes the entire family. Error codes (body.code on 401): refresh_invalid_or_expired, refresh_reuse_detected, user_suspended.",
+        "operationId": "AuthController_refresh_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshTokenDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Rotate refresh token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "Idempotent: a stale or already-revoked refresh token still clears the cookie + returns 204. Use `/admin/auth/revoke-user` (forthcoming) for \"log out of all devices.\"",
+        "operationId": "AuthController_logout_v1",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Logout — revoke this device's refresh token + clear cookie",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/sessions/revoke-all": {
+      "post": {
+        "description": "Phase C2 — 'log out of every device.' Idempotent. Auth required (global access-token guard). Returns 204 with no body.",
+        "operationId": "AuthController_revokeAllSessions_v1",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "summary": "Revoke all refresh tokens for the authenticated user",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/captcha-config": {
+      "get": {
+        "description": "Single source of truth for whether the consumer PWA should render the Turnstile widget. Edge-cached 60s.",
+        "operationId": "AuthCaptchaConfigController_captchaConfig_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "siteKey": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "enabled",
+                    "siteKey"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Public CAPTCHA / Turnstile configuration",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/notifications/push/subscribe": {
+      "post": {
+        "description": "Upserts by (userId, deviceFingerprint). Same device re-granting permission updates the row in place — the endpoint URL may have rotated.",
+        "operationId": "PushSubscriptionsController_subscribe_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscribePushDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Register or refresh a Web Push subscription for the current user",
+        "tags": [
+          "notifications"
+        ]
+      },
+      "delete": {
+        "description": "Idempotent: 204 even if the row is already gone.",
+        "operationId": "PushSubscriptionsController_unsubscribe_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnsubscribePushDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove a push subscription for the current user",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/api/v1/users/me": {
+      "get": {
+        "operationId": "UsersController_me_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Current authenticated user profile",
+        "tags": [
+          "users"
+        ]
+      },
+      "patch": {
+        "description": "Self-update for any authenticated user. Today: displayName only. Vendor-specific fields → PATCH /vendors/me; rider-specific → PATCH /riders/me. MoMo number change with OTP-on-new-number confirmation is deferred — admin oversight covers MVP.",
+        "operationId": "UsersController_updateMe_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update own profile (Story 1.8)",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/api/v1/users/me/addresses": {
+      "get": {
+        "operationId": "AddressesController_list_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List saved addresses (Story 3.2)",
+        "tags": [
+          "addresses"
+        ]
+      },
+      "post": {
+        "description": "Conflict code: address_limit_reached. Setting isDefault demotes any existing default.",
+        "operationId": "AddressesController_create_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertAddressDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Save a new address (max 3 per user)",
+        "tags": [
+          "addresses"
+        ]
+      }
+    },
+    "/api/v1/users/me/addresses/{addressId}": {
+      "put": {
+        "operationId": "AddressesController_update_v1",
+        "parameters": [
+          {
+            "name": "addressId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertAddressDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Replace an address (ownership-checked)",
+        "tags": [
+          "addresses"
+        ]
+      },
+      "delete": {
+        "operationId": "AddressesController_delete_v1",
+        "parameters": [
+          {
+            "name": "addressId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete an address",
+        "tags": [
+          "addresses"
+        ]
+      }
+    },
+    "/api/v1/orders": {
+      "post": {
+        "description": "Validates cart against vendor + items + stock, computes fee/total server-side, enforces minimum order. Idempotent via `Idempotency-Key` header (Story 3.14): a retried request with the same key returns the original order. Error codes: vendor_not_found, vendor_closed, item_not_in_vendor_menu, item_out_of_stock, order_below_minimum.",
+        "operationId": "OrdersController_create_v1",
+        "parameters": [
+          {
+            "name": "idempotency-key",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateOrderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create order from cart (Story 3.1)",
+        "tags": [
+          "orders"
+        ]
+      },
+      "get": {
+        "operationId": "OrdersController_listMine_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List own orders (recent first, max 30)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}": {
+      "get": {
+        "description": "Visible to the consumer who placed it AND to the target vendor.",
+        "operationId": "OrdersController_detail_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Order detail",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/public": {
+      "get": {
+        "description": "Returns only non-PII fields (order code, status, vendor name, lifecycle timestamps) so consumers can share the link with friends/family without exposing payment info, delivery code, or contact details. UUID-as-token: the order id is the access key — treat the link as semi-secret.",
+        "operationId": "OrdersController_detailPublic_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Public order status (no auth — UUID-as-token model)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/cancel": {
+      "patch": {
+        "description": "Cash orders cancel cleanly. MoMo orders enter cancelled state immediately; the refund is processed asynchronously by the payments module.",
+        "operationId": "OrdersController_cancel_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Consumer cancel — only before vendor acceptance (Story 3.8)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/rating": {
+      "post": {
+        "description": "Both scores required. 24h window from deliveredAt. One rating per order. Error codes: order_not_rateable, order_already_rated, rating_window_expired.",
+        "operationId": "OrdersController_rate_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RateOrderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Rate vendor + rider post-delivery (Story 3.9)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/vendor/me": {
+      "get": {
+        "description": "Optional `status` query filters to a single state — pass `CONFIRMED` for \"awaiting decision\". Optional `type` query splits immediate orders (default — scheduledFor=null, sorted placedAt DESC) from pre-orders (type=preorder — scheduledFor!=null, sorted scheduledFor ASC).",
+        "operationId": "OrdersController_vendorList_v1",
+        "parameters": [
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "immediate",
+                "preorder"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "enum": [
+                "PENDING",
+                "CONFIRMED",
+                "ACCEPTED",
+                "IN_PREP",
+                "READY_PICKUP",
+                "PICKED_UP",
+                "DELIVERED",
+                "CANCELLED",
+                "REFUSED",
+                "EXPIRED"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor inbox — list own orders (Story 3.7, pre-orders #187)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/accept": {
+      "patch": {
+        "operationId": "OrdersController_accept_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor accepts an order (Story 3.7)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/refuse": {
+      "patch": {
+        "description": "POWER_OUTAGE is non-penalising; everything else counts toward the weekly refusal alert.",
+        "operationId": "OrdersController_refuse_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefuseOrderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor refuses with reason (Story 3.7)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/items/{itemId}/prepared": {
+      "patch": {
+        "operationId": "OrdersController_setItemPrepared_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetItemPreparedDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor toggles a single article as prepared (preparation checklist)",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/ready": {
+      "patch": {
+        "operationId": "OrdersController_markReady_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor marks an order ready for pickup — all items must be prepared first",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/vendor-cancel-preorder": {
+      "patch": {
+        "description": "Only valid for pre-orders (scheduledFor != null) currently in ACCEPTED or IN_PREP. Pre-acceptance cancellations should use the regular refuse endpoint (no penalty). Returns the cancelled status + the penalty amount in FCFA.",
+        "operationId": "OrdersController_vendorCancelPreOrder_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VendorCancelPreOrderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor cancels a pre-order they already accepted (#187). Triggers consumer refund + VendorPenalty.",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/webhooks/campay/transfer": {
+      "post": {
+        "operationId": "CampayTransferWebhookController_receive",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Campay outbound transfer status webhook",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/webhooks/campay/refund": {
+      "post": {
+        "operationId": "CampayRefundWebhookController_receive",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Campay refund status webhook",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/pay/momo": {
+      "post": {
+        "description": "Triggers the Campay USSD prompt on the payer phone. Returns immediately with a reference; the order flips to CONFIRMED + PAID once Campay's webhook lands (typically < 30s for MTN, < 2min for Orange). Error codes: payment_method_not_momo, order_not_payable, payment_already_processing.",
+        "operationId": "PaymentsController_initiateMomo_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateMomoPaymentDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Initiate a Campay MoMo collect (Stories 3.3, 3.4)",
+        "tags": [
+          "payments"
+        ]
+      }
+    },
+    "/api/webhooks/campay": {
+      "post": {
+        "operationId": "CampayWebhookController_receive",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Campay payment status webhook",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/vendors": {
+      "post": {
+        "description": "Story 2.0 — single-shot submission for the 5-screen onboarding form. Creates User + Vendor + first Item atomically (Vendor.status = PENDING_REVIEW). Photos uploaded to R2. WhatsApp confirmation fires after commit (fire-and-forget). Conflict codes: vendor_already_submitted, phone_used_by_other_role.",
+        "operationId": "VendorController_submit_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitVendorDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Submit an informal vendor application",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/me": {
+      "get": {
+        "description": "Read endpoint backing the /vendor/profile editor and the type-aware menu UI. Returns the vendor row plus enough metadata for the dashboard to render — deliberately omits admin-only fields (commissionRate, rejectionReason, KYC numbers).",
+        "operationId": "VendorController_getMe_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get own vendor profile",
+        "tags": [
+          "vendors"
+        ]
+      },
+      "patch": {
+        "description": "Vendor-self-update for name, description, and momoPhone. Photo is a separate multipart endpoint (PATCH /vendors/me/photo). Quartier / landmark moves and commission edits stay admin-only.",
+        "operationId": "VendorController_updateMe_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVendorProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update own vendor profile (Story 1.8)",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/balance": {
+      "get": {
+        "description": "Read-only self-service view of the vendor's ledger position. Surfaces balanceXAF, isTrusted (drives same-day vs 24h cashout for INFORMAL), the last 5 payouts, and the next scheduled payout estimate. RESTAURANT and SEMI_FORMAL vendors see the next Sunday 02:00 Africa/Douala estimate; INFORMAL vendors see ON_DEMAND with no estimatedAt.",
+        "operationId": "VendorController_getMyBalance_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorSelfBalanceDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get own balance + payout history",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/cashout-request": {
+      "post": {
+        "description": "Creates a VendorCashoutRequest. Admin must approve before payout fires. Refuses if a pending request already exists, vendor is not INFORMAL, or balance is non-positive. SEMI_FORMAL / RESTAURANT vendors use the Sunday cron.",
+        "operationId": "VendorController_requestCashout_v1",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Request an on-demand cashout (INFORMAL vendors only)",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/photo": {
+      "patch": {
+        "description": "Multipart field `photo`. Same size + MIME guardrails as onboarding.",
+        "operationId": "VendorController_updateMePhoto_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Replace own profile photo (Story 1.8)",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/cover": {
+      "patch": {
+        "description": "Multipart field `photo`. Same size + MIME guardrails as profile photo. The old R2 key is left to the lifecycle sweeper — keeps the rollback story simple if a failed upload need not race a delete.",
+        "operationId": "VendorController_updateMeCover_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Replace own cover photo (hero image on the vendor's catalogue card)",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/status": {
+      "get": {
+        "description": "Public, throttled. Returns PENDING_REVIEW / CORRECTION_REQUESTED / ACTIVE / SUSPENDED / REJECTED for the vendor row associated with `phone` (Cameroon local OR E.164). 404 if no submission exists. Does NOT leak name/address — only the validation lifecycle.",
+        "operationId": "VendorController_getStatus_v1",
+        "parameters": [
+          {
+            "name": "phone",
+            "required": true,
+            "in": "query",
+            "description": "WhatsApp phone — Cameroon local or E.164",
+            "schema": {
+              "example": "670000000",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Check vendor submission status by WhatsApp phone (Story 2.0 follow-up)",
+        "tags": [
+          "vendors"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/items": {
+      "get": {
+        "operationId": "MenuController_listItems_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List own menu items (Story 2.2 / 2.3)",
+        "tags": [
+          "vendor-menu"
+        ]
+      },
+      "post": {
+        "description": "Informal vendors capped at 15 items / 2 categories. Restaurants unlimited. Conflict codes: menu_limit_reached, category_not_yours, category_not_found.",
+        "operationId": "MenuController_createItem_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertItemDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a menu item (Story 2.2 / 2.3)",
+        "tags": [
+          "vendor-menu"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/items/{itemId}": {
+      "put": {
+        "operationId": "MenuController_updateItem_v1",
+        "parameters": [
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertItemDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Replace a menu item",
+        "tags": [
+          "vendor-menu"
+        ]
+      },
+      "delete": {
+        "operationId": "MenuController_deleteItem_v1",
+        "parameters": [
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a menu item",
+        "tags": [
+          "vendor-menu"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/items/{itemId}/stock": {
+      "patch": {
+        "description": "Lightweight endpoint specifically for the dashboard \"Disponible / Épuisé\" switch. Designed to take a Tecno/Itel 1-tap on 3G without blocking on payload size.",
+        "operationId": "MenuController_setStock_v1",
+        "parameters": [
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateItemStockDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "1-tap stock toggle (Story 2.10)",
+        "tags": [
+          "vendor-menu"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/items/{itemId}/photo": {
+      "patch": {
+        "operationId": "MenuController_setPhoto_v1",
+        "parameters": [
+          {
+            "name": "itemId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upload / replace an item photo",
+        "tags": [
+          "vendor-menu"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/categories": {
+      "get": {
+        "operationId": "MenuController_listCategories_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List own menu categories",
+        "tags": [
+          "vendor-menu"
+        ]
+      },
+      "post": {
+        "description": "Informal vendors capped at 2 categories. Conflict codes: category_limit_reached, category_name_taken.",
+        "operationId": "MenuController_createCategory_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertCategoryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create a menu category (Story 2.3)",
+        "tags": [
+          "vendor-menu"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/categories/{categoryId}": {
+      "patch": {
+        "operationId": "MenuController_updateCategory_v1",
+        "parameters": [
+          {
+            "name": "categoryId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpsertCategoryDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Rename / reorder a category",
+        "tags": [
+          "vendor-menu"
+        ]
+      },
+      "delete": {
+        "operationId": "MenuController_deleteCategory_v1",
+        "parameters": [
+          {
+            "name": "categoryId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a category. Items in it are detached (categoryId = NULL).",
+        "tags": [
+          "vendor-menu"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/availability": {
+      "get": {
+        "description": "Returns { isOpen, hours, isOpenNow }. `isOpenNow` is a server-computed live flag; the dashboard renders straight from it without having to reimplement weekday/clock math.",
+        "operationId": "AvailabilityController_get_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Read own availability + hours (Story 2.4)",
+        "tags": [
+          "vendor-availability"
+        ]
+      },
+      "patch": {
+        "description": "INFORMAL: this is the only availability signal. RESTAURANT: same toggle today; the future hours-cron will flip it automatically based on configured hours.",
+        "operationId": "AvailabilityController_setAvailability_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAvailabilityDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Toggle Ouvert / Fermé (Story 2.4 — 1-tap)",
+        "tags": [
+          "vendor-availability"
+        ]
+      }
+    },
+    "/api/v1/vendors/me/hours": {
+      "put": {
+        "description": "Days absent from the body = closed that day. Times in 24h \"HH:MM\". INFORMAL vendors can call this too — it just won't affect isOpenNow.",
+        "operationId": "AvailabilityController_setHours_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateHoursDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Replace weekly opening hours (Story 2.4 — restaurant)",
+        "tags": [
+          "vendor-availability"
+        ]
+      }
+    },
+    "/api/v1/catalogue": {
+      "get": {
+        "description": "Returns ACTIVE + isOpen vendors within radius (default 10km) ranked by distance. Each card carries server-computed distanceKm, deliveryFeeXAF, etaMinutes, and a plan tier (1 = ≤2km, 2 = ≤5km, 3 = >5km) so the consumer PWA can render the three sections without reimplementing geo math.",
+        "operationId": "BrowseController_catalogue_v1",
+        "parameters": [
+          {
+            "name": "lat",
+            "required": true,
+            "in": "query",
+            "description": "Consumer latitude.",
+            "schema": {
+              "example": 4.0511,
+              "type": "number"
+            }
+          },
+          {
+            "name": "lng",
+            "required": true,
+            "in": "query",
+            "description": "Consumer longitude.",
+            "schema": {
+              "example": 9.7679,
+              "type": "number"
+            }
+          },
+          {
+            "name": "radiusKm",
+            "required": false,
+            "in": "query",
+            "description": "Max distance to fetch in km. Defaults to 10 (covers Douala metro). Catalogue groups results into 3 plans (≤2km, ≤5km, >5km) regardless.",
+            "schema": {
+              "example": 10,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Browse vendors near a location (Story 2.5)",
+        "tags": [
+          "catalogue"
+        ]
+      }
+    },
+    "/api/v1/vendors/{vendorId}": {
+      "get": {
+        "description": "Returns vendor header, categories, and in-stock items. 404 if vendor is not ACTIVE.",
+        "operationId": "BrowseController_vendorPublic_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Vendor public profile + menu (Story 2.6)",
+        "tags": [
+          "catalogue"
+        ]
+      }
+    },
+    "/api/v1/riders": {
+      "post": {
+        "description": "Story 1.4 — single-shot multipart submission. Creates (or upgrades) the User and creates/updates the Rider row in PENDING_REVIEW. Files: idCardPhoto + selfiePhoto (always required), vehiclePhoto (required for MOTO/BICYCLE/CAR). licensePlate required for MOTO and CAR. Conflict codes: rider_already_active, phone_used_by_other_role, license_plate_already_used.",
+        "operationId": "RidersController_submit_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitRiderDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "Submit a rider KYC application",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me": {
+      "patch": {
+        "description": "Rider-self-update for preferredZone and momoPhone. vehicleType, photos, and licensePlate changes trigger admin re-validation and live in Story 6.2.",
+        "operationId": "RidersController_updateMe_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRiderProfileDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Update own rider profile (Story 1.8)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me/balance": {
+      "get": {
+        "description": "Read-only self-service view of the rider's ledger position. Balance is the sum of RIDER_PAYABLE entries since the last successful payout; the next scheduled payout is the next 06:00 Africa/Douala (or null if balance is zero — cron would skip).",
+        "operationId": "RidersController_getMyBalance_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RiderSelfBalanceDto"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get own balance + payout history",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me/availability": {
+      "patch": {
+        "description": "1-tap \"Je commence\" / \"Pause\". Account must be ACTIVE — riders in PENDING_REVIEW or CORRECTION_REQUESTED cannot go online.",
+        "operationId": "RidersController_setAvailability_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiderAvailabilityDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Toggle online / offline (Story 4.1)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me/location": {
+      "post": {
+        "description": "Updates lastLocation + lastSeenAt. Implicit online — keeps dispatch eligible through brief network blips. Rider is dropped from dispatch once lastSeenAt > 60s.",
+        "operationId": "RidersController_pushHeartbeat_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RiderHeartbeatDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Push 15s GPS heartbeat (Story 4.4)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me/courses": {
+      "get": {
+        "operationId": "RidersController_listCourses_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List assigned + in-flight courses (Story 4.2)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me/courses/{orderId}/picked-up": {
+      "patch": {
+        "description": "Transitions ACCEPTED / IN_PREP / READY_PICKUP → PICKED_UP. Requires the 4-digit pickup code from the vendor in the body. Error codes: wrong_pickup_code, order_not_pickupable.",
+        "operationId": "RidersController_markPickedUp_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmationCodeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Rider confirms pickup at vendor (Story 4.2 / 4.13)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/me/courses/{orderId}/delivered": {
+      "patch": {
+        "description": "Transitions PICKED_UP → DELIVERED. Requires the 4-digit delivery code from the consumer in the body. Error codes: wrong_delivery_code, order_not_in_delivery. Delivery proof photo (Story 4.10) lands later.",
+        "operationId": "RidersController_markDelivered_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmationCodeDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Rider confirms drop-off (Story 4.2 / 4.13)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/riders/status": {
+      "get": {
+        "description": "Public, throttled. Returns PENDING_REVIEW / CORRECTION_REQUESTED / ACTIVE / SUSPENDED / REJECTED. 404 if no submission. No PII beyond status + timestamps.",
+        "operationId": "RidersController_getStatus_v1",
+        "parameters": [
+          {
+            "name": "phone",
+            "required": true,
+            "in": "query",
+            "description": "WhatsApp phone — Cameroon local or E.164",
+            "schema": {
+              "example": "670000020",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Check rider submission status by phone (Story 1.4 follow-up)",
+        "tags": [
+          "riders"
+        ]
+      }
+    },
+    "/api/v1/admin/auth/login": {
+      "post": {
+        "description": "Story 1.6 / Phase A1. Returns one of two shapes:\n  - { stage: \"totp_required\", challenge, challengeExpiresIn } — admin has TOTP enrolled. Client must POST /admin/auth/2fa within 5 minutes.\n  - { stage: \"success\", accessToken, role, email, expiresIn } — admin does not yet have TOTP enrolled (legacy / first-login). 8h access JWT issued directly. Client should redirect to enrollment.\nError codes (body.code on 401): invalid_credentials, account_locked.",
+        "operationId": "AdminAuthController_login_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminLoginDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Admin login step 1 — email + password",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/api/v1/admin/auth/2fa": {
+      "post": {
+        "description": "Redeems the challenge from step 1. On success: 8h access JWT (same shape as /admin/auth/login when not 2fa-required). Recovery codes are single-use; consuming one decrements the remaining pool. Error codes: totp_challenge_expired, totp_invalid_code.",
+        "operationId": "AdminAuthController_verify2fa_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyAdminTotpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "Admin login step 2 — TOTP code or recovery code",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/api/v1/admin/auth/2fa/setup": {
+      "post": {
+        "description": "Generates an RFC 6238 secret + otpauth:// URI. Admin scans the QR with Authy / Google Authenticator / 1Password, then POSTs /admin/auth/2fa/confirm with the first code to lock the enrollment in. Recovery codes are minted at confirmation time, NOT here.",
+        "operationId": "AdminAuthController_start2faSetup_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start TOTP enrollment — returns QR + cleartext secret",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/api/v1/admin/auth/2fa/confirm": {
+      "post": {
+        "description": "Locks the enrollment + mints 10 single-use recovery codes. Codes are shown ONCE — argon2 hashed at rest, no way to retrieve them later. Admin MUST save them (password manager / printed sheet) before leaving this screen.",
+        "operationId": "AdminAuthController_confirm2faSetup_v1",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmAdminTotpDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Confirm TOTP enrollment with the first code, get recovery codes",
+        "tags": [
+          "admin-auth"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/pending": {
+      "get": {
+        "operationId": "AdminValidationController_listPendingVendors_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List vendors awaiting approval (Story 6.2)",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/{vendorId}/approve": {
+      "post": {
+        "description": "Flips Vendor.status to ACTIVE + sets validatedAt. Fires the \"🎉 en ligne\" WhatsApp.",
+        "operationId": "AdminValidationController_approveVendor_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Approve a vendor application",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/{vendorId}/reject": {
+      "post": {
+        "description": "Sets REJECTED + rejectionReason. Fires WhatsApp with the reason.",
+        "operationId": "AdminValidationController_rejectVendor_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDecisionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reject a vendor application",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/{vendorId}/suspend": {
+      "post": {
+        "description": "Flips status to SUSPENDED, forces isOpen=false, and revokes the vendor's JWTs via the Redis blacklist (Story 1.7) — their tokens stop working on the very next request.",
+        "operationId": "AdminValidationController_suspendVendor_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDecisionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Suspend a vendor (Stories 1.7 + 6.2)",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/{vendorId}/unsuspend": {
+      "post": {
+        "operationId": "AdminValidationController_unsuspendVendor_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Lift a vendor suspension — clears the JWT blacklist.",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/{vendorId}/pre-orders": {
+      "patch": {
+        "description": "INFORMAL vendors get acceptsPreOrders=true at submission. This endpoint lets admin override per vendor without code changes — e.g. opting in a willing SEMI_FORMAL, or opting out an INFORMAL whose kitchen workflow does not support pre-orders. Idempotent: no DB write or audit log if the value is already what was requested.",
+        "operationId": "AdminValidationController_setVendorPreOrders_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetVendorPreOrdersDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Toggle Vendor.acceptsPreOrders (#187 follow-up)",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/riders/pending": {
+      "get": {
+        "operationId": "AdminValidationController_listPendingRiders_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List riders awaiting KYC approval",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/riders/{riderId}/approve": {
+      "post": {
+        "operationId": "AdminValidationController_approveRider_v1",
+        "parameters": [
+          {
+            "name": "riderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Approve a rider KYC",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/riders/{riderId}/reject": {
+      "post": {
+        "operationId": "AdminValidationController_rejectRider_v1",
+        "parameters": [
+          {
+            "name": "riderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDecisionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reject a rider application",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/riders/{riderId}/suspend": {
+      "post": {
+        "operationId": "AdminValidationController_suspendRider_v1",
+        "parameters": [
+          {
+            "name": "riderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDecisionDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Suspend a rider (revokes JWTs immediately)",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/riders/{riderId}/unsuspend": {
+      "post": {
+        "operationId": "AdminValidationController_unsuspendRider_v1",
+        "parameters": [
+          {
+            "name": "riderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Lift a rider suspension",
+        "tags": [
+          "admin-validation"
+        ]
+      }
+    },
+    "/api/v1/admin/metrics": {
+      "get": {
+        "description": "Drives the Week-3 decision point of the COD-only pilot. Defaults to a rolling 7-day window. Pass ?from=&to= (ISO 8601) to inspect a custom range.",
+        "operationId": "AdminMetricsController_getMetrics_v1",
+        "parameters": [
+          {
+            "name": "from",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-05-01T00:00:00Z",
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "example": "2026-05-08T00:00:00Z",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Pilot KPI snapshot (7-day reorder rate, completion, avg times)",
+        "tags": [
+          "admin-metrics"
+        ]
+      }
+    },
+    "/api/v1/admin/vendors/{vendorId}/balance": {
+      "get": {
+        "description": "Returns the vendor's current balance plus per-component breakdown (gross, commission, penalty, adjustments) accumulated since the last paid VendorPayout (or vendor creation if none). Trusted flag drives the on-demand cashout admin UX per ADR-0005.",
+        "operationId": "AdminFinanceController_getVendorBalance_v1",
+        "parameters": [
+          {
+            "name": "vendorId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Vendor balance — read from LedgerEntry, signed (positive = platform owes vendor)",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/riders/{riderId}/balance": {
+      "get": {
+        "description": "Returns the rider's current balance plus per-component breakdown (gross, adjustments) accumulated since the last paid RiderPayout. Riders have no commission or penalty surface in v1 — they earn the rider share of the delivery fee directly. See ADR-0005.",
+        "operationId": "AdminFinanceController_getRiderBalance_v1",
+        "parameters": [
+          {
+            "name": "riderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Rider balance — read from LedgerEntry, signed (positive = platform owes rider)",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/vendor-balances": {
+      "get": {
+        "description": "Drives the admin financial dashboard. Filter by VendorStatus, VendorType, and minimum balance. Pagination via offset/limit (pilot scope — switch to cursor-based when row counts demand it).",
+        "operationId": "AdminFinanceController_listVendorBalances_v1",
+        "parameters": [
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING_REVIEW",
+                "CORRECTION_REQUESTED",
+                "ACTIVE",
+                "SUSPENDED",
+                "REJECTED"
+              ]
+            }
+          },
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "INFORMAL",
+                "SEMI_FORMAL",
+                "RESTAURANT"
+              ]
+            }
+          },
+          {
+            "name": "minBalanceXAF",
+            "required": false,
+            "in": "query",
+            "description": "Minimum balance in FCFA (signed)",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Paginated list of vendor balances (sorted by balance DESC)",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/rider-balances": {
+      "get": {
+        "operationId": "AdminFinanceController_listRiderBalances_v1",
+        "parameters": [
+          {
+            "name": "vehicleType",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "MOTO",
+                "BICYCLE",
+                "CAR",
+                "ON_FOOT"
+              ]
+            }
+          },
+          {
+            "name": "minBalanceXAF",
+            "required": false,
+            "in": "query",
+            "description": "Minimum balance in FCFA (signed)",
+            "schema": {
+              "type": "number"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Paginated list of rider balances (sorted by balance DESC)",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/refund-queue": {
+      "get": {
+        "description": "Manual ops worklist until Story 3.8 (Campay refund API) wires the automated refund flow. Surfaces order code, vendor name, total, and days since the refund was queued.",
+        "operationId": "AdminFinanceController_listRefundQueue_v1",
+        "parameters": [
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Refund worklist — orders in PaymentStatus.REFUND_PENDING, oldest first",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/cashout-requests": {
+      "get": {
+        "description": "Paginated list of vendor-side cashout requests, oldest first. Filter by CashoutRequestStatus. Each row carries vendor name, requested amount, age in hours, and the live isTrusted flag.",
+        "operationId": "AdminFinanceController_listCashoutRequests_v1",
+        "parameters": [
+          {
+            "name": "status",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "PENDING_APPROVAL",
+                "APPROVED",
+                "REJECTED",
+                "CANCELLED"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cashout request queue — INFORMAL vendor on-demand cashouts (ADR-0005, 7.2b)",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/cashout-requests/{requestId}/approve": {
+      "post": {
+        "description": "Reads live balance, applies the same negative-balance + minimum-amount guards as the weekly cron, creates a VendorPayout (status PENDING) with paired VENDOR_PAYABLE / CAMPAY_FLOAT ledger entries. Refuses if balance changed below MIN_CASHOUT_XAF since request, or open dispute appeared.",
+        "operationId": "AdminFinanceController_approveCashoutRequest_v1",
+        "parameters": [
+          {
+            "name": "requestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Approve a cashout request — creates a VendorPayout via the 7.2a path",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/cashout-requests/{requestId}/reject": {
+      "post": {
+        "operationId": "AdminFinanceController_rejectCashoutRequest_v1",
+        "parameters": [
+          {
+            "name": "requestId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectCashoutRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reject a cashout request with a reason",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/campay-circuit": {
+      "get": {
+        "description": "Exposes the breaker state for the admin financial dashboard. When OPEN, every CampayService outbound call (collect, transfer, refund, balance) fails fast with code campay_circuit_open until the cool-down elapses. Useful when investigating a wave of FAILED payouts.",
+        "operationId": "AdminFinanceController_getCampayCircuitState_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Campay circuit breaker state (#92) — CLOSED / OPEN / HALF_OPEN",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/escalations": {
+      "get": {
+        "description": "Returns VendorPayout / RiderPayout in FAILED status or stuck IN_FLIGHT past the 30-min threshold, plus Orders in REFUND_PENDING with refundCampayRef set but no refundedAt after the same threshold. Sorted oldest first. Per ADR-0005 §S3 / #85.",
+        "operationId": "AdminFinanceController_listEscalations_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List failed / stuck payouts + refunds needing admin attention",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/vendor-payouts/{payoutId}/retry": {
+      "post": {
+        "operationId": "AdminFinanceController_retryVendorPayout_v1",
+        "parameters": [
+          {
+            "name": "payoutId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retry a FAILED vendor payout — flips it back to PENDING",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/rider-payouts/{payoutId}/retry": {
+      "post": {
+        "operationId": "AdminFinanceController_retryRiderPayout_v1",
+        "parameters": [
+          {
+            "name": "payoutId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retry a FAILED rider payout — flips it back to PENDING",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/vendor-payouts/{payoutId}/manual-mark-paid": {
+      "post": {
+        "description": "Captures the Campay reference admin used in the manual fire so the audit trail stays connected. Sets status=PAID, paidAt=now. Refuses if the row is already PAID or CANCELLED.",
+        "operationId": "AdminFinanceController_manualMarkVendorPayoutPaid_v1",
+        "parameters": [
+          {
+            "name": "payoutId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualMarkPaidDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Manually mark a vendor payout PAID after firing it via the Campay UI",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/finance/rider-payouts/{payoutId}/manual-mark-paid": {
+      "post": {
+        "operationId": "AdminFinanceController_manualMarkRiderPayoutPaid_v1",
+        "parameters": [
+          {
+            "name": "payoutId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualMarkPaidDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Manually mark a rider payout PAID after manual Campay fire",
+        "tags": [
+          "admin-finance"
+        ]
+      }
+    },
+    "/api/v1/admin/orders/stuck-pickup": {
+      "get": {
+        "description": "Synchronous version of the StuckPickupDetectorService cron output. Returns orders where the rider scanned pickup but never marked delivered, oldest first. Powers the admin /admin/finance → Incidents livreurs tab.",
+        "operationId": "AdminRiderFraudController_listStuckPickups_v1",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List Orders stuck in PICKED_UP > 2h — admin rider-fraud triage queue",
+        "tags": [
+          "admin-rider-fraud"
+        ]
+      }
+    },
+    "/api/v1/admin/orders/{orderId}/resolve-rider-fraud": {
+      "post": {
+        "description": "Atomic resolution flow for the scenario where a rider scanned pickup but never marked DELIVERED. Admin picks any combination of: queue a consumer refund (paymentStatus → REFUND_PENDING, RefundProcessor drains it), compensate the vendor via an ADJUSTMENT ledger entry, and either SUSPEND the rider (status flip + JWT revoke) or WARN them (reliabilityScore decrement). Order always ends CANCELLED with refusalReason set to \"RIDER_FRAUD: <note>\". Per ADR-0005 §S3.",
+        "operationId": "AdminRiderFraudController_resolveRiderFraud_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveRiderFraudDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resolve a rider-fraud incident (Order stuck in PICKED_UP)",
+        "tags": [
+          "admin-rider-fraud"
+        ]
+      }
+    },
+    "/api/v1/admin/audit-logs": {
+      "get": {
+        "description": "Append-only record of every admin write request. Filterable by adminId, action, targetType, targetId. Results sorted by createdAt DESC, default page size 50, max 200. Sensitive payload fields (password, code, token, recoveryCode, ...) are [REDACTED] at write time so this endpoint never echoes them.",
+        "operationId": "AdminAuditController_list_v1",
+        "parameters": [
+          {
+            "name": "adminId",
+            "required": false,
+            "in": "query",
+            "description": "Filter by admin user id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "action",
+            "required": false,
+            "in": "query",
+            "description": "Exact action match — e.g. \"validation.approveVendor\".",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetType",
+            "required": false,
+            "in": "query",
+            "description": "Filter by target type — e.g. \"vendor\", \"rider\", \"order\".",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "targetId",
+            "required": false,
+            "in": "query",
+            "description": "Filter by the audited target id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50,
+              "type": "number"
+            }
+          },
+          {
+            "name": "offset",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "minimum": 0,
+              "default": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "List admin audit log entries (Phase A2) — SUPER_ADMIN only",
+        "tags": [
+          "admin-audit"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/call-consumer": {
+      "post": {
+        "operationId": "VoiceProxyController_riderCallConsumer_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Masked rider → consumer call (Story 4.17)",
+        "tags": [
+          "voice-proxy"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/vendor-call-consumer": {
+      "post": {
+        "operationId": "VoiceProxyController_vendorCallConsumer_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Masked vendor → consumer call (Story 3.17)",
+        "tags": [
+          "voice-proxy"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/vendor-call-rider": {
+      "post": {
+        "operationId": "VoiceProxyController_vendorCallRider_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Masked vendor → rider call (Story 3.17)",
+        "tags": [
+          "voice-proxy"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/call-vendor": {
+      "post": {
+        "operationId": "VoiceProxyController_consumerCallVendor_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Masked consumer → vendor call",
+        "tags": [
+          "voice-proxy"
+        ]
+      }
+    },
+    "/api/v1/orders/{orderId}/call-rider": {
+      "post": {
+        "operationId": "VoiceProxyController_consumerCallRider_v1",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Masked consumer → rider call",
+        "tags": [
+          "voice-proxy"
+        ]
+      }
+    },
+    "/api/webhooks/twilio/voice/bridge": {
+      "post": {
+        "operationId": "VoiceProxyController_bridge",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": ""
+          }
+        },
+        "summary": "TwiML bridge (Twilio Voice webhook)",
+        "tags": [
+          "voice-proxy"
+        ]
+      },
+      "get": {
+        "operationId": "VoiceProxyController_bridgeGet",
+        "parameters": [
+          {
+            "name": "orderId",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "required": true,
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "summary": "TwiML bridge (GET fallback for Twilio Voice)",
+        "tags": [
+          "voice-proxy"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "HealthController_health",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "HealthController_ready",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "OpenApiController_get",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "tags": [
+          "OpenApi"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "ChopNow API",
+    "description": "Backend HTTP contract for chopnow-app (consumer / livreur / vendeur / admin).",
+    "version": "0.1.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "auth",
+      "description": "OTP, JWT, sessions"
+    },
+    {
+      "name": "users",
+      "description": "Profile, role lookups"
+    },
+    {
+      "name": "catalogue",
+      "description": "Vendors, items, availability"
+    },
+    {
+      "name": "orders",
+      "description": "Cart and order lifecycle"
+    },
+    {
+      "name": "payments",
+      "description": "Campay MoMo + Orange Money"
+    },
+    {
+      "name": "dispatch",
+      "description": "Rider assignment, GPS, voice proxy"
+    },
+    {
+      "name": "finance",
+      "description": "Payouts, settlement, KYC"
+    },
+    {
+      "name": "admin",
+      "description": "Ops console, audit"
+    }
+  ],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {
+      "RequestOtpDto": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "description": "Phone number — Cameroon local (e.g. 670000000) or international E.164 (e.g. +33695412820).",
+            "example": "670000000",
+            "pattern": "^(?:6[5-9]\\d{7}|\\+?[1-9]\\d{7,14})$"
+          },
+          "cfTurnstileResponse": {
+            "type": "string",
+            "description": "Cloudflare Turnstile response token. Only required when CAPTCHA_ENABLED=true on the server."
+          }
+        },
+        "required": [
+          "phone"
+        ]
+      },
+      "VerifyOtpDto": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "example": "670000000",
+            "pattern": "^(?:6[5-9]\\d{7}|\\+?[1-9]\\d{7,14})$"
+          },
+          "code": {
+            "type": "string",
+            "description": "6-digit OTP code",
+            "example": "123456",
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "phone",
+          "code"
+        ]
+      },
+      "RefreshTokenDto": {
+        "type": "object",
+        "properties": {
+          "refreshToken": {
+            "type": "string",
+            "description": "Refresh JWT. Optional: the HttpOnly chopnow_rt cookie is the preferred source. Body field accepted for backward compatibility while the PWA cuts over."
+          }
+        }
+      },
+      "PushKeysDto": {
+        "type": "object",
+        "properties": {
+          "p256dh": {
+            "type": "string",
+            "description": "P-256 ECDH public key (base64url)"
+          },
+          "auth": {
+            "type": "string",
+            "description": "Auth secret (base64url)"
+          }
+        },
+        "required": [
+          "p256dh",
+          "auth"
+        ]
+      },
+      "SubscribePushDto": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "description": "Push service endpoint URL (FCM/APNs/Mozilla)"
+          },
+          "keys": {
+            "$ref": "#/components/schemas/PushKeysDto"
+          },
+          "deviceFingerprint": {
+            "type": "string",
+            "description": "Opaque per-device ID minted by the client (localStorage) so re-subscribes from the same device dedupe"
+          }
+        },
+        "required": [
+          "endpoint",
+          "keys",
+          "deviceFingerprint"
+        ]
+      },
+      "UnsubscribePushDto": {
+        "type": "object",
+        "properties": {
+          "endpoint": {
+            "type": "string",
+            "description": "Push service endpoint URL to deactivate"
+          }
+        },
+        "required": [
+          "endpoint"
+        ]
+      },
+      "UpdateUserProfileDto": {
+        "type": "object",
+        "properties": {
+          "displayName": {
+            "type": "string",
+            "description": "Nom affiché.",
+            "example": "Maman Mboué"
+          }
+        }
+      },
+      "UpsertAddressDto": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "Maison"
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-form description (e.g. \"2ème portail bleu après le transformateur\")."
+          },
+          "quartier": {
+            "type": "string",
+            "example": "Makepe"
+          },
+          "landmarkId": {
+            "type": "string",
+            "description": "Landmark UUID (Story 2.15)."
+          },
+          "lat": {
+            "type": "number",
+            "example": 4.0511
+          },
+          "lng": {
+            "type": "number",
+            "example": 9.7679
+          },
+          "phone": {
+            "type": "string",
+            "description": "Delivery phone. Defaults to the user's account phone at order time if unset."
+          },
+          "isDefault": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "lat",
+          "lng"
+        ]
+      },
+      "CartLineDto": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string",
+            "description": "Item UUID (must belong to the same vendor as the cart)."
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 50,
+            "example": 1
+          }
+        },
+        "required": [
+          "itemId",
+          "quantity"
+        ]
+      },
+      "CreateOrderDto": {
+        "type": "object",
+        "properties": {
+          "vendorId": {
+            "type": "string",
+            "description": "Target vendor UUID. All cart lines must belong to it."
+          },
+          "items": {
+            "minItems": 1,
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CartLineDto"
+            }
+          },
+          "paymentMethod": {
+            "type": "string",
+            "enum": [
+              "MTN_MOMO",
+              "ORANGE_MONEY"
+            ]
+          },
+          "noteForVendor": {
+            "type": "string",
+            "description": "Note for the vendor — the only client→vendor channel. Max 120 chars.",
+            "example": "Sans piment"
+          },
+          "deliveryLat": {
+            "type": "number",
+            "example": 4.0511
+          },
+          "deliveryLng": {
+            "type": "number",
+            "example": 9.7679
+          },
+          "deliveryQuartier": {
+            "type": "string",
+            "example": "Makepe"
+          },
+          "deliveryLandmark": {
+            "type": "string",
+            "example": "Rond-Point Total Makepe"
+          },
+          "deliveryDescription": {
+            "type": "string",
+            "example": "2ème portail bleu après le transformateur"
+          },
+          "deliveryPhone": {
+            "type": "string",
+            "description": "Phone the rider will call if lost. E.164 or Cameroon local."
+          },
+          "scheduledFor": {
+            "format": "date-time",
+            "type": "string",
+            "description": "Schedule the order for a future time (vendor must have acceptsPreOrders=true). Omit / null for immediate delivery. v1 supports same-day pre-orders only.",
+            "example": "2026-05-19T12:30:00.000Z"
+          }
+        },
+        "required": [
+          "vendorId",
+          "items",
+          "paymentMethod",
+          "deliveryLat",
+          "deliveryLng",
+          "deliveryQuartier",
+          "deliveryPhone"
+        ]
+      },
+      "RateOrderDto": {
+        "type": "object",
+        "properties": {
+          "vendorScore": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5,
+            "example": 5
+          },
+          "riderScore": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 5,
+            "example": 4
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "vendorScore",
+          "riderScore"
+        ]
+      },
+      "RefuseOrderDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "ITEM_OUT_OF_STOCK",
+              "CLOSED",
+              "TOO_MANY_ORDERS",
+              "POWER_OUTAGE",
+              "OTHER"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note (required when reason=OTHER)."
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "SetItemPreparedDto": {
+        "type": "object",
+        "properties": {
+          "prepared": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "prepared"
+        ]
+      },
+      "VendorCancelPreOrderDto": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "description": "Optional explanation surfaced to the consumer (max 200 chars).",
+            "example": "Pas de courant depuis 2h, impossible de finir la cuisson."
+          }
+        }
+      },
+      "InitiateMomoPaymentDto": {
+        "type": "object",
+        "properties": {
+          "payerPhone": {
+            "type": "string",
+            "description": "MTN MoMo or Orange Money number — Cameroon local or E.164.",
+            "example": "670000000"
+          }
+        },
+        "required": [
+          "payerPhone"
+        ]
+      },
+      "SubmitVendorDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nom de la cuisine.",
+            "example": "Chez Maman Mboué"
+          },
+          "ownerName": {
+            "type": "string",
+            "description": "Nom complet du propriétaire (gérant). Used for KYC + payment receipts.",
+            "example": "Marie Mboué"
+          },
+          "type": {
+            "type": "string",
+            "description": "Type de vendeur — détermine le badge affiché + le tier KYC.",
+            "enum": [
+              "INFORMAL",
+              "SEMI_FORMAL",
+              "RESTAURANT"
+            ],
+            "example": "INFORMAL",
+            "default": "INFORMAL"
+          },
+          "quartier": {
+            "type": "string",
+            "description": "Quartier de Douala.",
+            "example": "Makepe"
+          },
+          "latitude": {
+            "type": "number",
+            "description": "Latitude WGS84. Captured via the browser geolocation API from the vendor phone. Optional — when absent the service falls back to Douala city center (legacy behavior).",
+            "example": 4.0826,
+            "minimum": -90,
+            "maximum": 90
+          },
+          "longitude": {
+            "type": "number",
+            "description": "Longitude WGS84. Same source/constraints as latitude.",
+            "example": 9.7679,
+            "minimum": -180,
+            "maximum": 180
+          },
+          "pointOfReference": {
+            "type": "string",
+            "description": "Point de repère (optionnel).",
+            "example": "En face de la pharmacie Sainte-Marie"
+          },
+          "whatsappPhone": {
+            "type": "string",
+            "description": "WhatsApp phone — Cameroon local or international E.164.",
+            "example": "670000000"
+          },
+          "momoPhone": {
+            "type": "string",
+            "description": "MTN MoMo or Orange Money phone — Cameroon local or E.164.",
+            "example": "670000000"
+          },
+          "declaredCapacity": {
+            "type": "string",
+            "description": "Capacité déclarée (Écran 4).",
+            "enum": [
+              "LT_10",
+              "R_10_30",
+              "GT_30"
+            ],
+            "example": "R_10_30"
+          },
+          "firstItemName": {
+            "type": "string",
+            "description": "Nom du premier plat.",
+            "example": "Poulet DG"
+          },
+          "firstItemPriceXAF": {
+            "type": "number",
+            "description": "Prix du premier plat en FCFA (entier, positif).",
+            "example": 3000
+          },
+          "extraItem1Name": {
+            "type": "string",
+            "description": "Nom d'un 2e plat (optionnel).",
+            "example": "Ndolè"
+          },
+          "extraItem1PriceXAF": {
+            "type": "number",
+            "description": "Prix du 2e plat en FCFA.",
+            "example": 2500
+          },
+          "extraItem2Name": {
+            "type": "string",
+            "description": "Nom d'un 3e plat (optionnel).",
+            "example": "Eru"
+          },
+          "extraItem2PriceXAF": {
+            "type": "number",
+            "description": "Prix du 3e plat en FCFA.",
+            "example": 2000
+          },
+          "rccmNumber": {
+            "type": "string",
+            "description": "Numéro RCCM (Registre du Commerce et du Crédit Mobilier). Restaurant uniquement.",
+            "example": "RC/DLA/2024/A/12345"
+          },
+          "niuNumber": {
+            "type": "string",
+            "description": "NIU (Numéro d'Identifiant Unique). Restaurant uniquement.",
+            "example": "M091900012345A"
+          }
+        },
+        "required": [
+          "name",
+          "ownerName",
+          "quartier",
+          "whatsappPhone",
+          "momoPhone",
+          "declaredCapacity",
+          "firstItemName",
+          "firstItemPriceXAF"
+        ]
+      },
+      "UpdateVendorProfileDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Chez Maman Mboué"
+          },
+          "description": {
+            "type": "string",
+            "example": "La meilleure cuisine de Makepe — plats du jour à partir de 1 500 FCFA."
+          },
+          "momoPhone": {
+            "type": "string",
+            "description": "New MoMo number. No OTP-on-new-number confirmation in MVP — admin oversight handles fraud cases at launch."
+          }
+        }
+      },
+      "NextScheduledPayoutDto": {
+        "type": "object",
+        "properties": {
+          "cadence": {
+            "type": "string",
+            "enum": [
+              "WEEKLY_SUNDAY",
+              "DAILY_MORNING",
+              "ON_DEMAND"
+            ]
+          },
+          "estimatedAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "cadence",
+          "estimatedAt"
+        ]
+      },
+      "PayoutSummaryDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "periodStart": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "periodEnd": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "netXAF": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "PENDING",
+              "IN_FLIGHT",
+              "PAID",
+              "FAILED",
+              "CANCELLED"
+            ]
+          },
+          "paidAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "periodStart",
+          "periodEnd",
+          "netXAF",
+          "status",
+          "paidAt"
+        ]
+      },
+      "VendorSelfBalanceDto": {
+        "type": "object",
+        "properties": {
+          "balanceXAF": {
+            "type": "number"
+          },
+          "isTrusted": {
+            "type": "boolean"
+          },
+          "vendorType": {
+            "type": "string",
+            "enum": [
+              "INFORMAL",
+              "SEMI_FORMAL",
+              "RESTAURANT"
+            ]
+          },
+          "lastPayoutAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastPayoutXAF": {
+            "type": "object",
+            "nullable": true
+          },
+          "nextScheduledPayout": {
+            "$ref": "#/components/schemas/NextScheduledPayoutDto"
+          },
+          "recentPayouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutSummaryDto"
+            }
+          },
+          "pendingCashoutRequestId": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "balanceXAF",
+          "isTrusted",
+          "vendorType",
+          "lastPayoutAt",
+          "lastPayoutXAF",
+          "nextScheduledPayout",
+          "recentPayouts",
+          "pendingCashoutRequestId"
+        ]
+      },
+      "UpsertItemDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Poulet DG"
+          },
+          "description": {
+            "type": "string",
+            "example": "Poulet rôti, plantains, légumes du jour."
+          },
+          "priceXAF": {
+            "type": "number",
+            "example": 3000,
+            "description": "Prix entier FCFA (>= 100)."
+          },
+          "categoryId": {
+            "type": "string",
+            "description": "UUID d'une MenuCategory du même vendeur."
+          },
+          "preparationMinutes": {
+            "type": "number",
+            "description": "Temps de préparation moyen (minutes). Restaurants uniquement.",
+            "example": 20
+          },
+          "sortOrder": {
+            "type": "number",
+            "description": "Ordre d'affichage. Lower = first.",
+            "example": 0
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "FOOD",
+              "DRINK"
+            ],
+            "default": "FOOD",
+            "description": "Food/Drink — drives the /vendor/menu category tabs."
+          },
+          "stockLevel": {
+            "type": "string",
+            "enum": [
+              "IN_STOCK",
+              "LOW_STOCK",
+              "OUT_OF_STOCK"
+            ],
+            "default": "IN_STOCK",
+            "description": "Stock state. Defaults to IN_STOCK on create. Edit later from the menu screen / item editor."
+          }
+        },
+        "required": [
+          "name",
+          "priceXAF"
+        ]
+      },
+      "UpdateItemStockDto": {
+        "type": "object",
+        "properties": {
+          "isInStock": {
+            "type": "boolean",
+            "example": false,
+            "description": "Legacy fallback — true = IN_STOCK, false = OUT_OF_STOCK."
+          },
+          "stockLevel": {
+            "type": "string",
+            "enum": [
+              "IN_STOCK",
+              "LOW_STOCK",
+              "OUT_OF_STOCK"
+            ],
+            "description": "Preferred — full 3-tier stock control."
+          }
+        }
+      },
+      "UpsertCategoryDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Plats"
+          },
+          "sortOrder": {
+            "type": "number",
+            "example": 0
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "UpdateAvailabilityDto": {
+        "type": "object",
+        "properties": {
+          "isOpen": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "isOpen"
+        ]
+      },
+      "DayHours": {
+        "type": "object",
+        "properties": {
+          "open": {
+            "type": "string",
+            "example": "07:30"
+          },
+          "close": {
+            "type": "string",
+            "example": "21:00"
+          }
+        },
+        "required": [
+          "open",
+          "close"
+        ]
+      },
+      "UpdateHoursDto": {
+        "type": "object",
+        "properties": {
+          "mon": {
+            "$ref": "#/components/schemas/DayHours"
+          },
+          "tue": {
+            "$ref": "#/components/schemas/DayHours"
+          },
+          "wed": {
+            "$ref": "#/components/schemas/DayHours"
+          },
+          "thu": {
+            "$ref": "#/components/schemas/DayHours"
+          },
+          "fri": {
+            "$ref": "#/components/schemas/DayHours"
+          },
+          "sat": {
+            "$ref": "#/components/schemas/DayHours"
+          },
+          "sun": {
+            "$ref": "#/components/schemas/DayHours"
+          }
+        }
+      },
+      "SubmitRiderDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Nom complet du livreur.",
+            "example": "Jean Mboué"
+          },
+          "phone": {
+            "type": "string",
+            "description": "Cameroon local or international E.164.",
+            "example": "670000020"
+          },
+          "vehicleType": {
+            "type": "string",
+            "enum": [
+              "MOTO",
+              "BICYCLE",
+              "CAR",
+              "ON_FOOT"
+            ],
+            "example": "MOTO"
+          },
+          "preferredZone": {
+            "type": "string",
+            "description": "Zone de livraison préférée (quartier, secteur).",
+            "example": "Makepe"
+          },
+          "licensePlate": {
+            "type": "string",
+            "description": "Numéro de plaque (requis pour MOTO et CAR ; optionnel pour BICYCLE ; absent pour ON_FOOT). Lettres majuscules, chiffres et tirets.",
+            "example": "LT1234"
+          },
+          "momoPhone": {
+            "type": "string",
+            "description": "Cameroon local or international E.164.",
+            "example": "670000020"
+          }
+        },
+        "required": [
+          "name",
+          "phone",
+          "vehicleType",
+          "momoPhone"
+        ]
+      },
+      "UpdateRiderProfileDto": {
+        "type": "object",
+        "properties": {
+          "preferredZone": {
+            "type": "string",
+            "example": "Bonamoussadi"
+          },
+          "momoPhone": {
+            "type": "string"
+          }
+        }
+      },
+      "RiderSelfBalanceDto": {
+        "type": "object",
+        "properties": {
+          "balanceXAF": {
+            "type": "number"
+          },
+          "lastPayoutAt": {
+            "type": "object",
+            "format": "date-time",
+            "nullable": true
+          },
+          "lastPayoutXAF": {
+            "type": "object",
+            "nullable": true
+          },
+          "nextScheduledPayout": {
+            "$ref": "#/components/schemas/NextScheduledPayoutDto"
+          },
+          "recentPayouts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayoutSummaryDto"
+            }
+          }
+        },
+        "required": [
+          "balanceXAF",
+          "lastPayoutAt",
+          "lastPayoutXAF",
+          "nextScheduledPayout",
+          "recentPayouts"
+        ]
+      },
+      "RiderAvailabilityDto": {
+        "type": "object",
+        "properties": {
+          "isOnline": {
+            "type": "boolean",
+            "example": true
+          }
+        },
+        "required": [
+          "isOnline"
+        ]
+      },
+      "RiderHeartbeatDto": {
+        "type": "object",
+        "properties": {
+          "lat": {
+            "type": "number",
+            "example": 4.0511
+          },
+          "lng": {
+            "type": "number",
+            "example": 9.7679
+          }
+        },
+        "required": [
+          "lat",
+          "lng"
+        ]
+      },
+      "ConfirmationCodeDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "4-digit pickup or delivery code as shown by the vendor / consumer.",
+            "example": "4271"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "AdminLoginDto": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "admin@chopnow.app"
+          },
+          "password": {
+            "type": "string",
+            "description": "Min 12 chars, must include uppercase, digit, and special char.",
+            "example": "StrongPwd!2026"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ]
+      },
+      "VerifyAdminTotpDto": {
+        "type": "object",
+        "properties": {
+          "challenge": {
+            "type": "string",
+            "description": "Opaque challenge token returned by /admin/auth/login when totp_required."
+          },
+          "code": {
+            "type": "string",
+            "description": "6-digit TOTP from the authenticator app, OR a recovery code in XXXX-YYYY format.",
+            "example": "123456"
+          },
+          "isRecoveryCode": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "challenge",
+          "code"
+        ]
+      },
+      "ConfirmAdminTotpDto": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "example": "123456"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "AdminDecisionDto": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "Free-text reason — shown to the vendor/rider in their WhatsApp notification.",
+            "example": "Photo de pièce d'identité illisible",
+            "maxLength": 200
+          }
+        }
+      },
+      "SetVendorPreOrdersDto": {
+        "type": "object",
+        "properties": {
+          "acceptsPreOrders": {
+            "type": "boolean",
+            "description": "Whether the vendor should accept pre-orders."
+          }
+        },
+        "required": [
+          "acceptsPreOrders"
+        ]
+      },
+      "RejectCashoutRequestDto": {
+        "type": "object",
+        "properties": {}
+      },
+      "ManualMarkPaidDto": {
+        "type": "object",
+        "properties": {
+          "campayRef": {
+            "type": "string",
+            "description": "Campay transaction reference from the manual fire"
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text audit note"
+          }
+        },
+        "required": [
+          "campayRef"
+        ]
+      },
+      "ResolveRiderFraudDto": {
+        "type": "object",
+        "properties": {
+          "riderAction": {
+            "type": "string",
+            "enum": [
+              "SUSPEND",
+              "WARN"
+            ],
+            "description": "What to do with the rider"
+          },
+          "vendorCompensation": {
+            "type": "boolean",
+            "description": "Whether to compensate the vendor for the lost food"
+          },
+          "consumerRefund": {
+            "type": "boolean",
+            "description": "Whether to queue a refund to the consumer"
+          },
+          "note": {
+            "type": "string",
+            "description": "Free-text note captured in refusalReason + audit log"
+          }
+        },
+        "required": [
+          "riderAction",
+          "vendorCompensation",
+          "consumerRefund",
+          "note"
+        ]
+      }
+    }
+  }
+}

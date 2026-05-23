@@ -13,7 +13,6 @@ deploy/.env.staging
 coverage/
 .eslintcache
 *.tsbuildinfo
-openapi.json
 
 # Local Claude Code project context — never committed
 CLAUDE.md

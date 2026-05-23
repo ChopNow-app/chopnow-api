@@ -31,6 +31,7 @@ import { VoiceProxyModule } from './modules/voice-proxy/voice-proxy.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './infra/observability/metrics.module';
+import { OpenApiModule } from './infra/openapi/openapi.module';
 
 import { AllExceptionsFilter } from './shared/filters/all-exceptions.filter';
 import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
@@ -105,6 +106,7 @@ import { buildPinoTransport } from './infra/observability/pino-transport';
     // --- Cross-cutting ---
     HealthModule,
     MetricsModule,
+    OpenApiModule,
   ],
   providers: [
     // Global rate limiter (per-IP)
