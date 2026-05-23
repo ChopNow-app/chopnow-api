@@ -74,6 +74,19 @@ export const envSchema = Joi.object({
   THROTTLE_TTL_SECONDS: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
 
+  // Number of reverse-proxy hops in front of the API. Read by
+  // `app.set('trust proxy', N)` in main.ts so Express trusts the
+  // X-Forwarded-* headers Caddy/Cloudflare set and `req.ip` resolves to
+  // the real client.
+  //
+  //   0 — direct exposure (local dev). req.ip = socket peer.
+  //   1 — one proxy (Caddy on the DO staging droplet, future nginx on Hetzner).
+  //   2 — two proxies (Cloudflare → Caddy → API).
+  //
+  // Without this, every staging request looks like 127.0.0.1, and every
+  // per-IP @Throttle decorator collapses into one global bucket.
+  TRUST_PROXY: Joi.number().integer().min(0).max(5).default(0),
+
   CORS_ORIGINS: Joi.string().default('http://localhost:3000'),
 
   // Internal flag toggled by `npm run openapi:export`. Not for users.

@@ -199,4 +199,12 @@ export class EnvService {
       limit: this.raw.getOrThrow('THROTTLE_LIMIT'),
     };
   }
+
+  /**
+   * Number of reverse-proxy hops to trust. Fed to `app.set('trust proxy', N)`
+   * in main.ts. 0 in dev (direct exposure), 1 on staging (Caddy), 1+ in prod.
+   */
+  get trustProxy(): number {
+    return this.raw.getOrThrow('TRUST_PROXY');
+  }
 }
