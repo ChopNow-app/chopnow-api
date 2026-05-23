@@ -90,7 +90,16 @@ const VENDORS: Array<{
   whatsappPhone: string;
   momoPhone: string;
   pointOfReference: string;
-  items: Array<{ name: string; description: string; priceXAF: number }>;
+  items: Array<{
+    name: string;
+    description: string;
+    priceXAF: number;
+    // Optional source URL — generic Unsplash food photo while waiting for
+    // real vendor menu shots. Uploaded to R2 under `menu-items/seed-*.webp`
+    // by the seed (idempotent: only fires when the DB row has no photoUrl).
+    // To swap a photo, NULL the row's photoUrl column and re-run the seed.
+    photoUrl?: string;
+  }>;
 }> = [
   {
     ownerPhone: '+237670000101',
@@ -104,9 +113,24 @@ const VENDORS: Array<{
     momoPhone: '670000101',
     pointOfReference: 'Bonamoussadi — point de repère placeholder',
     items: [
-      { name: 'Poulet DG', description: 'Poulet, plantains', priceXAF: 3000 },
-      { name: 'Ndolè', description: 'Feuilles + viande', priceXAF: 2500 },
-      { name: 'Soya', description: 'Brochette grillée', priceXAF: 1500 },
+      {
+        name: 'Poulet DG',
+        description: 'Poulet, plantains',
+        priceXAF: 3000,
+        photoUrl: 'https://images.unsplash.com/photo-1598103442097-8b74394b95c6?w=1280&q=80',
+      },
+      {
+        name: 'Ndolè',
+        description: 'Feuilles + viande',
+        priceXAF: 2500,
+        photoUrl: 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1280&q=80',
+      },
+      {
+        name: 'Soya',
+        description: 'Brochette grillée',
+        priceXAF: 1500,
+        photoUrl: 'https://images.unsplash.com/photo-1529692236671-f1f6cf9683ba?w=1280&q=80',
+      },
     ],
   },
   {
@@ -121,8 +145,18 @@ const VENDORS: Array<{
     momoPhone: '670000102',
     pointOfReference: 'Carrefour Total Bonamoussadi',
     items: [
-      { name: 'Sandwich poulet', description: 'Baguette + poulet', priceXAF: 1500 },
-      { name: 'Riz sauté', description: 'Riz + légumes + viande', priceXAF: 2000 },
+      {
+        name: 'Sandwich poulet',
+        description: 'Baguette + poulet',
+        priceXAF: 1500,
+        photoUrl: 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=1280&q=80',
+      },
+      {
+        name: 'Riz sauté',
+        description: 'Riz + légumes + viande',
+        priceXAF: 2000,
+        photoUrl: 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?w=1280&q=80',
+      },
     ],
   },
   {
@@ -137,8 +171,18 @@ const VENDORS: Array<{
     momoPhone: '670000103',
     pointOfReference: 'Face à la pharmacie de Bonamoussadi',
     items: [
-      { name: 'Eru', description: "Feuilles d'eru + waterfufu", priceXAF: 2000 },
-      { name: 'Koki', description: 'Pâté de haricots vapeur', priceXAF: 1200 },
+      {
+        name: 'Eru',
+        description: "Feuilles d'eru + waterfufu",
+        priceXAF: 2000,
+        photoUrl: 'https://images.unsplash.com/photo-1604908554049-29a4d6c4ad0e?w=1280&q=80',
+      },
+      {
+        name: 'Koki',
+        description: 'Pâté de haricots vapeur',
+        priceXAF: 1200,
+        photoUrl: 'https://images.unsplash.com/photo-1543353071-10c8ba85a904?w=1280&q=80',
+      },
     ],
   },
 ];
@@ -199,10 +243,12 @@ function makeR2Client(): { client: S3Client; bucket: string } {
 
 // Fetch an external image, re-encode to WebP @ ≤1280px (matching the
 // R2Service.uploadImage pipeline used by /vendre + /livrer), upload to
-// R2 under `vendor-profile/<uuid>.webp`, and return the storage key.
+// R2 under `<keyPrefix>/seed-<uuid>.webp`, and return the storage key.
+// keyPrefix examples: 'vendor-profile', 'menu-items'.
 async function downloadAndUploadPhoto(
   sourceUrl: string,
   r2: { client: S3Client; bucket: string },
+  keyPrefix: 'vendor-profile' | 'menu-items' = 'vendor-profile',
 ): Promise<string> {
   const res = await fetch(sourceUrl);
   if (!res.ok) {
@@ -214,7 +260,7 @@ async function downloadAndUploadPhoto(
     .resize({ width: 1280, height: 1280, fit: 'inside', withoutEnlargement: true })
     .webp({ quality: 80 })
     .toBuffer();
-  const key = `vendor-profile/seed-${randomUUID()}.webp`;
+  const key = `${keyPrefix}/seed-${randomUUID()}.webp`;
   await r2.client.send(
     new PutObjectCommand({
       Bucket: r2.bucket,
@@ -307,8 +353,27 @@ async function main(): Promise<void> {
       for (const it of v.items) {
         const item = await prisma.item.findFirst({
           where: { vendorId, name: it.name },
-          select: { id: true },
+          select: { id: true, photoUrl: true },
         });
+
+        // Photo: idempotent — only fetch + upload if the source URL is set
+        // in the seed AND the existing/new row doesn't already have one.
+        // Wrapped in try/catch so a single bad Unsplash URL doesn't kill
+        // the entire seed run; we log + continue with null photoUrl.
+        let photoUrl: string | null = item?.photoUrl ?? null;
+        if (it.photoUrl && !photoUrl) {
+          try {
+            console.log(`  ↳ uploading menu photo for "${it.name}"`);
+            photoUrl = await downloadAndUploadPhoto(it.photoUrl, r2, 'menu-items');
+            console.log(`    ✓ stored as ${photoUrl}`);
+          } catch (err) {
+            console.warn(
+              `  ⚠ menu photo upload failed for "${it.name}": ${(err as Error).message}`,
+            );
+            photoUrl = null;
+          }
+        }
+
         if (!item) {
           await prisma.item.create({
             data: {
@@ -318,8 +383,16 @@ async function main(): Promise<void> {
               priceXAF: it.priceXAF,
               isAvailable: true,
               isInStock: true,
+              photoUrl,
             },
           });
+        } else if (photoUrl && !item.photoUrl) {
+          // Existing item that was seeded BEFORE we had photoUrls — backfill it.
+          await prisma.item.update({
+            where: { id: item.id },
+            data: { photoUrl },
+          });
+          console.log(`  ~ backfilled photo on "${it.name}"`);
         }
       }
     }
