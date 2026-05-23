@@ -131,6 +131,9 @@ jobs:
           STAGING_R2_ACCESS_KEY_ID: ${{ secrets.STAGING_R2_ACCESS_KEY_ID }}
           STAGING_R2_SECRET_ACCESS_KEY: ${{ secrets.STAGING_R2_SECRET_ACCESS_KEY }}
           STAGING_RESEND_API_KEY: ${{ secrets.STAGING_RESEND_API_KEY }}
+          # Phase O1 — Sentry. Optional secret; if unset the SDK no-ops
+          # cleanly and the rest of the app keeps working.
+          STAGING_SENTRY_DSN: ${{ secrets.STAGING_SENTRY_DSN }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
@@ -173,6 +176,12 @@ jobs:
           THROTTLE_TTL_SECONDS=60
           THROTTLE_LIMIT=100
           CORS_ORIGINS=${STAGING_CORS_ORIGINS}
+          # Phase O1 — Sentry. Empty DSN ⇒ SDK no-op; populated DSN ⇒
+          # every 5xx ships as a grouped Sentry issue.
+          SENTRY_DSN=${STAGING_SENTRY_DSN}
+          SENTRY_ENVIRONMENT=staging
+          SENTRY_RELEASE=${SHA}
+          SENTRY_TRACES_SAMPLE_RATE=0.1
           IMAGE_TAG=${SHA}
           EOF
 

@@ -147,9 +147,22 @@ export class AuthService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!log) throw new UnauthorizedException('otp_invalid_or_expired');
+    if (!log) {
+      // Phase O6 — emit a structured event so SIEM / Sentry rules can
+      // detect phone-number enumeration attempts (rapid 401s on
+      // /verify-otp across many phones from the same IP).
+      this.logger.warn(
+        { event: 'otp_verify_failed', phone, reason: 'no_active_otp' },
+        'OTP verify failed — no active OTP row',
+      );
+      throw new UnauthorizedException('otp_invalid_or_expired');
+    }
 
     if (log.attempts >= OTP_MAX_ATTEMPTS) {
+      this.logger.warn(
+        { event: 'otp_verify_failed', phone, reason: 'max_attempts', attempts: log.attempts },
+        'OTP verify failed — max attempts exceeded',
+      );
       throw new UnauthorizedException('otp_too_many_attempts');
     }
 
@@ -159,6 +172,10 @@ export class AuthService {
         where: { id: log.id },
         data: { attempts: { increment: 1 } },
       });
+      this.logger.warn(
+        { event: 'otp_verify_failed', phone, reason: 'wrong_code', attempts: log.attempts + 1 },
+        'OTP verify failed — wrong code',
+      );
       throw new UnauthorizedException('otp_invalid_or_expired');
     }
 

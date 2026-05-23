@@ -78,4 +78,15 @@ export const envSchema = Joi.object({
 
   // Internal flag toggled by `npm run openapi:export`. Not for users.
   OPENAPI_EXPORT: Joi.string().valid('true', 'false').default('false'),
+
+  // --- Sentry / observability (Phase O1) ---
+  // All optional — the SDK no-ops cleanly when DSN is unset, which is
+  // the right default for CI / local dev. Staging + production set
+  // these via GitHub environment secrets.
+  SENTRY_DSN: Joi.string().uri().allow('').optional(),
+  SENTRY_ENVIRONMENT: Joi.string().allow('').optional(),
+  SENTRY_RELEASE: Joi.string().allow('').optional(),
+  SENTRY_TRACES_SAMPLE_RATE: Joi.string()
+    .pattern(/^0(\.\d+)?$|^1(\.0+)?$/)
+    .optional(),
 });
