@@ -7,6 +7,7 @@ import { EnvService } from '../../infra/config/env.service';
 import { Public } from '../../shared/decorators/public.decorator';
 import { PhoneRateLimit } from '../../shared/decorators/phone-rate-limit.decorator';
 import { PhoneRateLimitGuard } from '../../shared/guards/phone-rate-limit.guard';
+import { TurnstileGuard } from '../../shared/guards/turnstile.guard';
 import { AuthService } from './auth.service';
 import type { DeviceMeta } from './device.service';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
@@ -58,7 +59,11 @@ export class AuthController {
   // threat).
   @Throttle({ otp: { limit: 20, ttl: 15 * 60 * 1000 } })
   @PhoneRateLimit({ limit: 5, ttlSeconds: 15 * 60 })
-  @UseGuards(PhoneRateLimitGuard)
+  // Order matters: TurnstileGuard FIRST so a bot can't burn the per-phone
+  // 5/15min budget without solving the challenge. Inert by default
+  // (CAPTCHA_ENABLED=false ⇒ short-circuits to true) — flip the env flag
+  // to activate without code change.
+  @UseGuards(TurnstileGuard, PhoneRateLimitGuard)
   @Post('request-otp')
   @HttpCode(200)
   @ApiOperation({

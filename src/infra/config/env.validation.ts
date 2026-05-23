@@ -74,6 +74,17 @@ export const envSchema = Joi.object({
   THROTTLE_TTL_SECONDS: Joi.number().default(60),
   THROTTLE_LIMIT: Joi.number().default(100),
 
+  // --- CAPTCHA (Cloudflare Turnstile) ---
+  // Inert by default. Routes decorated with `@UseGuards(TurnstileGuard)`
+  // (currently only `/auth/request-otp`) become protected when both
+  // CAPTCHA_ENABLED=true AND TURNSTILE_SECRET_KEY is set. When disabled,
+  // the guard short-circuits to `return true` — no overhead, no widget
+  // expected from the client. Flip via GitHub `staging` env secrets +
+  // matching Vercel envs on the PWA side; turnstile.cloudflare.com
+  // issues both the site (frontend) and secret (backend) keys.
+  CAPTCHA_ENABLED: Joi.string().valid('true', 'false').default('false'),
+  TURNSTILE_SECRET_KEY: Joi.string().allow('').optional(),
+
   // Number of reverse-proxy hops in front of the API. Read by
   // `app.set('trust proxy', N)` in main.ts so Express trusts the
   // X-Forwarded-* headers Caddy/Cloudflare set and `req.ip` resolves to

@@ -148,6 +148,11 @@ jobs:
           # logs:write + metrics:write scopes.
           STAGING_PROM_URL: ${{ secrets.STAGING_PROM_URL }}
           STAGING_PROM_USERNAME: ${{ secrets.STAGING_PROM_USERNAME }}
+          # Phase S1 — Cloudflare Turnstile bot-protection. Pre-wired
+          # but inert by default. Both secrets ship empty/false until a
+          # SIM-farm signal appears, then flipped together.
+          STAGING_CAPTCHA_ENABLED: ${{ secrets.STAGING_CAPTCHA_ENABLED }}
+          STAGING_TURNSTILE_SECRET_KEY: ${{ secrets.STAGING_TURNSTILE_SECRET_KEY }}
           SHA: ${{ github.sha }}
         run: |
           cat > /tmp/.env.staging <<EOF
@@ -196,6 +201,11 @@ jobs:
           # X-Forwarded-For is honored and per-IP @Throttle decorators
           # bucket on the real client (not 127.0.0.1).
           TRUST_PROXY=1
+          # Phase S1 — Cloudflare Turnstile. Both empty/false unless the
+          # matching GH secrets are set (which they aren't on first deploy).
+          # TurnstileGuard short-circuits to `return true` in that case.
+          CAPTCHA_ENABLED=${STAGING_CAPTCHA_ENABLED:-false}
+          TURNSTILE_SECRET_KEY=${STAGING_TURNSTILE_SECRET_KEY}
           CORS_ORIGINS=${STAGING_CORS_ORIGINS}
           # Phase O1 — Sentry. Empty DSN ⇒ SDK no-op; populated DSN ⇒
           # every 5xx ships as a grouped Sentry issue.
