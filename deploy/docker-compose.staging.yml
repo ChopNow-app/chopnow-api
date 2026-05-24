@@ -8,6 +8,15 @@
 # Substituted env vars come from the .env file in the same directory at apply
 # time. The .env is regenerated on every deploy from GitHub environment
 # secrets — never committed.
+#
+# ─── What's NOT in this file (intentionally) ──────────────────────────
+# Caddy reverse-proxy + Let's Encrypt TLS terminator runs at the HOST
+# level on the droplet (not in compose). It listens on :443, terminates
+# TLS for api-staging.tchopnow.app, and forwards to 127.0.0.1:3001 →
+# the `api` service below. Config lives at /etc/caddy/Caddyfile on the
+# droplet; the version-controlled source of truth is `./caddy/Caddyfile`
+# in this repo. See `./caddy/README.md` for why it's host-level + how
+# to update it.
 
 services:
   db:

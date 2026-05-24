@@ -79,8 +79,39 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Unit tests
-        run: npm test
+      - name: Unit tests (with coverage)
+        # Coverage written to ./coverage/ and reported to the GitHub
+        # Actions job summary so reviewers see overall + per-file %
+        # without leaving the PR. Free; no Codecov dep. When we want
+        # a hosted dashboard with PR diff overlays, swap to Codecov
+        # (Phase 2 — add when a 2nd dev joins).
+        run: npm run test:coverage
+
+      - name: Publish coverage to job summary
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            node -e "
+              const s = require('./coverage/coverage-summary.json').total;
+              const pct = (m) => s[m].pct.toFixed(1) + '%';
+              const bar = (v) => v >= 80 ? '🟢' : v >= 60 ? '🟡' : '🔴';
+              const out = [
+                '## Test coverage',
+                '',
+                '| Metric | % | |',
+                '|--------|----|----|',
+                \`| Statements | \${pct('statements')} | \${bar(s.statements.pct)} |\`,
+                \`| Branches   | \${pct('branches')}   | \${bar(s.branches.pct)} |\`,
+                \`| Functions  | \${pct('functions')}  | \${bar(s.functions.pct)} |\`,
+                \`| Lines      | \${pct('lines')}      | \${bar(s.lines.pct)} |\`,
+                '',
+                '_Thresholds: 🟢 ≥80%, 🟡 ≥60%, 🔴 <60%. Visibility only; no PR-blocking gate yet (Phase 1)._',
+              ].join('\n');
+              require('fs').appendFileSync(process.env.GITHUB_STEP_SUMMARY, out + '\n');
+            "
+          else
+            echo '_(coverage report not generated — test step likely failed)_' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Security audit (deps)
         # Blocks on high+ vulnerabilities. Dependabot opens auto-fix PRs
