@@ -94,3 +94,102 @@ describe('OtpDeliveryService.handleTwilioStatus', () => {
     expect(prisma.otpLog.update).not.toHaveBeenCalled();
   });
 });
+
+describe('OtpDeliveryService.sendOtp — bypass paths', () => {
+  // Real Twilio creds shape (passes isTwilioConfigured) so we exercise the
+  // bypass logic, not the no-credentials short-circuit.
+  const TWILIO_OK = {
+    // Must NOT contain "xxxx" (isTwilioConfigured rejects placeholder
+    // SIDs from .env.example). Use a plausible-looking digit suffix.
+    sid: 'AC' + '0123456789abcdef0123456789abcdef',
+    authToken: 'real_token',
+    whatsappFrom: 'whatsapp:+14155238886',
+    smsFrom: '+1234567890',
+    statusCallbackUrl: 'https://api-staging.tchopnow.app/api/twilio/status',
+  };
+
+  const logger = {
+    warn: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    debug: jest.fn(),
+    trace: jest.fn(),
+    setContext: jest.fn(),
+  };
+
+  let twilio: { sendWhatsApp: jest.Mock; sendSms: jest.Mock };
+  let env: { twilio: typeof TWILIO_OK };
+  let prisma: object;
+  let service: OtpDeliveryService;
+  const origEnv = { ...process.env };
+
+  beforeEach(() => {
+    twilio = {
+      sendWhatsApp: jest.fn().mockResolvedValue('SMreal'),
+      sendSms: jest.fn().mockResolvedValue('SMsmsreal'),
+    };
+    env = { twilio: TWILIO_OK };
+    prisma = {};
+    service = new OtpDeliveryService(
+      logger as never,
+      twilio as never,
+      env as never,
+      prisma as never,
+    );
+    // Clean the bypass env between tests so prior cases don't leak.
+    delete process.env.OTP_DEV_BYPASS;
+    delete process.env.OTP_BYPASS_PHONES;
+  });
+
+  afterAll(() => {
+    process.env = origEnv;
+  });
+
+  it('routes through Twilio when neither bypass var is set', async () => {
+    const res = await service.sendOtp('670000999', '123456');
+    expect(twilio.sendWhatsApp).toHaveBeenCalledWith(
+      '+237670000999',
+      expect.stringContaining('123456'),
+      expect.any(String),
+    );
+    expect(res.providerMessageId).toBe('SMreal');
+  });
+
+  it('bypasses (logs only) when OTP_DEV_BYPASS=true — global kill-switch', async () => {
+    process.env.OTP_DEV_BYPASS = 'true';
+    const res = await service.sendOtp('670000999', '123456');
+    expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
+    expect(res.providerMessageId).toMatch(/^dev-/);
+  });
+
+  it('bypasses ONLY phones in OTP_BYPASS_PHONES — others still hit Twilio', async () => {
+    process.env.OTP_BYPASS_PHONES = '+237670000101,+237670000201';
+
+    const bypassed = await service.sendOtp('670000101', '111111');
+    expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
+    expect(bypassed.providerMessageId).toMatch(/^dev-/);
+
+    const real = await service.sendOtp('670000999', '222222');
+    expect(twilio.sendWhatsApp).toHaveBeenCalledTimes(1);
+    expect(twilio.sendWhatsApp).toHaveBeenCalledWith(
+      '+237670000999',
+      expect.stringContaining('222222'),
+      expect.any(String),
+    );
+    expect(real.providerMessageId).toBe('SMreal');
+  });
+
+  it('normalizes allowlist entries to E.164 — bare 9-digit matches +237 input', async () => {
+    // Allowlist written without country code — the parser must add +237 so
+    // it matches the E.164-normalized request phone.
+    process.env.OTP_BYPASS_PHONES = '670000101, 670000201';
+    await service.sendOtp('+237670000101', '333333');
+    expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
+  });
+
+  it('treats empty / whitespace OTP_BYPASS_PHONES as "everyone goes through Twilio"', async () => {
+    process.env.OTP_BYPASS_PHONES = '   ,  ,';
+    await service.sendOtp('670000101', '444444');
+    expect(twilio.sendWhatsApp).toHaveBeenCalled();
+  });
+});

@@ -31,13 +31,27 @@ export class OtpDeliveryService {
     const body = this.formatBody(code);
     const statusCallback = this.env.twilio.statusCallbackUrl;
 
-    // Dev convenience: skip live delivery if Twilio isn't configured OR if the
-    // operator has explicitly opted in to bypass (OTP_DEV_BYPASS=true).
-    // Bypass mode is the right call when smoke-testing against test phones
-    // you don't own (e.g. seeded vendor/rider) — the alternative is editing
-    // .env to remove real Twilio creds and accidentally losing them.
-    if (!this.isTwilioConfigured() || process.env.OTP_DEV_BYPASS === 'true') {
-      const reason = !this.isTwilioConfigured() ? 'twilio_not_configured' : 'otp_dev_bypass';
+    // Three bypass paths, evaluated in order; the first match short-circuits
+    // to log-only delivery. Real Twilio call only fires when ALL three fail.
+    //
+    //   1. Twilio not configured → unavoidable, dev/CI environments.
+    //   2. OTP_BYPASS_PHONES allowlist contains this phone → per-number
+    //      opt-in. Lets staging serve real Twilio for the founder's own
+    //      number while still bypassing for seeded placeholder phones
+    //      (+237 670 000 1xx / 2xx) that nobody owns. Used during alpha
+    //      test weeks — see ChopNow/alpha-test/protocol.md.
+    //   3. OTP_DEV_BYPASS=true → global kill-switch. Local dev convenience;
+    //      should NEVER be set in staging or prod (use the allowlist
+    //      instead for selective bypass).
+    const allowlist = this.parseBypassPhones(process.env.OTP_BYPASS_PHONES);
+    const inAllowlist = allowlist.includes(e164);
+    const globalBypass = process.env.OTP_DEV_BYPASS === 'true';
+    if (!this.isTwilioConfigured() || inAllowlist || globalBypass) {
+      const reason = !this.isTwilioConfigured()
+        ? 'twilio_not_configured'
+        : inAllowlist
+          ? 'otp_bypass_phones_allowlist'
+          : 'otp_dev_bypass';
       this.logger.warn(
         { event: 'otp_dev_stub', phone: e164, reason, code },
         '[DEV] OTP printed to logs instead of sent',
@@ -124,6 +138,23 @@ export class OtpDeliveryService {
       default:
         return;
     }
+  }
+
+  /**
+   * Parse OTP_BYPASS_PHONES into an array of E.164 phones.
+   *
+   * Format: comma-separated, whitespace-tolerant. Both `+237670000101`
+   * and `237670000101` accepted; bare 9-digit Cameroon (`670000101`) is
+   * normalized via toE164. Empty / missing env var = empty array =
+   * everyone goes through Twilio.
+   */
+  private parseBypassPhones(raw: string | undefined): string[] {
+    if (!raw) return [];
+    return raw
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .map((p) => this.toE164(p));
   }
 
   private isTwilioConfigured(): boolean {
