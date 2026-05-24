@@ -2283,7 +2283,7 @@
     },
     "/api/v1/admin/metrics": {
       "get": {
-        "description": "Drives the Week-3 decision point of the COD-only pilot. Defaults to a rolling 7-day window. Pass ?from=&to= (ISO 8601) to inspect a custom range.",
+        "description": "Drives the Week-3 decision point of the MoMo-only pilot. Defaults to a rolling 7-day window. Pass ?from=&to= (ISO 8601) to inspect a custom range.",
         "operationId": "AdminMetricsController_getMetrics_v1",
         "parameters": [
           {
