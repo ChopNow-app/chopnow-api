@@ -33,7 +33,7 @@ export class AdminMetricsController {
   @ApiOperation({
     summary: 'Pilot KPI snapshot (7-day reorder rate, completion, avg times)',
     description:
-      'Drives the Week-3 decision point of the COD-only pilot. Defaults to a ' +
+      'Drives the Week-3 decision point of the MoMo-only pilot. Defaults to a ' +
       'rolling 7-day window. Pass ?from=&to= (ISO 8601) to inspect a custom range.',
   })
   @ApiQuery({ name: 'from', required: false, type: String, example: '2026-05-01T00:00:00Z' })
