@@ -120,12 +120,20 @@ jobs:
           STAGING_TWILIO_AUTH_TOKEN: ${{ secrets.STAGING_TWILIO_AUTH_TOKEN }}
           STAGING_TWILIO_WHATSAPP_FROM: ${{ secrets.STAGING_TWILIO_WHATSAPP_FROM }}
           STAGING_TWILIO_STATUS_CALLBACK_URL: ${{ secrets.STAGING_TWILIO_STATUS_CALLBACK_URL }}
-          # OTP dev bypass — when "true", OtpDeliveryService logs the code
-          # to stdout instead of routing through Twilio. Lets the founder
-          # smoke-test against seeded vendor/rider phones they don't own.
-          # NEVER set on production. Optional secret — empty/unset = real
-          # Twilio delivery (canonical staging behavior).
+          # OTP_DEV_BYPASS — global kill-switch ("true" → ALL OTPs log).
+          # Use OTP_BYPASS_PHONES below instead when you want SELECTIVE
+          # bypass (e.g. founder's own number goes via real Twilio while
+          # seeded vendor/rider placeholders log to stdout). Optional —
+          # empty/unset = canonical Twilio delivery.
           STAGING_OTP_DEV_BYPASS: ${{ secrets.STAGING_OTP_DEV_BYPASS }}
+          # OTP_BYPASS_PHONES — comma-separated allowlist of phones that
+          # should bypass Twilio (logged to stdout instead). Everything
+          # outside the list still routes through Twilio normally. Right
+          # mechanism for the alpha-test week: set to the 6 seeded
+          # placeholder phones (+237 670 000 101..103 vendors, 201..203
+          # riders) so the founder's own real number still receives a
+          # real OTP via WhatsApp.
+          STAGING_OTP_BYPASS_PHONES: ${{ secrets.STAGING_OTP_BYPASS_PHONES }}
           STAGING_CAMPAY_API_URL: ${{ secrets.STAGING_CAMPAY_API_URL }}
           STAGING_CAMPAY_USERNAME: ${{ secrets.STAGING_CAMPAY_USERNAME }}
           STAGING_CAMPAY_PASSWORD: ${{ secrets.STAGING_CAMPAY_PASSWORD }}
@@ -186,12 +194,16 @@ jobs:
           TWILIO_AUTH_TOKEN=${STAGING_TWILIO_AUTH_TOKEN}
           TWILIO_WHATSAPP_FROM=${STAGING_TWILIO_WHATSAPP_FROM}
           TWILIO_STATUS_CALLBACK_URL=${STAGING_TWILIO_STATUS_CALLBACK_URL}
-          # Empty/false = real Twilio delivery; "true" = log-to-stdout
-          # path used for founder smoke tests + the upcoming alpha-test
-          # sessions against seeded vendor/rider phones (+237 670 000 1xx
-          # / 2xx) that nobody owns. Toggled via STAGING_OTP_DEV_BYPASS
-          # GH secret — set to "true" before the alpha week, unset after.
+          # Global bypass — only set "true" in pure-dev environments where
+          # nobody needs a real OTP. For alpha-test week use the per-phone
+          # allowlist below instead, which keeps the founder's own number
+          # on the real Twilio path while bypassing seeded placeholders.
           OTP_DEV_BYPASS=${STAGING_OTP_DEV_BYPASS:-false}
+          # Per-phone allowlist (comma-separated). Phones in this list log
+          # the OTP to stdout; everything else routes through Twilio. Set
+          # to the 6 seeded placeholder phones at the start of the alpha
+          # week, unset (or set to "") after.
+          OTP_BYPASS_PHONES=${STAGING_OTP_BYPASS_PHONES}
           CAMPAY_API_URL=${STAGING_CAMPAY_API_URL}
           CAMPAY_USERNAME=${STAGING_CAMPAY_USERNAME}
           CAMPAY_PASSWORD=${STAGING_CAMPAY_PASSWORD}
