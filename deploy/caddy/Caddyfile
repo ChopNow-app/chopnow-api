@@ -1,0 +1,37 @@
+# Caddy reverse-proxy + TLS terminator for the staging API.
+#
+# Lives on the DigitalOcean droplet at /etc/caddy/Caddyfile.
+# This file is the source of truth — when you change something, update
+# the droplet copy via the procedure in ./README.md.
+#
+# Architecture:
+#   public internet  ─TLS─►  Caddy (host-level, port 443)
+#                            ├─ Let's Encrypt cert auto-renewal
+#                            ├─ gzip + zstd response compression
+#                            └─ reverse_proxy → 127.0.0.1:3001
+#                                              │
+#                                              └─ chopnow-staging-api (Docker)
+#                                                  └─ port 3001 bound to 127.0.0.1 only
+#                                                     (compose: deploy/docker-compose.staging.yml)
+#
+# Why Caddy is NOT in docker-compose.staging.yml:
+#   Caddy needs to bind ports 80 + 443 on the host AND manage cert
+#   storage in /var/lib/caddy. Running it in compose would force
+#   either port-mapping ceremony, ACME cert hand-off, or a shared
+#   volume mount — all of which trade off the simplicity that makes
+#   Caddy worth using in the first place. Installing it natively
+#   (`apt install caddy`) and pointing it at the loopback API
+#   container is the canonical pattern for a single-droplet deploy.
+
+{
+    email kanmegnea@gmail.com
+}
+
+api-staging.tchopnow.app {
+    encode gzip zstd
+    reverse_proxy 127.0.0.1:3001
+    header {
+        -Server
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
+}
