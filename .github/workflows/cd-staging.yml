@@ -120,6 +120,12 @@ jobs:
           STAGING_TWILIO_AUTH_TOKEN: ${{ secrets.STAGING_TWILIO_AUTH_TOKEN }}
           STAGING_TWILIO_WHATSAPP_FROM: ${{ secrets.STAGING_TWILIO_WHATSAPP_FROM }}
           STAGING_TWILIO_STATUS_CALLBACK_URL: ${{ secrets.STAGING_TWILIO_STATUS_CALLBACK_URL }}
+          # OTP dev bypass — when "true", OtpDeliveryService logs the code
+          # to stdout instead of routing through Twilio. Lets the founder
+          # smoke-test against seeded vendor/rider phones they don't own.
+          # NEVER set on production. Optional secret — empty/unset = real
+          # Twilio delivery (canonical staging behavior).
+          STAGING_OTP_DEV_BYPASS: ${{ secrets.STAGING_OTP_DEV_BYPASS }}
           STAGING_CAMPAY_API_URL: ${{ secrets.STAGING_CAMPAY_API_URL }}
           STAGING_CAMPAY_USERNAME: ${{ secrets.STAGING_CAMPAY_USERNAME }}
           STAGING_CAMPAY_PASSWORD: ${{ secrets.STAGING_CAMPAY_PASSWORD }}
@@ -180,6 +186,12 @@ jobs:
           TWILIO_AUTH_TOKEN=${STAGING_TWILIO_AUTH_TOKEN}
           TWILIO_WHATSAPP_FROM=${STAGING_TWILIO_WHATSAPP_FROM}
           TWILIO_STATUS_CALLBACK_URL=${STAGING_TWILIO_STATUS_CALLBACK_URL}
+          # Empty/false = real Twilio delivery; "true" = log-to-stdout
+          # path used for founder smoke tests + the upcoming alpha-test
+          # sessions against seeded vendor/rider phones (+237 670 000 1xx
+          # / 2xx) that nobody owns. Toggled via STAGING_OTP_DEV_BYPASS
+          # GH secret — set to "true" before the alpha week, unset after.
+          OTP_DEV_BYPASS=${STAGING_OTP_DEV_BYPASS:-false}
           CAMPAY_API_URL=${STAGING_CAMPAY_API_URL}
           CAMPAY_USERNAME=${STAGING_CAMPAY_USERNAME}
           CAMPAY_PASSWORD=${STAGING_CAMPAY_PASSWORD}
