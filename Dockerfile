@@ -10,6 +10,22 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
+# Compile prisma/seed-coupons.ts to plain JS so the runtime image (which
+# omits ts-node + devDependencies) can execute it on each deploy. The
+# nest builder doesn't include prisma/ in its output, so this is a
+# one-shot tsc invocation against the seed file only. Output is flat
+# (dist/seed-coupons.js — tsc strips the leading prisma/ directory when
+# compiling a single file without a rootDir).
+# See .github/workflows/cd-staging.yml — it shells `node dist/seed-coupons.js`.
+RUN npx tsc \
+    --module commonjs \
+    --target es2020 \
+    --esModuleInterop \
+    --resolveJsonModule \
+    --skipLibCheck \
+    --outDir dist \
+    prisma/seed-coupons.ts
+
 # --- Runtime stage ---
 FROM node:22-alpine AS runner
 WORKDIR /app
