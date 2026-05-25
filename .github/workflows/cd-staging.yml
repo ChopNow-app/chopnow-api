@@ -313,6 +313,18 @@ jobs:
           docker compose run --rm -T api \
             node node_modules/prisma/build/index.js migrate deploy < /dev/null
 
+          # Promo coupon seed (#167) — idempotent upsert of BIENVENUE.
+          # We run this on every deploy because the marketing splash
+          # banner advertises the code by literal name; if the row is
+          # missing, the launch funnel silently breaks at /cart. The
+          # seed is `upsert` based on the code column, so re-running is
+          # a no-op on a clean DB and a row-rewrite if anything drifted.
+          # Source lives at prisma/seed-coupons.ts; the Dockerfile builder
+          # compiles it to dist/seed-coupons.js (tsc flattens the path for
+          # single-file builds) so the runtime image (no ts-node) can run it.
+          docker compose run --rm -T api \
+            node dist/seed-coupons.js < /dev/null
+
           # Now bring up the API. --force-recreate handles two edge cases:
           # (1) Previous deploy left the container in a crashloop —
           #     `up -d` alone may not reliably touch a restarting container.

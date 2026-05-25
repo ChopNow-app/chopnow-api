@@ -29,6 +29,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { OrdersModule } from './modules/orders/orders.module';
 import { VoiceProxyModule } from './modules/voice-proxy/voice-proxy.module';
 import { FinanceModule } from './modules/finance/finance.module';
+import { CouponsModule } from './modules/coupons/coupons.module';
 import { HealthModule } from './health/health.module';
 import { MetricsModule } from './infra/observability/metrics.module';
 import { OpenApiModule } from './infra/openapi/openapi.module';
@@ -103,6 +104,7 @@ import { buildPinoTransport } from './infra/observability/pino-transport';
     NotificationsModule,
     VoiceProxyModule,
     FinanceModule,
+    CouponsModule,
     // --- Cross-cutting ---
     HealthModule,
     MetricsModule,

@@ -113,4 +113,19 @@ export class CreateOrderDto {
   @Type(() => Date)
   @IsDate()
   scheduledFor?: Date;
+
+  // ── Promo coupon (#167) ─────────────────────────────────────────────
+  @ApiProperty({
+    required: false,
+    description:
+      'Optional promo code (e.g. "BIENVENUE"). Case-insensitive — uppercased server-side. ' +
+      'Validated atomically inside the order-creation transaction; an invalid code rejects ' +
+      'the whole order with a stable error code (coupon_first_order_only, coupon_expired, ...).',
+    example: 'BIENVENUE',
+    maxLength: 32,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  couponCode?: string;
 }

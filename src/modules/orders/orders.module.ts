@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { FinanceModule } from '../finance/finance.module';
+import { CouponsModule } from '../coupons/coupons.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrdersController } from './orders.controller';
 import { OrdersService } from './orders.service';
@@ -34,6 +35,7 @@ import { PreOrderPromotionService } from './pre-order-promotion.service';
   imports: [
     NotificationsModule,
     FinanceModule,
+    CouponsModule,
     BullModule.registerQueue({ name: ORDER_NOTIFICATIONS_QUEUE }),
     BullModule.registerQueue({ name: ORDER_LIFECYCLE_QUEUE }),
   ],

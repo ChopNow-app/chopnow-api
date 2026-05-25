@@ -11,6 +11,7 @@ import {
 } from '@prisma/client';
 import { OrdersService } from './orders.service';
 import { OrderCreationService } from './order-creation.service';
+import { CouponsService } from '../coupons/coupons.service';
 import { OrderVendorActionsService } from './order-vendor-actions.service';
 import { OrderPaymentLifecycleService } from './order-payment-lifecycle.service';
 import { OrderLifecycleScheduler } from './order-lifecycle.scheduler';
@@ -128,6 +129,17 @@ describe('Orders module services', () => {
         { provide: EventEmitter2, useValue: events },
         { provide: LedgerService, useValue: ledger },
         { provide: OrderLifecycleScheduler, useValue: lifecycleScheduler },
+        // Coupons module (#167) — orders never call into it directly
+        // unless dto.couponCode is set, but DI still requires the
+        // provider. Tests that exercise the coupon path stub
+        // `redeemInTransaction` explicitly via jest.spyOn.
+        {
+          provide: CouponsService,
+          useValue: {
+            validateForUser: jest.fn(),
+            redeemInTransaction: jest.fn(),
+          },
+        },
       ],
     }).compile();
     service = module.get(OrdersService);

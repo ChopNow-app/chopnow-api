@@ -132,6 +132,28 @@ enum PaymentStatus {
   REFUNDED
 }
 
+// Promo-coupon system (#167 — automated BIENVENUE first-order incentive).
+// Modelled as a small primitive so the founder can mint additional codes
+// without a code change once the pilot proves the funnel out. The two
+// initial discount shapes cover everything the launch promo + early growth
+// experiments need; PERCENT_OFF deliberately not added yet (introduces
+// rounding subtleties on Cameroonian XAF amounts) — revisit when there's
+// a concrete campaign that needs it.
+enum CouponType {
+  // Waives the delivery fee. The fee stays on the Order row (rider gets
+  // paid full) and the same amount lands in `discountXAF` — the platform
+  // absorbs it as marketing spend.
+  FREE_DELIVERY
+  // Subtracts a flat XAF amount from the order total, capped so the
+  // discount never exceeds (subtotalXAF + deliveryFeeXAF).
+  FIXED_AMOUNT_OFF
+}
+
+enum CouponStatus {
+  ACTIVE
+  DISABLED
+}
+
 // =====================================================================
 // Identity (Stories 1.1, 1.2, 1.4, 1.6, 1.7, 1.8)
 // =====================================================================
@@ -161,6 +183,7 @@ model User {
   adminRecoveryCodes AdminRecoveryCode[]
   adminAuditLogs    AdminAuditLog[]
   devices           Device[]
+  couponRedemptions CouponRedemption[]
 
   @@index([phone])
   @@index([role])
@@ -529,6 +552,14 @@ model Order {
   // round to whole FCFA for orders).
   subtotalXAF    Int
   deliveryFeeXAF Int
+  // Coupon discount absorbed by the platform (#167). 0 when no coupon was
+  // applied. totalXAF = subtotalXAF + deliveryFeeXAF - discountXAF — i.e.
+  // deliveryFeeXAF stays at the FULL amount so the rider's share computation
+  // doesn't change; the platform eats the discount as marketing spend.
+  discountXAF    Int     @default(0)
+  // Denormalized for display + post-pilot analytics. Source of truth for
+  // attribution is CouponRedemption; this is the same code uppercased.
+  couponCode     String?
   totalXAF       Int
   noteForVendor  String? @db.VarChar(120)
 
@@ -617,10 +648,11 @@ model Order {
   // create a duplicate. Scoped per user (composite uniqueness below).
   idempotencyKey String?
 
-  items          OrderItem[]
-  rating         OrderRating?
-  penalty        VendorPenalty?
-  dispatchEvents DispatchEvent[]
+  items            OrderItem[]
+  rating           OrderRating?
+  penalty          VendorPenalty?
+  dispatchEvents   DispatchEvent[]
+  couponRedemption CouponRedemption?
 
   @@unique([userId, idempotencyKey])
   @@index([userId])
@@ -993,4 +1025,92 @@ model RiderPayout {
   @@index([status, scheduledFor])
   @@index([riderId, periodStart])
   @@map("rider_payouts")
+}
+
+// =====================================================================
+// Promo coupons (#167 — automated BIENVENUE first-order discount)
+// =====================================================================
+// Modelled as data, not code. The founder mints/disables campaigns from
+// the admin tooling once it exists; pilot launches with one row seeded
+// directly into the table (BIENVENUE, FREE_DELIVERY, firstOrderOnly,
+// maxPerUser=1). All policy lives on the row — the redemption service
+// is a thin validator that walks the fields and writes the audit row.
+//
+// Atomicity invariant: a coupon is redeemed inside the SAME Prisma
+// transaction that creates the Order. The `@@unique([couponId, userId])`
+// constraint on CouponRedemption is the race-stop — if a consumer
+// double-submits, the second insert errors with P2002 and the order
+// rolls back. No counter math, no SELECT-then-UPDATE window.
+
+model Coupon {
+  id          String       @id @default(uuid())
+  // Case-insensitive at the service layer (always uppercased before
+  // lookup) so "bienvenue" and "BIENVENUE" hit the same row.
+  code        String       @unique
+  description String
+  type        CouponType
+  // For FIXED_AMOUNT_OFF: discount amount in XAF. Ignored for FREE_DELIVERY
+  // (the redemption snapshots the actual fee that was waived).
+  valueXAF    Int          @default(0)
+  status      CouponStatus @default(ACTIVE)
+  // Optional validity window — NULL = no bound on that side. Service
+  // checks `now >= validFrom` and `now <= validUntil`.
+  validFrom   DateTime?
+  validUntil  DateTime?
+  // Minimum order subtotal (excludes delivery fee) required to redeem.
+  // NULL = no minimum. Pilot BIENVENUE: NULL (zero floor — we want
+  // first-order conversion at any basket size).
+  minSubtotalXAF Int?
+  // True = only users with zero successful prior orders can redeem.
+  // "Successful" = paymentStatus IN (PAID, REFUNDED) — refunded still
+  // counts as "the user has experienced the funnel", so a refund doesn't
+  // re-arm the welcome offer.
+  firstOrderOnly Boolean   @default(true)
+  // Maximum redemptions per user. Welcome offer = 1. Stack-friendly
+  // promos (multi-use punch cards, future) can raise this without
+  // schema change.
+  maxPerUser  Int          @default(1)
+  // Global redemption cap across all users. NULL = unlimited. Service
+  // increments redemptionCount atomically; the constraint check is
+  // post-insert (CouponRedemption row first, then bump). Slight overshoot
+  // possible under heavy concurrency — acceptable for pilot scale; if
+  // ever a hard cap is required, wrap in a SELECT FOR UPDATE.
+  maxRedemptions  Int?
+  redemptionCount Int      @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  redemptions CouponRedemption[]
+
+  @@index([status])
+  @@map("coupons")
+}
+
+model CouponRedemption {
+  id                     String   @id @default(uuid())
+  couponId               String
+  coupon                 Coupon   @relation(fields: [couponId], references: [id], onDelete: Restrict)
+  userId                 String
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  // One redemption row per order. The 1:1 with Order means an order
+  // can only carry one coupon — stacking is not supported in v1.
+  orderId                String   @unique
+  order                  Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  // Actual XAF discount applied to this order (rounding-final). For
+  // FREE_DELIVERY this equals the order's deliveryFeeXAF at creation.
+  appliedDiscountXAF     Int
+  // Snapshot for analytics. Same value as Order.deliveryFeeXAF at
+  // creation time but kept here so an admin can compute "how much
+  // marketing spend did BIENVENUE absorb this week?" without joining
+  // through Order.
+  originalDeliveryFeeXAF Int?
+  redeemedAt             DateTime @default(now())
+
+  // The race-stop: a user cannot redeem the same coupon twice, even
+  // across concurrent order submissions. maxPerUser>1 would need a
+  // different shape — out of scope for pilot.
+  @@unique([couponId, userId])
+  @@index([userId])
+  @@index([couponId, redeemedAt])
+  @@map("coupon_redemptions")
 }
