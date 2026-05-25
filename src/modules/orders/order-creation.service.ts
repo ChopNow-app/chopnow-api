@@ -9,6 +9,7 @@ import { OrderStatus, PaymentStatus, VendorStatus } from '@prisma/client';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
+import { CouponsService } from '../coupons/coupons.service';
 import type { CreateOrderDto } from './dto/create-order.dto';
 import {
   MIN_ORDER_XAF,
@@ -36,6 +37,7 @@ export class OrderCreationService {
   constructor(
     @InjectPinoLogger(OrderCreationService.name) private readonly logger: PinoLogger,
     private readonly prisma: PrismaService,
+    private readonly coupons: CouponsService,
   ) {}
 
   async createOrder(userId: string, dto: CreateOrderDto, idempotencyKey?: string) {
@@ -114,9 +116,13 @@ export class OrderCreationService {
     // 4) Delivery fee from PostGIS distance.
     const distanceKm = await this.computeDistanceKm(vendor.id, dto.deliveryLat, dto.deliveryLng);
     const deliveryFeeXAF = computeDeliveryFeeXAF(distanceKm);
-    const totalXAF = subtotalXAF + deliveryFeeXAF;
+    // grossTotalXAF is the pre-discount amount used for the minimum-order
+    // check. We deliberately apply MIN_ORDER_XAF to subtotal+delivery
+    // (pre-coupon) so a tiny basket that "looks" big only because of a
+    // -2000 FCFA coupon doesn't sneak under the floor.
+    const grossTotalXAF = subtotalXAF + deliveryFeeXAF;
 
-    if (totalXAF < MIN_ORDER_XAF) {
+    if (grossTotalXAF < MIN_ORDER_XAF) {
       throw new BadRequestException({
         code: 'order_below_minimum',
         message: `Commande minimum ${MIN_ORDER_XAF} FCFA — ajoutez un plat pour continuer.`,
@@ -159,6 +165,9 @@ export class OrderCreationService {
     const pickupCode = this.generate4DigitCode();
     const deliveryCode = this.generate4DigitCode();
     const order = await this.prisma.$transaction(async (tx) => {
+      // Create the order at full price first — couponCode + discountXAF
+      // are added via update once the coupon redemption is locked in
+      // (we need the orderId to write the CouponRedemption row).
       const created = await tx.order.create({
         data: {
           code,
@@ -167,7 +176,7 @@ export class OrderCreationService {
           status: OrderStatus.PENDING,
           subtotalXAF,
           deliveryFeeXAF,
-          totalXAF,
+          totalXAF: grossTotalXAF,
           // Snapshot the vendor's effective commission rate AT THIS MOMENT.
           // Future tier flips or admin overrides do not retroactively change
           // what this order earned (ADR-0005).
@@ -205,6 +214,33 @@ export class OrderCreationService {
         },
         'order commission rate snapshotted at creation',
       );
+
+      // Promo coupon redemption (#167) — atomic with order creation.
+      // If the consumer typed a code, redeem it INSIDE this transaction.
+      // Any validation failure (first-order-only, expired, already used,
+      // etc.) throws BadRequestException, which rolls back the order
+      // create above — so the user gets a clean "invalid code" response
+      // without an orphaned order row.
+      if (dto.couponCode) {
+        const redemption = await this.coupons.redeemInTransaction(
+          tx,
+          dto.couponCode,
+          userId,
+          created.id,
+          subtotalXAF,
+          deliveryFeeXAF,
+        );
+        const discounted = await tx.order.update({
+          where: { id: created.id },
+          data: {
+            discountXAF: redemption.appliedDiscountXAF,
+            couponCode: redemption.code,
+            totalXAF: grossTotalXAF - redemption.appliedDiscountXAF,
+          },
+          include: { items: true },
+        });
+        return discounted;
+      }
 
       return created;
     });
