@@ -117,8 +117,8 @@ describe('OtpDeliveryService.sendOtp — bypass paths', () => {
     setContext: jest.fn(),
   };
 
-  let twilio: { sendWhatsApp: jest.Mock; sendSms: jest.Mock };
-  let env: { twilio: typeof TWILIO_OK };
+  let twilio: { sendWhatsApp: jest.Mock; sendWhatsAppTemplate: jest.Mock; sendSms: jest.Mock };
+  let env: { twilio: typeof TWILIO_OK & { otpContentSid?: string } };
   let prisma: object;
   let service: OtpDeliveryService;
   const origEnv = { ...process.env };
@@ -126,6 +126,7 @@ describe('OtpDeliveryService.sendOtp — bypass paths', () => {
   beforeEach(() => {
     twilio = {
       sendWhatsApp: jest.fn().mockResolvedValue('SMreal'),
+      sendWhatsAppTemplate: jest.fn().mockResolvedValue('SMtemplate'),
       sendSms: jest.fn().mockResolvedValue('SMsmsreal'),
     };
     env = { twilio: TWILIO_OK };
@@ -153,6 +154,27 @@ describe('OtpDeliveryService.sendOtp — bypass paths', () => {
       expect.any(String),
     );
     expect(res.providerMessageId).toBe('SMreal');
+  });
+
+  it('sends via the WhatsApp template (Content SID) when TWILIO_OTP_CONTENT_SID is set', async () => {
+    env.twilio = { ...TWILIO_OK, otpContentSid: 'HXabc123' };
+    const res = await service.sendOtp('670000999', '654321');
+    // Template path: code goes in placeholder {{1}}, freeform is NOT used.
+    expect(twilio.sendWhatsAppTemplate).toHaveBeenCalledWith(
+      '+237670000999',
+      'HXabc123',
+      { '1': '654321' },
+      expect.any(String),
+    );
+    expect(twilio.sendWhatsApp).not.toHaveBeenCalled();
+    expect(res.providerMessageId).toBe('SMtemplate');
+  });
+
+  it('falls back to freeform WhatsApp when no Content SID is configured', async () => {
+    // TWILIO_OK has no otpContentSid → legacy/dev freeform path.
+    await service.sendOtp('670000999', '123456');
+    expect(twilio.sendWhatsApp).toHaveBeenCalled();
+    expect(twilio.sendWhatsAppTemplate).not.toHaveBeenCalled();
   });
 
   it('bypasses (logs only) when OTP_DEV_BYPASS=true — global kill-switch', async () => {

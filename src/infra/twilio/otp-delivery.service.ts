@@ -59,9 +59,15 @@ export class OtpDeliveryService {
       return { channel: OtpChannel.WHATSAPP, providerMessageId: 'dev-' + Date.now() };
     }
 
-    // Try WhatsApp first
+    // Try WhatsApp first. In production a Meta-approved template (Content SID)
+    // is required — freeform business-initiated messages are blocked. When
+    // TWILIO_OTP_CONTENT_SID is set we send via the template (the code goes in
+    // placeholder {{1}}); otherwise we fall back to freeform text (dev/sandbox).
     try {
-      const sid = await this.twilio.sendWhatsApp(e164, body, statusCallback);
+      const otpContentSid = this.env.twilio.otpContentSid;
+      const sid = otpContentSid
+        ? await this.twilio.sendWhatsAppTemplate(e164, otpContentSid, { '1': code }, statusCallback)
+        : await this.twilio.sendWhatsApp(e164, body, statusCallback);
       return { channel: OtpChannel.WHATSAPP, providerMessageId: sid };
     } catch (err) {
       this.logger.warn(

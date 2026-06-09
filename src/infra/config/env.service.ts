@@ -90,8 +90,10 @@ export class EnvService {
     smsFrom?: string;
     voiceFrom?: string;
     statusCallbackUrl?: string;
+    otpContentSid?: string;
   } {
     const cb = this.raw.get<string>('TWILIO_STATUS_CALLBACK_URL');
+    const contentSid = this.raw.get<string>('TWILIO_OTP_CONTENT_SID');
     return {
       sid: this.raw.get<string>('TWILIO_ACCOUNT_SID'),
       authToken: this.raw.get<string>('TWILIO_AUTH_TOKEN'),
@@ -99,6 +101,10 @@ export class EnvService {
       smsFrom: this.raw.get<string>('TWILIO_SMS_FROM'),
       voiceFrom: this.raw.get<string>('TWILIO_VOICE_FROM'),
       statusCallbackUrl: cb && cb.length > 0 ? cb : undefined,
+      // Approved WhatsApp Authentication template (Content SID, HX…). When set,
+      // OTPs are sent via the template instead of freeform text — required for
+      // production WhatsApp (business-initiated messages can't be freeform).
+      otpContentSid: contentSid && contentSid.length > 0 ? contentSid : undefined,
     };
   }
   /** Throws if Twilio isn't configured — call from services that require it. */
