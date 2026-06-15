@@ -12,7 +12,7 @@ import {
   MinLength,
 } from 'class-validator';
 
-const PHONE_PATTERN = /^(?:6[5-9]\d{7}|\+?[1-9]\d{7,14})$/;
+const PHONE_PATTERN = /^(?:6[5-9]\d{7}|\+?[1-9]\d{7,14}|0\d{8,9})$/;
 
 /** Story 3.2 — create or update a saved address. */
 export class UpsertAddressDto {
@@ -60,7 +60,8 @@ export class UpsertAddressDto {
   @IsOptional()
   @IsString()
   @Matches(PHONE_PATTERN, {
-    message: 'phone must be a 9-digit Cameroon number or E.164 international.',
+    message:
+      'phone must be a Cameroon number (6XXXXXXXX), local format (0XXXXXXXXX) or E.164 (+XXXXXXXXXXX).',
   })
   phone?: string;
 
