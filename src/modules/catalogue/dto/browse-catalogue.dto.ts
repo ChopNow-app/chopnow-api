@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, Max, Min } from 'class-validator';
+import { IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 /** Story 2.5 — query params for `GET /catalogue`. */
 export class BrowseCatalogueDto {
@@ -31,4 +31,16 @@ export class BrowseCatalogueDto {
   @Min(0.5)
   @Max(50)
   radiusKm?: number;
+
+  @ApiProperty({
+    description:
+      'Free-text search — matches vendor name, badge, or any in-stock menu item name ' +
+      '(e.g. "Ndolé" surfaces vendors that serve Ndolé even if the dish isn\'t in their name).',
+    required: false,
+    example: 'Ndolé',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  q?: string;
 }

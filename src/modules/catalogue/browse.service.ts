@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { VendorStatus, VendorType } from '@prisma/client';
+import { Prisma, VendorStatus, VendorType } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeDeliveryFeeXAF } from '../../shared/pricing/delivery-fee.util';
 import type { BrowseCatalogueDto } from './dto/browse-catalogue.dto';
@@ -58,6 +58,23 @@ export class BrowseService {
   async browse(dto: BrowseCatalogueDto): Promise<{ vendors: VendorCard[] }> {
     const radiusKm = dto.radiusKm ?? 10;
     const radiusMeters = radiusKm * 1000;
+    const q = dto.q?.trim();
+
+    // Optional free-text filter — matches vendor name/badge OR any
+    // available menu item name, so searching a dish (e.g. "Ndolé") surfaces
+    // vendors that serve it even when it's not in their name/badge.
+    const searchFilter = q
+      ? Prisma.sql`AND (
+          v.name ILIKE ${`%${q}%`}
+          OR v.badge ILIKE ${`%${q}%`}
+          OR EXISTS (
+            SELECT 1 FROM items i
+            WHERE i."vendorId" = v.id
+              AND i."isAvailable" = true
+              AND i.name ILIKE ${`%${q}%`}
+          )
+        )`
+      : Prisma.empty;
 
     // Raw query — Vendor.location is `Unsupported("geography(Point, 4326)")`
     // so Prisma can't read or filter on it. ST_DWithin uses the GIST index;
@@ -85,6 +102,7 @@ export class BrowseService {
           ST_SetSRID(ST_MakePoint(${dto.lng}, ${dto.lat}), 4326)::geography,
           ${radiusMeters}
         )
+        ${searchFilter}
       ORDER BY distance_m ASC
       LIMIT 100
     `;
