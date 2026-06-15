@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
-import { VendorStatus, VendorType } from '@prisma/client';
+import { Prisma, VendorStatus, VendorType } from '@prisma/client';
 import { BrowseService } from './browse.service';
 import { AvailabilityService } from './availability.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -98,11 +98,44 @@ describe('BrowseService', () => {
       await service.browse({ lat: 4.0511, lng: 9.7679, radiusKm: 5 });
 
       // tagged-template invocation: first arg is the strings array, rest are bindings.
-      // Order: lng+lat for ST_Distance, status enum, lng+lat for ST_DWithin, radius m.
+      // Order: lng+lat for ST_Distance, status enum, lng+lat for ST_DWithin, radius m,
+      // then the optional search-filter fragment (Prisma.empty when q is absent).
       // lng comes BEFORE lat in PostGIS ST_MakePoint.
       const args = prisma.$queryRaw.mock.calls[0];
       const bindings = args.slice(1);
-      expect(bindings).toEqual([9.7679, 4.0511, VendorStatus.ACTIVE, 9.7679, 4.0511, 5000]);
+      expect(bindings).toEqual([
+        9.7679,
+        4.0511,
+        VendorStatus.ACTIVE,
+        9.7679,
+        4.0511,
+        5000,
+        Prisma.empty,
+      ]);
+    });
+
+    it('adds a name/badge/item-name search filter when q is provided', async () => {
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await service.browse({ lat: 4.0511, lng: 9.7679, q: 'Ndolé' });
+
+      const args = prisma.$queryRaw.mock.calls[0];
+      const searchFilter = args[args.length - 1] as Prisma.Sql;
+      expect(searchFilter.sql).toContain('v.name ILIKE');
+      expect(searchFilter.sql).toContain('v.badge ILIKE');
+      expect(searchFilter.sql).toContain('EXISTS');
+      expect(searchFilter.sql).toContain('"isAvailable" = true');
+      expect(searchFilter.values).toEqual(['%Ndolé%', '%Ndolé%', '%Ndolé%']);
+    });
+
+    it('omits the search filter when q is absent', async () => {
+      prisma.$queryRaw.mockResolvedValue([]);
+
+      await service.browse({ lat: 4.0511, lng: 9.7679 });
+
+      const args = prisma.$queryRaw.mock.calls[0];
+      const searchFilter = args[args.length - 1] as Prisma.Sql;
+      expect(searchFilter).toBe(Prisma.empty);
     });
   });
 
