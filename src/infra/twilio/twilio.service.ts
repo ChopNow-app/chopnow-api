@@ -34,6 +34,33 @@ export class TwilioService {
     return msg.sid;
   }
 
+  /**
+   * Send a WhatsApp **template** message via Twilio's Content API. Returns the
+   * message SID on success.
+   *
+   * Required for business-initiated messages (like OTP) in production: outside
+   * the 24h customer-service window, WhatsApp rejects freeform text, so the
+   * message must use a Meta-approved template referenced by its Content SID.
+   * `variables` maps the template placeholders ({{1}}, {{2}}…) to values, e.g.
+   * `{ '1': code }`.
+   */
+  async sendWhatsAppTemplate(
+    toE164: string,
+    contentSid: string,
+    variables: Record<string, string>,
+    statusCallback?: string,
+  ): Promise<string> {
+    const { whatsappFrom } = this.env.requireTwilio();
+    const msg = await this.client.messages.create({
+      from: whatsappFrom.startsWith('whatsapp:') ? whatsappFrom : `whatsapp:${whatsappFrom}`,
+      to: `whatsapp:${toE164}`,
+      contentSid,
+      contentVariables: JSON.stringify(variables),
+      ...(statusCallback ? { statusCallback } : {}),
+    });
+    return msg.sid;
+  }
+
   /** Send an SMS via Twilio. Returns the message SID on success. */
   async sendSms(toE164: string, body: string, statusCallback?: string): Promise<string> {
     const { smsFrom } = this.env.requireTwilio();
